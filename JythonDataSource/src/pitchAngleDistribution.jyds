@@ -1,0 +1,9 @@
+angle= linspace( -PI,PI,40 )
+rad= linspace( 1, 5, 20 )
+dist= copy(ripples( 40, 20 ))
+dist[0:3,10:]= -1e31
+
+#plotx( angle, rad, dist )
+result= link(  angle, rad, dist )
+result.putProperty( QDataSet.RENDER_TYPE, 'pitchAngleDistribution' )
+#plotx( ds, renderType='pitchAngleDistribution' )

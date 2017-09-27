@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project-private xmlns="http://www.netbeans.org/ns/project-private/1">
+    <editor-bookmarks xmlns="http://www.netbeans.org/ns/editor-bookmarks/2" lastBookmarkId="0"/>
+    <open-files xmlns="http://www.netbeans.org/ns/projectui-open-files/2">
+        <group name="jsyntaxpaen">
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/state/StatePersistence.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/dom/TimeSeriesBrowseController.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/AutoplotUI.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/dom/ApplicationController.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/dom/DomUtil.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/scriptconsole/ScriptPanelSupport.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/index.html</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/dom/PropertyChangeDiff.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/dom/Diff.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/AutoplotUtil.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/scriptconsole/GuiExceptionHandler.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/state/UndoRedoSupport.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/state/SerializeUtil.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/dom/BindingSupport.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/autoplot.jnlp</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/ScriptContext.java</file>
+        </group>
+        <group>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/pngwalk/SinglePngWalkView.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/AutoplotUtil.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/MetadataPanel.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/RenderType.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/renderer/ContourStylePanel.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/external/PlotCommand.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/autoplot.jnlp</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/index.html</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/external/applot.py</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/pngwalk/CoversWalkView.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/pngwalk/ClickDigitizer.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/pngwalk/WalkImage.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/AutoplotUI.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/dom/ApplicationController.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/screen.png</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/pngwalk/PngWalkView.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/renderer/BoundsStylePanel.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/dom/PlotElementController.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/GuiSupport.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/pngwalk/GridPngWalkView.java</file>
+            <file>file:/home/jbf/temp/autoplot/Autoplot/src/org/autoplot/renderer/DigitalStylePanel.java</file>
+        </group>
+    </open-files>
+</project-private>

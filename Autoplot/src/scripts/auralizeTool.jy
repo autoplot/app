@@ -1,0 +1,35 @@
+# send data to the system sound card.  
+
+import org.das2.graph
+
+loadData= getParam('loadData','F','Load example data',['T','F'] )
+if ( loadData=='T' ):
+    ds= getDataSet( 'http://autoplot.org/data/wav/chickadeesong.wav' )
+    plot( 0, ds )
+    plot( 1, fftWindow( ds, 256 ) )
+
+def boxSelected(event):
+    ds= dom.plotElements[0].controller.dataSet
+    dep0= ds.property( QDataSet.DEPEND_0 )
+    u= dep0.property( QDataSet.UNITS )
+    tmin= event.getXRange().min().doubleValue( u )
+    tmax= event.getXRange().max().doubleValue( u )
+
+    from org.virbo.dataset import DataSetUtil, DataSetOps
+
+    imin= DataSetUtil.closest( dep0, tmin, -1 )
+    imax= DataSetUtil.closest( dep0, tmax, imin )
+
+    play= DataSetOps.trim( ds, imin, max(1,imax-imin) )
+
+    a= org.das2.graph.Auralizor( play )
+
+    a.playSound()
+    
+plot= dom.plots[0].controller.dasPlot
+from org.das2.event import BoxSelectorMouseModule
+mm= BoxSelectorMouseModule.create( plot, 'Auralize' )
+mm.BoxSelected=boxSelected
+plot.dasMouseInputAdapter.primaryModule=mm
+
+showMessageDialog("Drag a box to play the sound")

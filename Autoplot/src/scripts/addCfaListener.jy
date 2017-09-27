@@ -1,0 +1,48 @@
+from org.astrogrid.samp import Metadata
+from org.astrogrid.samp.xmlrpc import StandardClientProfile
+from org.astrogrid.samp.gui import GuiHubConnector
+from org.astrogrid.samp.client import AbstractMessageHandler
+
+print 'starting up SAMP listener for Cluster Final Archive'
+
+profile = StandardClientProfile.getInstance();
+hubConnector = GuiHubConnector(profile);
+hubConnector.setAutoconnect(3);
+
+meta = Metadata()
+meta.setName("Autoplot");
+meta.setDescriptionText("Autoplot");
+meta.setIconUrl("http://autoplot.org/wiki/images/Logo32x32.png");
+meta.setDocumentationUrl("http://autoplot.org");
+
+hubConnector.declareMetadata(meta);
+
+class ConcreteMessageReceiver( AbstractMessageHandler ):
+      
+   def __init__( self, mType ):
+      AbstractMessageHandler.__init__(self,mType)
+      self.mType= mType
+
+   def processCall( self, connection, senderId, message ):
+      print 'got message: %s' % message.toString()
+      s= message.getParam("url")
+
+      if ( s.startswith( 'file://localhost' ) ): 
+         s= s[16:]
+      if ( s.startswith( 'file://' ) ): s= s[7:]
+      if ( mType.equals('image.load.fits') ):
+         plot( 'vap+fits:file://' + java.net.URLDecoder.decode(s) )
+      elif ( mType.equals('table.load.fits') ):
+         plot( 'vap+fits:file://' + java.net.URLDecoder.decode(s) )
+      elif ( mType.equals('table.load.cdf') ):
+         plot( 'vap+cdf:file://' + java.net.URLDecoder.decode(s) )
+      return None
+
+messageHandler= ConcreteMessageReceiver('image.load.fits')
+hubConnector.addMessageHandler(messageHandler);
+messageHandler= ConcreteMessageReceiver('table.load.fits')
+hubConnector.addMessageHandler(messageHandler);
+messageHandler= ConcreteMessageReceiver('table.load.cdf')
+hubConnector.addMessageHandler(messageHandler);
+hubConnector.declareSubscriptions(hubConnector.computeSubscriptions());
+

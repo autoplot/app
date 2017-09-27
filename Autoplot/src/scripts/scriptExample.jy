@@ -1,0 +1,23 @@
+# example script for autoplot.  
+# for this example:
+#   java -Djava.awt.headless=true -cp AutoplotAll.jar
+# This also demonstrates positional arguments, which are rarely used and need more testing.
+
+print params
+
+vap= getParam( 0, 'http://autoplot.org/data/autoplot.vap', 'product file to load' )
+range= getParam( 1, '2000-01-08', 'range to load' )
+frmt= getParam( 2, 'png', 'png or pdf', ['png','pdf'] )
+loc= getParam( 3, '/tmp/autoplot', 'filename to record' )
+
+ff= loc + '/output.'+frmt
+
+load( vap )
+dom.timeRange= DatumRangeUtil.parseTimeRange(range)
+
+if ( frmt.index('png')>-1):
+   writeToPng( ff )
+elif ( frmt.index('pdf')>-1 ):
+   writeToPdf( ff )
+else:
+   print 'bad format, only png and pdf supported: '+frmt

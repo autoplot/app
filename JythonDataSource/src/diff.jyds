@@ -1,0 +1,5 @@
+dat= linspace( -2, 2, 100 )
+ex= exp( -1* dat * dat )
+
+dif= diff( ex )
+result= dif

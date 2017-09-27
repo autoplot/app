@@ -1,0 +1,8 @@
+# shows how two datasets can be multiplied to make a new dataset.  
+# timetags (and fill, though there is none) are preserved through the operation.
+ds1= getDataSet( 'http://cdaweb.gsfc.nasa.gov/data/ace/swepam/level_2_cdaweb/swe_k0/2011/ac_k0_swe_20110117_v01.cdf?He_ratio' )
+ds2= getDataSet( 'http://cdaweb.gsfc.nasa.gov/data/ace/swepam/level_2_cdaweb/swe_k0/2011/ac_k0_swe_20110117_v01.cdf?Np' )
+He= ds2 * ds1  
+He.putProperty( 'TITLE', 'Ace SWE Helium Density' )  
+
+

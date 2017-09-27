@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<web-app version="3.0" xmlns="http://java.sun.com/xml/ns/javaee" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://java.sun.com/xml/ns/javaee http://java.sun.com/xml/ns/javaee/web-app_3_0.xsd">
+    <filter>
+        <filter-name>GZIPFilter</filter-name>
+        <filter-class>com.jspbook.GZIPFilter</filter-class>
+    </filter>
+    <filter-mapping>
+        <filter-name>GZIPFilter</filter-name>
+        <url-pattern>/hapi/data</url-pattern>
+    </filter-mapping>
+    <servlet>
+        <description>Provides the server catalog.</description>
+        <servlet-name>CatalogServlet</servlet-name>
+        <servlet-class>org.autoplot.hapiserver.CatalogServlet</servlet-class>
+    </servlet>
+    <servlet>
+        <description>Provides data</description>
+        <servlet-name>DataServlet</servlet-name>
+        <servlet-class>org.autoplot.hapiserver.DataServlet</servlet-class>
+    </servlet>
+    <servlet>
+        <description>Provides parameter information</description>
+        <servlet-name>InfoServlet</servlet-name>
+        <servlet-class>org.autoplot.hapiserver.InfoServlet</servlet-class>
+    </servlet>
+    <servlet>
+        <description>Shows the capabilities of the HAPI server</description>
+        <servlet-name>CapabilitiesServlet</servlet-name>
+        <servlet-class>org.autoplot.hapiserver.CapabilitiesServlet</servlet-class>
+    </servlet>
+    <servlet>
+        <servlet-name>SetLogLevel</servlet-name>
+        <servlet-class>org.autoplot.SetLogLevel</servlet-class>
+    </servlet>
+    <servlet-mapping>
+        <servlet-name>CatalogServlet</servlet-name>
+        <url-pattern>/hapi/catalog</url-pattern>
+    </servlet-mapping>
+    <servlet-mapping>
+        <servlet-name>DataServlet</servlet-name>
+        <url-pattern>/hapi/data</url-pattern>
+    </servlet-mapping>
+    <servlet-mapping>
+        <servlet-name>InfoServlet</servlet-name>
+        <url-pattern>/hapi/info</url-pattern>
+    </servlet-mapping>
+    <servlet-mapping>
+        <servlet-name>CapabilitiesServlet</servlet-name>
+        <url-pattern>/hapi/capabilities</url-pattern>
+    </servlet-mapping>
+    <servlet-mapping>
+        <servlet-name>SetLogLevel</servlet-name>
+        <url-pattern>/SetLogLevel</url-pattern>
+    </servlet-mapping>
+    <session-config>
+        <session-timeout>
+            30
+        </session-timeout>
+    </session-config>
+    <welcome-file-list>
+        <welcome-file>/index.jsp</welcome-file>
+    </welcome-file-list>
+    <context-param>
+        <param-name>HAPI_SERVER_HOME</param-name>
+        <param-value>/home/jbf/hapi/</param-value>
+    </context-param>
+    <error-page>
+        <exception-type>java.lang.RuntimeException</exception-type>
+        <location>/hapi/error.jsp</location>
+    </error-page>
+</web-app>

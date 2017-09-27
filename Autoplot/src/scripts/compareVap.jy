@@ -1,0 +1,19 @@
+# create two .vap files to compare.
+
+reset()
+load( 'http://autoplot.org/data/autoplot.vap' )
+save("/tmp/vap1.vap")
+dom.plots[0].xaxis.range= dom.plots[0].xaxis.range.rescale(0.4,1.4) # pan slightly
+dom.plots[1].xaxis.range= dom.plots[1].xaxis.range.rescale(-0.1,1.1) # zoom out slightly
+save("/tmp/vap2.vap")
+
+# load the two vaps and compare.
+app1=loadVap("/tmp/vap1.vap");
+app2=loadVap("/tmp/vap2.vap");
+
+diffs= app1.diffs(app2)
+for d in diffs:
+   print d.description
+print diffs.size(), ' elements changed'
+
+

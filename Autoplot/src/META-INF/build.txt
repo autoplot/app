@@ -1,0 +1,6 @@
+build.timestamp: 
+build.user.name: 
+build.svnurl: $URL: https://svn.code.sf.net/p/autoplot/code/autoplot/trunk/Autoplot/src/META-INF/build.txt $
+build.svnrevision: $Revision: 9049 $
+build.tag:
+

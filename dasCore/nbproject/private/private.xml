@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project-private xmlns="http://www.netbeans.org/ns/project-private/1">
+    <editor-bookmarks xmlns="http://www.netbeans.org/ns/editor-bookmarks/2" lastBookmarkId="0"/>
+    <open-files xmlns="http://www.netbeans.org/ns/projectui-open-files/2">
+        <group name="jsyntaxpaen">
+            <file>file:/home/jbf/temp/autoplot/dasCore/src/org/das2/graph/DasPlot.java</file>
+            <file>file:/home/jbf/temp/autoplot/dasCore/src/org/das2/graph/SeriesRenderer.java</file>
+        </group>
+        <group>
+            <file>file:/home/jbf/temp/autoplot/dasCore/src/org/das2/graph/SeriesRenderer.java</file>
+            <file>file:/home/jbf/temp/autoplot/dasCore/src/org/das2/graph/PolarPlotRenderer.java</file>
+            <file>file:/home/jbf/temp/autoplot/dasCore/src/org/das2/graph/BoundsRenderer.java</file>
+            <file>file:/home/jbf/temp/autoplot/dasCore/src/org/das2/graph/Renderer.java</file>
+        </group>
+    </open-files>
+</project-private>

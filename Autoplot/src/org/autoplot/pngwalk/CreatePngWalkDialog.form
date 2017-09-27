@@ -1,0 +1,391 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<Form version="1.5" maxVersion="1.7" type="org.netbeans.modules.form.forminfo.JPanelFormInfo">
+  <NonVisualComponents>
+    <Component class="javax.swing.ButtonGroup" name="buttonGroup1">
+    </Component>
+    <Component class="javax.swing.ButtonGroup" name="buttonGroup2">
+    </Component>
+  </NonVisualComponents>
+  <AuxValues>
+    <AuxValue name="FormSettings_autoResourcing" type="java.lang.Integer" value="0"/>
+    <AuxValue name="FormSettings_autoSetComponentName" type="java.lang.Boolean" value="false"/>
+    <AuxValue name="FormSettings_generateFQN" type="java.lang.Boolean" value="true"/>
+    <AuxValue name="FormSettings_generateMnemonicsCode" type="java.lang.Boolean" value="false"/>
+    <AuxValue name="FormSettings_i18nAutoMode" type="java.lang.Boolean" value="false"/>
+    <AuxValue name="FormSettings_layoutCodeTarget" type="java.lang.Integer" value="2"/>
+    <AuxValue name="FormSettings_listenerGenerationStyle" type="java.lang.Integer" value="0"/>
+    <AuxValue name="FormSettings_variablesLocal" type="java.lang.Boolean" value="false"/>
+    <AuxValue name="FormSettings_variablesModifier" type="java.lang.Integer" value="2"/>
+  </AuxValues>
+
+  <Layout>
+    <DimensionLayout dim="0">
+      <Group type="103" groupAlignment="0" attributes="0">
+          <Group type="102" attributes="0">
+              <EmptySpace min="-2" max="-2" attributes="0"/>
+              <Group type="103" groupAlignment="0" attributes="0">
+                  <Group type="102" attributes="0">
+                      <Group type="103" groupAlignment="0" attributes="0">
+                          <Group type="102" attributes="0">
+                              <EmptySpace min="-2" pref="12" max="-2" attributes="0"/>
+                              <Group type="103" groupAlignment="0" attributes="0">
+                                  <Component id="overwriteCB" min="-2" max="-2" attributes="0"/>
+                                  <Group type="102" alignment="0" attributes="0">
+                                      <Component id="outputFolderTf" max="32767" attributes="0"/>
+                                      <EmptySpace min="-2" max="-2" attributes="0"/>
+                                      <Component id="pickFolderButton" min="-2" max="-2" attributes="0"/>
+                                  </Group>
+                              </Group>
+                          </Group>
+                          <Group type="102" attributes="0">
+                              <Component id="jLabel2" min="-2" max="-2" attributes="0"/>
+                              <EmptySpace min="0" pref="0" max="32767" attributes="0"/>
+                          </Group>
+                      </Group>
+                      <EmptySpace min="-2" pref="45" max="-2" attributes="0"/>
+                  </Group>
+                  <Group type="102" attributes="0">
+                      <Group type="103" groupAlignment="0" attributes="0">
+                          <Group type="102" attributes="0">
+                              <Group type="103" groupAlignment="0" attributes="0">
+                                  <Component id="jLabel1" alignment="0" min="-2" max="-2" attributes="0"/>
+                                  <Component id="jLabel3" alignment="0" min="-2" max="-2" attributes="0"/>
+                                  <Group type="102" attributes="0">
+                                      <EmptySpace min="-2" pref="12" max="-2" attributes="0"/>
+                                      <Group type="103" groupAlignment="1" attributes="0">
+                                          <Component id="timeFormatCB" alignment="0" min="-2" max="-2" attributes="0"/>
+                                          <Component id="flnRootTf" alignment="0" max="32767" attributes="1"/>
+                                      </Group>
+                                  </Group>
+                              </Group>
+                              <EmptySpace min="-2" pref="25" max="-2" attributes="0"/>
+                          </Group>
+                          <Group type="102" alignment="0" attributes="0">
+                              <Group type="103" groupAlignment="0" attributes="0">
+                                  <Group type="102" alignment="0" attributes="0">
+                                      <Component id="createThumbsCb" min="-2" max="-2" attributes="0"/>
+                                      <EmptySpace min="-2" pref="35" max="-2" attributes="0"/>
+                                      <Component id="jLabel4" min="-2" max="-2" attributes="0"/>
+                                      <EmptySpace max="-2" attributes="0"/>
+                                      <Component id="pngFormatCB" min="-2" max="-2" attributes="0"/>
+                                      <EmptySpace max="-2" attributes="0"/>
+                                      <Component id="pdfFormatCB" min="-2" max="-2" attributes="0"/>
+                                  </Group>
+                                  <Component id="eventsFileRadioButton" alignment="0" min="-2" max="-2" attributes="0"/>
+                                  <Component id="timeRangeRadioButton" alignment="0" min="-2" max="-2" attributes="0"/>
+                                  <Group type="102" alignment="0" attributes="0">
+                                      <EmptySpace min="12" pref="12" max="-2" attributes="0"/>
+                                      <Group type="103" groupAlignment="0" attributes="0">
+                                          <Component id="eventsFileSelector" alignment="0" max="32767" attributes="0"/>
+                                          <Group type="102" attributes="0">
+                                              <Group type="103" groupAlignment="0" attributes="0">
+                                                  <Component id="batchUriNameCB" min="-2" max="-2" attributes="0"/>
+                                                  <Group type="102" alignment="0" attributes="0">
+                                                      <Component id="timeRangeTf" min="-2" pref="306" max="-2" attributes="0"/>
+                                                      <EmptySpace max="-2" attributes="0"/>
+                                                      <Component id="timeRangeToolButton" min="-2" max="-2" attributes="0"/>
+                                                  </Group>
+                                              </Group>
+                                              <EmptySpace min="0" pref="0" max="32767" attributes="0"/>
+                                          </Group>
+                                      </Group>
+                                  </Group>
+                              </Group>
+                              <EmptySpace max="-2" attributes="0"/>
+                          </Group>
+                      </Group>
+                      <Group type="103" groupAlignment="0" attributes="0">
+                          <Component id="autorangeCB" alignment="0" max="32767" attributes="0"/>
+                          <Group type="102" attributes="0">
+                              <Group type="103" groupAlignment="0" attributes="0">
+                                  <Component id="updateCB" min="-2" max="-2" attributes="0"/>
+                                  <Component id="jLabel5" alignment="0" min="-2" max="-2" attributes="0"/>
+                                  <Component id="jLabel6" min="-2" max="-2" attributes="0"/>
+                                  <Group type="102" attributes="0">
+                                      <EmptySpace min="12" pref="12" max="-2" attributes="0"/>
+                                      <Group type="103" groupAlignment="0" attributes="0">
+                                          <Component id="rescaleComboBox" min="-2" pref="174" max="-2" attributes="0"/>
+                                          <Component id="versionTextField" min="-2" pref="74" max="-2" attributes="0"/>
+                                      </Group>
+                                  </Group>
+                              </Group>
+                              <EmptySpace min="0" pref="0" max="32767" attributes="0"/>
+                          </Group>
+                      </Group>
+                  </Group>
+              </Group>
+          </Group>
+      </Group>
+    </DimensionLayout>
+    <DimensionLayout dim="1">
+      <Group type="103" groupAlignment="0" attributes="0">
+          <Group type="102" alignment="0" attributes="0">
+              <EmptySpace max="-2" attributes="0"/>
+              <Component id="jLabel2" min="-2" max="-2" attributes="0"/>
+              <EmptySpace max="-2" attributes="0"/>
+              <Group type="103" groupAlignment="3" attributes="0">
+                  <Component id="outputFolderTf" alignment="3" min="-2" max="-2" attributes="0"/>
+                  <Component id="pickFolderButton" alignment="3" min="-2" max="-2" attributes="0"/>
+              </Group>
+              <EmptySpace max="-2" attributes="0"/>
+              <Component id="overwriteCB" min="-2" max="-2" attributes="0"/>
+              <EmptySpace type="unrelated" max="-2" attributes="0"/>
+              <Group type="103" groupAlignment="3" attributes="0">
+                  <Component id="jLabel1" alignment="3" min="-2" max="-2" attributes="0"/>
+                  <Component id="jLabel5" alignment="3" min="-2" max="-2" attributes="0"/>
+              </Group>
+              <EmptySpace max="-2" attributes="0"/>
+              <Group type="103" groupAlignment="3" attributes="0">
+                  <Component id="flnRootTf" alignment="3" min="-2" max="-2" attributes="0"/>
+                  <Component id="versionTextField" alignment="3" min="-2" max="-2" attributes="0"/>
+              </Group>
+              <EmptySpace max="-2" attributes="0"/>
+              <Group type="103" groupAlignment="3" attributes="0">
+                  <Component id="jLabel3" alignment="3" min="-2" max="-2" attributes="0"/>
+                  <Component id="jLabel6" alignment="3" min="-2" max="-2" attributes="0"/>
+              </Group>
+              <EmptySpace max="-2" attributes="0"/>
+              <Group type="103" groupAlignment="1" attributes="0">
+                  <Component id="timeFormatCB" min="-2" max="-2" attributes="0"/>
+                  <Component id="rescaleComboBox" min="-2" max="-2" attributes="0"/>
+              </Group>
+              <EmptySpace max="-2" attributes="0"/>
+              <Component id="autorangeCB" min="-2" max="-2" attributes="0"/>
+              <EmptySpace max="-2" attributes="0"/>
+              <Group type="103" groupAlignment="0" attributes="0">
+                  <Component id="updateCB" min="-2" max="-2" attributes="0"/>
+                  <Group type="102" attributes="0">
+                      <Component id="timeRangeRadioButton" min="-2" max="-2" attributes="0"/>
+                      <EmptySpace max="-2" attributes="0"/>
+                      <Group type="103" groupAlignment="1" attributes="0">
+                          <Component id="timeRangeToolButton" min="-2" max="-2" attributes="0"/>
+                          <Component id="timeRangeTf" min="-2" max="-2" attributes="0"/>
+                      </Group>
+                      <EmptySpace min="-2" pref="7" max="-2" attributes="0"/>
+                      <Component id="eventsFileRadioButton" min="-2" max="-2" attributes="0"/>
+                      <EmptySpace min="-2" pref="1" max="-2" attributes="0"/>
+                      <Component id="eventsFileSelector" min="-2" max="-2" attributes="0"/>
+                      <EmptySpace min="-2" pref="3" max="-2" attributes="0"/>
+                      <Component id="batchUriNameCB" min="-2" max="-2" attributes="0"/>
+                      <EmptySpace max="-2" attributes="0"/>
+                      <Group type="103" groupAlignment="0" attributes="0">
+                          <Group type="103" alignment="0" groupAlignment="3" attributes="0">
+                              <Component id="pngFormatCB" alignment="3" min="-2" max="-2" attributes="0"/>
+                              <Component id="pdfFormatCB" alignment="3" min="-2" max="-2" attributes="0"/>
+                              <Component id="jLabel4" alignment="3" min="-2" max="-2" attributes="0"/>
+                          </Group>
+                          <Component id="createThumbsCb" min="-2" max="-2" attributes="0"/>
+                      </Group>
+                  </Group>
+              </Group>
+              <EmptySpace pref="53" max="32767" attributes="0"/>
+          </Group>
+      </Group>
+    </DimensionLayout>
+  </Layout>
+  <SubComponents>
+    <Component class="javax.swing.JLabel" name="jLabel1">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="Filename Root:"/>
+        <Property name="toolTipText" type="java.lang.String" value="Stem to identify result within folder."/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JTextField" name="flnRootTf">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="product"/>
+        <Property name="toolTipText" type="java.lang.String" value="Stem used to ensure unique filenames"/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JLabel" name="jLabel2">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="Output Folder:"/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JTextField" name="outputFolderTf">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="/folder/"/>
+      </Properties>
+      <Events>
+        <EventHandler event="keyReleased" listener="java.awt.event.KeyListener" parameters="java.awt.event.KeyEvent" handler="outputFolderTfKeyReleased"/>
+        <EventHandler event="keyTyped" listener="java.awt.event.KeyListener" parameters="java.awt.event.KeyEvent" handler="outputFolderTfKeyTyped"/>
+      </Events>
+    </Component>
+    <Component class="javax.swing.JButton" name="pickFolderButton">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="Pick"/>
+      </Properties>
+      <Events>
+        <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="pickFolderButtonActionPerformed"/>
+      </Events>
+    </Component>
+    <Component class="javax.swing.JLabel" name="jLabel3">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="Time Format:"/>
+        <Property name="toolTipText" type="java.lang.String" value="Time format for each png, used to infer cadence of sequence"/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JTextField" name="timeRangeTf">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="2010"/>
+      </Properties>
+      <BindingProperties>
+        <BindingProperty name="enabled" source="timeRangeRadioButton" sourcePath="${selected}" target="timeRangeTf" targetPath="enabled" updateStrategy="0" immediately="false"/>
+      </BindingProperties>
+    </Component>
+    <Component class="javax.swing.JCheckBox" name="createThumbsCb">
+      <Properties>
+        <Property name="selected" type="boolean" value="true"/>
+        <Property name="text" type="java.lang.String" value="Create Thumbs"/>
+        <Property name="toolTipText" type="java.lang.String" value="create thumbs subfolders for performance"/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JCheckBox" name="overwriteCB">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="Overwrite"/>
+        <Property name="toolTipText" type="java.lang.String" value="overwrite existing pngwalk"/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JLabel" name="jLabel5">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="Version (Optional):"/>
+        <Property name="toolTipText" type="java.lang.String" value="Add this version id to files"/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JTextField" name="versionTextField">
+      <Properties>
+        <Property name="text" type="java.lang.String" value=" "/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JCheckBox" name="updateCB">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="Update Sequence"/>
+        <Property name="toolTipText" type="java.lang.String" value="Only update the sequence, skipping images already computed"/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JLabel" name="jLabel6">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="Rescale (Optional):"/>
+        <Property name="toolTipText" type="java.lang.String" value="Rescale before making image, possibly showing surrounding context."/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JComboBox" name="rescaleComboBox">
+      <Properties>
+        <Property name="editable" type="boolean" value="true"/>
+        <Property name="model" type="javax.swing.ComboBoxModel" editor="org.netbeans.modules.form.editors2.ComboBoxModelEditor">
+          <StringArray count="3">
+            <StringItem index="0" value="0%,100%"/>
+            <StringItem index="1" value="0%-1hr,100%+1hr"/>
+            <StringItem index="2" value="-300%,400%"/>
+          </StringArray>
+        </Property>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JCheckBox" name="autorangeCB">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="Autorange Each"/>
+        <Property name="toolTipText" type="java.lang.String" value="Autorange in Y and Z each image of the sequence"/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JComboBox" name="timeFormatCB">
+      <Properties>
+        <Property name="editable" type="boolean" value="true"/>
+        <Property name="model" type="javax.swing.ComboBoxModel" editor="org.netbeans.modules.form.editors2.ComboBoxModelEditor">
+          <StringArray count="10">
+            <StringItem index="0" value="$Y$m$d"/>
+            <StringItem index="1" value="$Y"/>
+            <StringItem index="2" value="$Y$(m,span=3)"/>
+            <StringItem index="3" value="$Y$m"/>
+            <StringItem index="4" value="$Y_$j"/>
+            <StringItem index="5" value="$Y$m$d_$H"/>
+            <StringItem index="6" value="$Y$m$d_$H$M"/>
+            <StringItem index="7" value="$Y$m$d_$H$M$S"/>
+            <StringItem index="8" value="$(o,id=rbspa-pp)"/>
+            <StringItem index="9" value="$(o,id=http://das2.org/wiki/index.php/Orbits/crres)"/>
+          </StringArray>
+        </Property>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JButton" name="timeRangeToolButton">
+      <Properties>
+        <Property name="icon" type="javax.swing.Icon" editor="org.netbeans.modules.form.editors2.IconEditor">
+          <Image iconType="3" name="/org/autoplot/datasource/calendar.png"/>
+        </Property>
+        <Property name="toolTipText" type="java.lang.String" value="Use time range tool"/>
+      </Properties>
+      <BindingProperties>
+        <BindingProperty name="enabled" source="timeRangeRadioButton" sourcePath="${selected}" target="timeRangeToolButton" targetPath="enabled" updateStrategy="0" immediately="false"/>
+      </BindingProperties>
+      <Events>
+        <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="timeRangeToolButtonActionPerformed"/>
+      </Events>
+    </Component>
+    <Component class="javax.swing.JRadioButton" name="timeRangeRadioButton">
+      <Properties>
+        <Property name="buttonGroup" type="javax.swing.ButtonGroup" editor="org.netbeans.modules.form.RADComponent$ButtonGroupPropertyEditor">
+          <ComponentRef name="buttonGroup1"/>
+        </Property>
+        <Property name="selected" type="boolean" value="true"/>
+        <Property name="text" type="java.lang.String" value="Generate intervals to cover time range:"/>
+        <Property name="toolTipText" type="java.lang.String" value="Generate intervals based on the output filename.  For example 2010 with $Y$m$d is covered by 2010-01-01, 2010-01-02, ..., 2010-12-31"/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JRadioButton" name="eventsFileRadioButton">
+      <Properties>
+        <Property name="buttonGroup" type="javax.swing.ButtonGroup" editor="org.netbeans.modules.form.RADComponent$ButtonGroupPropertyEditor">
+          <ComponentRef name="buttonGroup1"/>
+        </Property>
+        <Property name="text" type="java.lang.String" value="Use events file that contains list of times:"/>
+      </Properties>
+      <Events>
+        <EventHandler event="itemStateChanged" listener="java.awt.event.ItemListener" parameters="java.awt.event.ItemEvent" handler="eventsFileRadioButtonItemStateChanged"/>
+      </Events>
+    </Component>
+    <Component class="org.autoplot.datasource.DataSetSelector" name="eventsFileSelector">
+      <BindingProperties>
+        <BindingProperty name="enabled" source="eventsFileRadioButton" sourcePath="${selected}" target="eventsFileSelector" targetPath="enabled" updateStrategy="0" immediately="false"/>
+      </BindingProperties>
+    </Component>
+    <Component class="javax.swing.JRadioButton" name="pngFormatCB">
+      <Properties>
+        <Property name="buttonGroup" type="javax.swing.ButtonGroup" editor="org.netbeans.modules.form.RADComponent$ButtonGroupPropertyEditor">
+          <ComponentRef name="buttonGroup2"/>
+        </Property>
+        <Property name="text" type="java.lang.String" value="PNG"/>
+        <Property name="toolTipText" type="java.lang.String" value="Write PNG files"/>
+      </Properties>
+      <BindingProperties>
+        <BindingProperty name="selected" source="createThumbsCb" sourcePath="${enabled}" target="pngFormatCB" targetPath="selected" updateStrategy="0" immediately="false"/>
+      </BindingProperties>
+      <Events>
+        <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="pngFormatCBActionPerformed"/>
+      </Events>
+    </Component>
+    <Component class="javax.swing.JRadioButton" name="pdfFormatCB">
+      <Properties>
+        <Property name="buttonGroup" type="javax.swing.ButtonGroup" editor="org.netbeans.modules.form.RADComponent$ButtonGroupPropertyEditor">
+          <ComponentRef name="buttonGroup2"/>
+        </Property>
+        <Property name="text" type="java.lang.String" value="PDF"/>
+        <Property name="toolTipText" type="java.lang.String" value="Write PDF files"/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JLabel" name="jLabel4">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="Output Format:"/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JCheckBox" name="batchUriNameCB">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="Events file specifies product names"/>
+        <Property name="toolTipText" type="java.lang.String" value="&lt;html&gt;The events file contains the file name, so for example instead of product_$Y$m$d,&#xa;&lt;br&gt;just use the last column when generating the filename.&#xa;&lt;br&gt;&lt;tt&gt;2000-01-09T06:50:41.155Z&#x9;2000-01-09T13:46:34.224Z&#x9;a/o1&#x9;&lt;/tt&gt;&#xa;"/>
+      </Properties>
+      <BindingProperties>
+        <BindingProperty name="enabled" source="eventsFileRadioButton" sourcePath="${selected}" target="batchUriNameCB" targetPath="enabled" updateStrategy="0" immediately="false"/>
+      </BindingProperties>
+      <Events>
+        <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="batchUriNameCBActionPerformed"/>
+      </Events>
+    </Component>
+  </SubComponents>
+</Form>

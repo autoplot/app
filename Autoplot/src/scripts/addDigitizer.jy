@@ -1,0 +1,32 @@
+# title: Add Events Digitizer
+# label: Digitizer
+
+from org.das2.components import DataPointRecorder
+dpr= DataPointRecorder()
+
+addTab( 'digitizer', dpr )
+
+## add the box selector #########################
+dom= getDocumentModel()
+dasPlot= dom.plots[0].controller.dasPlot
+
+from org.das2.event import BoxSelectorMouseModule
+
+mm= BoxSelectorMouseModule.create( dasPlot, 'digitizer' )
+
+import java.util.LinkedHashMap
+
+def boxSelected(event):
+    x= event.getXRange().min()
+    y= event.getYRange().max()
+    map= java.util.LinkedHashMap()
+    map.put( "dx", event.getXRange().width() )
+    map.put( "dy", event.getYRange().width() )
+    dpr.addDataPoint( x, y, map )
+    
+mm.BoxSelected=boxSelected
+
+dasPlot.dasMouseInputAdapter.primaryModule= mm
+
+import javax
+javax.swing.JOptionPane.showMessageDialog( getViewWindow(),'Draw a box, and it will be recorded on the digitizer tab')

@@ -1,0 +1,71 @@
+#label: Aggregate All    # Note Autoplot gives it the same name when created.
+# This old script looks through all the URIs and makes aggregations from the URIs, and
+# this functionality is now part of Autoplot in org.virbo.autoplot.dom.DomOps.aggregateAll.
+
+from java.util.regex import Pattern
+from java.lang import String
+from java.util import Collections
+
+yyyy= "/\d{4}/"
+yyyymmdd= "(?<!\d)(\d{8})(?!\d)"  #"(\d{8})"
+yyyy_mm_dd= "\d{4}([\-_])\d{2}\1\d{2}"
+timerangePattern= 'timerange='
+
+version= "([Vv])\\d{2}" 
+
+count=0
+
+setStatus('busy: aggregating all...')
+
+oldDom= dom.copy()
+
+for dsf in dom.dataSourceFilters:
+   if ( dsf.uri==None ): continue
+   result= String( dsf.uri )
+
+   if ( Pattern.compile( timerangePattern ).matcher(result).find() ):
+      print 'already found timerange: ', result
+      continue
+
+   timeRange= ''
+      
+   m= Pattern.compile(yyyymmdd).matcher(result);
+   if ( m.find() ):
+       timeRange= m.group(0)
+   else:
+       m= Pattern.compile(yyyy_mm_dd).matcher(result);
+       if ( m.find() ):
+            timeRange= m.group(0);
+
+   print timeRange
+   if ( timeRange !='' ):
+       result= String( result.replaceFirst(yyyy, '/\\$Y/') )   # force to java strings so Jeremy doesn't have to learn python
+       result= String( result.replaceFirst(yyyymmdd, '\\$Y\\$m\\$d') )
+       result= String( result.replaceFirst(yyyy_mm_dd, '\\$Y$1\\$m$1\\$d' ) )
+                
+       result= String( result.replaceFirst(version, '$1..') )
+       if ( result.contains("?") ):
+            result= '%s&timerange=%s' % ( result, timeRange )
+       else:
+            result= '%s?timerange=%s' % ( result, timeRange )
+   
+   if ( result!=dsf.uri ):
+       print dsf.uri, '-->', result
+       count= count + 1
+       dsf.uri= result
+
+   for p in dom.controller.getPlotElementsFor(dsf):  # kludge to avoid reset range see ApplicationController.syncTo
+       p.controller.setResetComponent(False)
+       p.controller.setResetPlotElement(False)
+       p.controller.doResetRenderType( p.getRenderType() )
+       p.controller.setResetRenderType(False)
+       p.setAutoLabel( False )
+       p.setAutoComponent( False )
+       p.setAutoRenderType( False )
+
+setStatus('aggregated %d URIs.' % count )
+
+dom.syncTo( oldDom, Collections.singletonList( 'dataSourceFilters' ) )
+
+for d in dom.diffs(oldDom):
+  print d.getDescription()

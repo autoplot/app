@@ -1,0 +1,4 @@
+# demo reformatting with a script
+
+ds= getDataSet('http://www.autoplot.org/data/image/Capture_00158.jpg?channel=value')
+formatDataSet( ds, 'vap+bin:file://home/jbf/foo.bin' )

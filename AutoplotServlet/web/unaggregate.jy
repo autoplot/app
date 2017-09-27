@@ -1,0 +1,52 @@
+resourceURI= getParam( 'resourceURI', 'http://autoplot.org/data/C1_CP_EDI_EGD__$Y$m$d_V03.cef', 'example file to load' )
+timerange= getParam( 'timerange', '2005-02-12/2005-02-19', 'timerange to load' )
+
+fast= getParam( 'fast', 'F', 'Fast version doesn''t list remote folders', ['T','F'] )
+
+drtr= DatumRangeUtil.parseTimeRange(timerange)
+
+import time
+
+count=0
+
+if ( False ):
+  print params
+  print '# resourceURI='+resourceURI
+  print '# timerange='+timerange
+  print '# fast='+fast
+
+if ( fast=='T' ):
+   if ( resourceURI.find('$v')>-1 ):
+       raise Exception("fast mode doesn't support $v")
+   tp= TimeParser.create(resourceURI)
+   st= tp.format(drtr.min(),None)
+   dr= tp.parse( st,None ).getTimeRange()
+   
+   while ( dr.min().lt( drtr.max() ) ):
+      st= tp.format(dr.min(),None)
+      dr= dr.next()
+      print st
+      count= count+1
+
+else:
+    from org.das2.fsm import FileStorageModel
+    from org.das2.util.filesystem import FileSystem
+    i= FileStorageModel.splitIndex( resourceURI )
+
+    root= resourceURI[0:i]      # the static part of the name
+    template= resourceURI[i:]   # the templated part of the name
+
+    fs= FileSystem.create( root )
+    fsm= FileStorageModel.create( fs, template )
+
+    names= fsm.getNamesFor( DatumRangeUtil.parseTimeRange(timerange) )
+
+    for n in names:
+       print root + n 
+       count= count+1
+
+if ( count==0 ):
+   print '# '+resourceURI
+   print '# '+timerange
+   print '# none found.'
+

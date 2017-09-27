@@ -1,0 +1,29 @@
+# demos use of the progress monitor which is provided to scripts
+# as the variable "monitor".  Note too that switching variables when
+# plotting, like from "?result" to "?h", doesn't reload--results 
+# are cached.
+
+from time import sleep;
+from java.lang import System;
+
+n= 10000
+result= zeros( n )
+dep0= zeros( n )
+monitor.setTaskSize( n )
+monitor.started()
+t0= System.currentTimeMillis()
+
+for i in xrange( 0,n ):
+  if monitor.isCancelled():
+     break
+  monitor.setTaskProgress(i)
+  dt= System.currentTimeMillis() - t0
+  d= total( randn( 1000 ) )
+  result[i]= d
+  dep0[i]= i
+monitor.finished()
+
+result.putProperty( 'DEPEND_0', dep0 )
+
+h= histogram( result, -100,100,1 )
+

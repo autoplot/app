@@ -1,0 +1,57 @@
+<?xml version="1.0" encoding="utf-8"?> 
+<jnlp 
+    spec="1.0+"
+    codebase="*"
+    href="*">
+   
+    <information> 
+        <title>*</title>
+        <vendor>http://autoplot.org/</vendor>
+	<homepage href="http://autoplot.org/" />
+        <description>plots data from various sources, such as opendap, cdf, and netcdf using das2</description> 
+        <description kind="short">data plotter</description> 
+        <icon href="logo16x16.gif" width="16" height="16" />
+        <icon href="logo32x32.gif" width="32" height="32" />
+        <icon href="logo64x64.gif" width="64" height="64" />
+        <icon href="logo128x128.gif" width="128" height="128" />
+        <icon href="splash.gif" kind="splash" />
+        <offline-allowed/>
+        <shortcut online="true">
+            <desktop />
+            <menu submenu="autoplot" />
+        </shortcut>
+        <association mime-type="application/autoplot+xml" extensions="vap"/>
+        <association mime-type="application/x-cdf" extensions="cdf"/>        
+    </information>
+    
+    <security>
+        <all-permissions/>
+    </security>
+
+    <resources> 
+        <j2se version="1.6+" initial-heap-size="96m" max-heap-size="*" 
+              href="http://java.sun.com/products/autodl/j2se" >
+        </j2se>
+
+        <jar href="AutoplotVolatile.jar" />
+        <jar href="*" />
+
+        <extension name="cdf" href="*" />
+
+        <property name="jnlp.packEnabled" value="true"/>
+        <!-- this no longer has any effect: <property name="deployment.security.authenticator" value="false"/>-->
+
+        <property name="jnlp.autoplot.default.bookmarks" value="http://autoplot.org/data/demos.xml" />
+        <property name="sun.java2d.d3d" value="false" />  <!-- bug 953 -->
+        <property name="java.util.Arrays.useLegacyMergeSort" value="true" /> <!-- bug 1159 -->
+        <property name="http.agent" value="*" />
+        
+        <package name="gsfc.nssdc" part="cdf"  recursive="true" />
+        
+    </resources> 
+
+    <application-desc  main-class="org.autoplot.AutoplotUI">
+        <!-- see http://autoplot.org//developer#Command-Line_Arguments -->
+        <argument>*</argument>  <!-- this is to support the jnlp-server, which can insert a starting value -->
+    </application-desc>
+</jnlp> 

@@ -1,0 +1,39 @@
+<html><head><title>Test 026</title></head><body style="background-color: #6B6B6B; margin=0;"><div style="top: 0px; margin-right=0px; font-size:40px; background-color:black; color:white;height:100px;">TEST COMPARISON TABLE (Test026.java)</div><table border="1" style="width:100%; color:white;">
+<tr><td><strong>Test Number:</strong> 0</td><td><strong>Test: </strong> 2000-01-01T13:00Z to 2000-01-01T14:00</td><td><strong>Ref: </strong> 2000-01-01T13:00Z to 2000-01-01T14:00</td></tr>
+<tr><td><strong>Test Number:</strong> 1</td><td><strong>Test: </strong> 2000-01-01 13:00 to 14:00</td><td><strong>Ref: </strong> 2000-01-01T13:00Z to 2000-01-01T14:00</td></tr>
+<tr><td><strong>Test Number:</strong> 2</td><td><strong>Test: </strong> 2000-01-02</td><td><strong>Ref: </strong> 2000-01-02T00:00Z to 2000-01-03T00:00</td></tr>
+<tr><td><strong>Test Number:</strong> 3</td><td><strong>Test: </strong> 2000-002</td><td><strong>Ref: </strong> 2000-01-02T00:00Z to 2000-01-03T00:00</td></tr>
+<tr><td><strong>Test Number:</strong> 4</td><td><strong>Test: </strong> 2000-02</td><td><strong>Ref: </strong> 2000-02-01T00:00Z to 2000-03-01T00:00</td></tr>
+<tr><td><strong>Test Number:</strong> 5</td><td><strong>Test: </strong> 2000-feb</td><td><strong>Ref: </strong> 2000-02-01T00:00Z to 2000-03-01T00:00</td></tr>
+<tr><td><strong>Test Number:</strong> 6</td><td><strong>Test: </strong> 2000</td><td><strong>Ref: </strong> 2000-01-01T00:00Z to 2001-01-01T00:00</td></tr>
+<tr><td><strong>Test Number:</strong> 7</td><td><strong>Test: </strong> 2000-01-01 to 2000-01-05</td><td><strong>Ref: </strong> 2000-01-01T00:00Z to 2000-01-05T00:00</td></tr>
+<tr><td><strong>Test Number:</strong> 8</td><td><strong>Test: </strong> 2000-01-01 through 2000-01-05</td><td><strong>Ref: </strong> 2000-01-01T00:00Z to 2000-01-06T00:00</td></tr>
+<tr><td><strong>Test Number:</strong> 9</td><td><strong>Test: </strong> 2001-01-01 span 10 days</td><td><strong>Ref: </strong> 2001-01-01T00:00Z to 2001-01-11T00:00</td></tr>
+<tr><td><strong>Test Number:</strong> 10</td><td><strong>Test: </strong> 2000-01-01T13:00Z/PT1H</td><td><strong>Ref: </strong> 2000-01-01T13:00Z/2000-01-01T14:00</td></tr>
+<tr><td><strong>Test Number:</strong> 11</td><td><strong>Test: </strong> 20000101T1300Z/PT1H</td><td><strong>Ref: </strong> 2000-01-01T13:00Z/2000-01-01T14:00</td></tr>
+<tr><td><strong>Test Number:</strong> 12</td><td><strong>Test: </strong> 2000-01-01T00:00Z/P1D</td><td><strong>Ref: </strong> 2000-01-01T00:00Z/2000-01-01T24:00</td></tr>
+<tr><td><strong>Test Number:</strong> 13</td><td><strong>Test: </strong> 2007-03-01T13:00:00Z/P1Y2M10DT2H30M</td><td><strong>Ref: </strong> 2007-03-01T13:00:00Z/2008-05-11T15:30:00Z</td></tr>
+<tr><td><strong>Test Number:</strong> 14</td><td><strong>Test: </strong> 2007-03-01T13:00:00Z/2008-05-11T15:30:00Z</td><td><strong>Ref: </strong> 2007-03-01T13:00:00Z/2008-05-11T15:30:00Z</td></tr>
+<tr><td><strong>Test Number:</strong> 15</td><td><strong>Test: </strong> P1Y2M10DT2H30M/2008-05-11T15:30:00Z</td><td><strong>Ref: </strong> 2007-03-01T13:00:00Z/2008-05-11T15:30:00Z</td></tr>
+<tr><td><strong>Test Number:</strong> 16</td><td><strong>Test: </strong> 2007-009/2007-021</td><td><strong>Ref: </strong> 2007-01-09T00:00:00Z/2007-01-21T00:00:00Z</td></tr>
+<tr><td><strong>Test Number:</strong> 17</td><td><strong>Test: </strong> 2007-05-15/2007-05-30</td><td><strong>Ref: </strong> 2007-05-15T00:00:00Z/2007-05-30T00:00:00Z</td></tr>
+<tr><td><strong>Test Number:</strong> 18</td><td><strong>Test: </strong> 2007-03-01/P5D</td><td><strong>Ref: </strong> 2007-03-01T00:00:00Z/2007-03-06T00:00:00Z</td></tr>
+<tr><td><strong>Test Number:</strong> 19</td><td><strong>Test: </strong> P5D/2007-03-06</td><td><strong>Ref: </strong> 2007-03-01T00:00:00Z/2007-03-06T00:00:00Z</td></tr>
+<tr><td><strong>Test Number:</strong> 20</td><td><strong>Test: </strong> 2000-01-01T13:00/PT1H</td><td><strong>Ref: </strong> 2000-01-01 13:00 to 14:00</td></tr>
+<tr><td><strong>Test Number:</strong> 21</td><td><strong>Test: </strong> 20000101T13:00Z/14:00Z</td><td><strong>Ref: </strong> 2000-01-01 13:00 to 14:00</td></tr>
+<tr><td><strong>Test Number:</strong> 30</td><td><strong>Test: </strong> 1000</td><td><strong>Ref: </strong> 1000-01-01T00:00Z to 1001-01-01T00:00</td></tr>
+<tr><td><strong>Test Number:</strong> 31</td><td><strong>Test: </strong> 9000</td><td><strong>Ref: </strong> 9000-01-01T00:00Z to 9001-01-01T00:00</td></tr>
+<tr><td><strong>Test Number:</strong> 32</td><td><strong>Test: </strong> 2000-01-01T00:00:00 span .000001 sec</td><td><strong>Ref: </strong> 2000-01-01T00:00:00.000000 to 2000-01-01T00:00:00.000001</td></tr>
+<tr><td><strong>Test Number:</strong> 33</td><td><strong>Test: </strong> 2000-01-01T00:00:00 span .000000001 sec</td><td><strong>Ref: </strong> 2000-01-01T00:00:00.000000 to 2000-01-01T00:00:00.000000001</td></tr>
+<tr><td><strong>Test Number:</strong> 34</td><td><strong>Test: </strong> 2002-01-01T10:10:10 span .000000001 sec</td><td><strong>Ref: </strong> 2002-01-01T10:10:10.000000 to 2002-01-01T10:10:10.000000001</td></tr>
+<tr><td><strong>Test Number:</strong> 35</td><td><strong>Test: </strong> Aug 1969 through Sep 1970</td><td><strong>Ref: </strong> Aug 1 1969 to Oct 1 1970</td></tr>
+<tr><td><strong>Test Number:</strong> 36</td><td><strong>Test: </strong> 2004-12-03T20:19:59.990/PT.02S</td><td><strong>Ref: </strong> 2004-12-03 20:19:59.990 to 20:20:00.010</td></tr>
+<tr><td><strong>Test Number:</strong> 37</td><td><strong>Test: </strong> 2004-12-03T20:19:56.2/PT.2S</td><td><strong>Ref: </strong> 2004-12-03 20:19:56.200 to 20:19:56.400</td></tr>
+<tr><td><strong>Test Number:</strong> 40</td><td><strong>Test: </strong> P1D</td><td><strong>Ref: </strong> 2017-08-29 12:16 to 2017-08-30 12:16</td></tr>
+<tr><td><strong>Test Number:</strong> 41</td><td><strong>Test: </strong> PT1H</td><td><strong>Ref: </strong> 2017-08-30 11:16:41.113 to 12:16:41.113</td></tr>
+<tr><td><strong>Test Number:</strong> 42</td><td><strong>Test: </strong> orbit:rbspa-pp:403</td><td><strong>Ref: </strong> 2013-01-27T18:58:17.392Z to 2013-01-28T03:57:01.358Z</td></tr>
+<tr><td><strong>Test Number:</strong> 43</td><td><strong>Test: </strong> orbit:rbspa-pp:403-406</td><td><strong>Ref: </strong> 2013-01-27T18:58:17.392Z to 2013-01-29T06:53:13.619Z</td></tr>
+<tr><td><strong>Test Number:</strong> 44</td><td><strong>Test: </strong> 1972/now-P1D</td><td><strong>Ref: </strong> 1972-01-01T00:00/2017-08-29T12:16:41.113Z</td></tr>
+<tr><td><strong>Test Number:</strong> 45</td><td><strong>Test: </strong> now-P10D/now-P1D</td><td><strong>Ref: </strong> 2017-08-20 12:16 to 2017-08-29 12:16</td></tr>
+<tr><td><strong>Test Number:</strong> 46</td><td><strong>Test: </strong> P1M/lastmonth</td><td><strong>Ref: </strong> 2017-07-01T00:00:00.000Z/2017-08-01T00:00:00.000Z</td></tr>
+</table></body></html>

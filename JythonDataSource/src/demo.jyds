@@ -1,0 +1,9 @@
+# shows very simple load datasets and take difference
+
+ds1= getDataSet( "http://autoplot.org/data/image/Capture_00158.jpg?channel=greyscale" )
+ds2= getDataSet( "http://autoplot.org/data/image/Capture_00159.jpg?channel=greyscale" )
+
+result1= add( ds1, ds2 )
+result2= ds1 + ds2           # python operators are overloaded, this is the same
+
+result= ds2 - ds1

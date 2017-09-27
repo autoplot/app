@@ -1,0 +1,54 @@
+<!--
+To change this template, choose Tools | Templates
+and open the template in the editor.
+-->
+<!DOCTYPE html>
+<html>
+    <head>
+        <title></title>
+        <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+        <script src="http://ajax.googleapis.com/ajax/libs/jquery/1.10.1/jquery.min.js"></script>
+        <script type="text/javascript" src="binaryajax.js"></script>
+        <script type="text/javascript" src="imageinfo.js" ></script>        
+		<script type="text/javascript" src="cross.js" ></script>
+		<script type="text/javascript" src="prepimage.js" ></script>
+		<script type="text/javascript" src="tests.js" ></script>
+        <script>
+			// TODO: binaryajax.js makes an AJAX request for the image which has
+			// already been loaded.  This is not necessary.  Modify binaryajax.js
+			// so that it looks to see if image has been loaded before making AJAX request.
+			
+     		// Global Object that contains info about each image.		
+        		var PLOTINFO = {};
+ 			function report(results) {
+ 				$("#testresults").text("Pass: " + results.Npass + "; Fail: " + results.Nfail);
+ 				console.log(results);
+ 			}
+
+     		// When DOM is ready (but images may not be loaded), start working.
+     		$().ready(function () {
+     			// Iterate over all images in DOM.
+	        		$('img').each(function () {
+	        			prepimage($(this).attr("id"));		        			
+	        		});
+     			$("#runtests").on('click', function () {tests(report)});
+     		})
+        </script>
+    </head>
+    <body>
+        <H1>Digitizer Demo</H1>
+        <p>This is a demonstration of how axis metadata can be extracted from Autoplot images and used for a digitizer.</p>
+		
+		<button id="runtests" type="button">Run tests</button>
+        <div id="testresults"></div>
+        <small>version: 20130706_1031</small>        
+        <div>
+        		<div id="digitizer1">(data will be displayed here)</div>
+            <img id="canvas1" info="digitizer1" src="extractpngmetadata.png" border="1">
+        </div>
+        <div>
+        		<div id="digitizer2">(data will be displayed here)</div>
+            <img id="canvas2" info="digitizer2" src="extractpngmetadata.png" border="1">
+        </div>
+    </body>
+</html>

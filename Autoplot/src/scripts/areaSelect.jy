@@ -1,0 +1,31 @@
+# this is like the addDigitizer, but records the range.
+
+from org.das2.components import DataPointRecorder
+import java.util.HashMap
+
+dpr= DataPointRecorder()
+
+addTab( 'digitizer', dpr )
+
+## add the box selector to the current plot #########################
+plot= dom.controller.plot.controller.dasPlot
+
+from org.das2.event import BoxSelectorMouseModule,CrossHairRenderer
+
+mm= BoxSelectorMouseModule.create( plot, 'digitizer' )
+mm.keyEvents= True  # keystoke will accept and document the gesture
+mm.releaseEvents= False
+
+def boxSelected( event ):
+   x= java.util.HashMap()
+   x['dx']= event.getXRange().width()
+   x['dy']= event.getYRange().width()
+   x['key']= event.getPlane('keyChar')
+   dpr.addDataPoint( event.getXRange().min(), event.getYRange().min(), x )
+   setStatus('range added to digitizer tab: '+event.getXRange().toString() + ' ' + event.getYRange().toString() )
+
+mm.BoxSelected=boxSelected
+
+plot.getDasMouseInputAdapter().setPrimaryModule(mm)
+
+showMessageDialog('drag a box and press a key to select the box.')

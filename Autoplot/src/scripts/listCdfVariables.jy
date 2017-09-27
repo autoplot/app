@@ -1,0 +1,10 @@
+file= 'http://cdaweb.sci.gsfc.nasa.gov/sp_phys/data/noaa/noaa08/1985/noaa08_meped1min_sem_19851014_v01.cdf?'
+
+from org.virbo.datasource import DataSetURI
+completions = DataSetURI.getCompletions( file, len(file), monitor );
+
+for i in completions:
+  if ( i.completion[-1]!='=' ):
+     print '== ' + i.completion + ' =='
+     ds= getDataSet( i.completion )
+     print ds.property(QDataSet.UNITS), extent(ds)
