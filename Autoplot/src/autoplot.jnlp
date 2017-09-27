@@ -72,7 +72,7 @@
 
     <application-desc  main-class="org.autoplot.AutoplotUI">
         <!-- see http://autoplot.org//developer#Command-Line_Arguments -->
-        <!-- TODO: restore dash dash nop argument which we removed to see if that would fix signatures. -->
+        <argument>--nop</argument> <!-- this is to support the jnlp-server, which can insert a starting value -->
     </application-desc>
 </jnlp> 
 
