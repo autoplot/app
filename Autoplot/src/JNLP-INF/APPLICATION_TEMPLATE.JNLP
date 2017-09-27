@@ -16,7 +16,7 @@
         <icon href="logo128x128.gif" width="128" height="128" />
         <icon href="splash.gif" kind="splash" />
         <offline-allowed/>
-        <shortcut online="true">
+        <shortcut online="false" install="true">
             <desktop />
             <menu submenu="autoplot" />
         </shortcut>
@@ -29,14 +29,12 @@
     </security>
 
     <resources> 
-        <j2se version="1.6+" initial-heap-size="96m" max-heap-size="*" 
+        <j2se version="*" initial-heap-size="*" max-heap-size="*" 
               href="http://java.sun.com/products/autodl/j2se" >
         </j2se>
 
         <jar href="AutoplotVolatile.jar" />
-        <jar href="*" />
-
-        <extension name="cdf" href="*" />
+        <jar href="*" /> <!-- AutoplotStable.jar moves around -->
 
         <property name="jnlp.packEnabled" value="true"/>
         <!-- this no longer has any effect: <property name="deployment.security.authenticator" value="false"/>-->
