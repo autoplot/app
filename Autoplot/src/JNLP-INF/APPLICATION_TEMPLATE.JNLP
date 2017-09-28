@@ -37,7 +37,6 @@
         <jar href="*" /> <!-- AutoplotStable.jar moves around -->
 
         <property name="jnlp.packEnabled" value="true"/>
-        <!-- this no longer has any effect: <property name="deployment.security.authenticator" value="false"/>-->
 
         <property name="jnlp.autoplot.default.bookmarks" value="http://autoplot.org/data/demos.xml" />
         <property name="sun.java2d.d3d" value="false" />  <!-- bug 953 -->
