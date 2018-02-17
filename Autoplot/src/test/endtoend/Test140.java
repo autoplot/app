@@ -1,23 +1,25 @@
-/*
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
- */
 
 package test.endtoend;
 
+import java.awt.image.BufferedImage;
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PrintStream;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.io.PrintWriter;
 import java.net.URL;
 import java.net.URLEncoder;
+import java.security.MessageDigest;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map.Entry;
+import javax.imageio.ImageIO;
 import org.das2.util.filesystem.HtmlUtil;
 import org.das2.util.monitor.CancelledOperationException;
 import org.das2.util.monitor.NullProgressMonitor;
@@ -75,26 +77,33 @@ public class Test140 {
      * @return the ID of a product to test against a reference.
      * @throws Exception
      */
-    private static String do1( String uri, int iid, boolean doTest ) throws Exception {
+    private static String do1( String uri, int iid, boolean doTest, boolean isPublic ) throws Exception {
 
         System.err.printf( "== %03d ==\n", iid );
-        System.err.printf( "uri: %s\n", uri );
+        if ( isPublic ) {
+            System.err.printf( "uri: %s\n", uri );
+        } else {
+            System.err.printf( "uri: (uri is not public)\n" );
+        }
 
         String label= String.format( "test%03d_%03d", testid, iid );
 
-        double tsec;
+        double tsec,psec;
         long t0= System.currentTimeMillis();
         tsec= t0; // for non-vap non-uri
+        psec= t0;
         
         QDataSet ds=null;
         if ( uri.endsWith(".vap") || uri.contains(".vap?timerange=") ) {
-            URISplit split= URISplit.parse(uri);
-            try ( InputStream in = DataSetURI.getInputStream( split.resourceUri, new NullProgressMonitor() ) ) {
-                Application dom= StatePersistence.restoreState( in, URISplit.parseParams( split.params ) );
-                for ( DataSourceFilter dsf : dom.getDataSourceFilters() ) {
-                    System.err.printf( "  %s: %s\n", dsf.getId(), dsf.getUri() );
+            if ( isPublic ) {
+                URISplit split= URISplit.parse(uri);
+                try ( InputStream in = DataSetURI.getInputStream( split.resourceUri, new NullProgressMonitor() ) ) {
+                    Application dom= StatePersistence.restoreState( in, URISplit.parseParams( split.params ) );
+                    for ( DataSourceFilter dsf : dom.getDataSourceFilters() ) {
+                        System.err.printf( "  %s: %s\n", dsf.getId(), dsf.getUri() );
+                    }
+                    System.err.println( "  timerange: "+ dom.getTimeRange() );
                 }
-                System.err.println( "  timerange: "+ dom.getTimeRange() );
             }
                     
             // for vap files, load the vap and grab the first dataset.
@@ -118,20 +127,25 @@ public class Test140 {
             ds= org.autoplot.jythonsupport.Util.getDataSet( uri );
             tsec= (System.currentTimeMillis()-t0)/1000.;
             if ( ds!=null ) {
-                MutablePropertyDataSet hist= (MutablePropertyDataSet) Ops.autoHistogram(ds);
-                hist.putProperty( QDataSet.TITLE, uri );
+                if ( isPublic ) {
 
-                hist.putProperty( QDataSet.LABEL, label );
-                formatDataSet( hist, label+".qds");
+                    MutablePropertyDataSet hist= (MutablePropertyDataSet) Ops.autoHistogram(ds);
+                    hist.putProperty( QDataSet.TITLE, uri );
 
-                QDataSet dep0= (QDataSet) ds.property( QDataSet.DEPEND_0 );
-                if ( dep0!=null ) {
-                    MutablePropertyDataSet hist2= (MutablePropertyDataSet) Ops.autoHistogram(dep0);
-                    formatDataSet( hist2, label+".dep0.qds");
+                    hist.putProperty( QDataSet.LABEL, label );
+                    formatDataSet( hist, label+".qds");
+
+                    QDataSet dep0= (QDataSet) ds.property( QDataSet.DEPEND_0 );
+                    if ( dep0!=null ) {
+                        MutablePropertyDataSet hist2= (MutablePropertyDataSet) Ops.autoHistogram(dep0);
+                        formatDataSet( hist2, label+".dep0.qds");
+                    } else {
+                        try (PrintWriter pw = new PrintWriter( label+".dep0.qds" )) {
+                            pw.println("no dep0");
+                        }
+                    }
                 } else {
-                    PrintWriter pw= new PrintWriter( label+".dep0.qds" );
-                    pw.println("no dep0");
-                    pw.close();
+                    System.err.println("TODO Turkey: Make a hash of the .qds of the data");
                 }
 
                 plot( ds );
@@ -156,9 +170,14 @@ public class Test140 {
                 throw new IllegalArgumentException("uri results in null dataset: "+uri );
                 
             }
+            psec= (System.currentTimeMillis()-t0)/1000.;
         }
 
-        System.err.println( "dataset: "+ds );
+        if ( isPublic ) {
+            System.err.println( "dataset: "+ds );
+        } else {
+            System.err.println( "dataset: (data is not public)" );
+        }
         
         String result;
 
@@ -177,6 +196,9 @@ public class Test140 {
             if ( id.length()>150 ) { // ext4 filename length limits...
                 id= id.substring(0,150) + "..." + String.format( "%016d", id.hashCode() );
             }
+            if ( !isPublic ) {
+                id= String.format("%08x",id.hashCode());
+            }
             name= String.format( "test%03d_%s", testid, id );
             result= name;
         } else {
@@ -185,10 +207,36 @@ public class Test140 {
         }
         
         String name1= getUniqueFilename( name, ".png", true );
-        writeToPng( name1 );
         
-        System.err.printf( "wrote to file: %s\n", name1 );
-        System.err.printf( "Read in %9.3f seconds (%s): %s\n", tsec, label, uri );
+        if ( isPublic ) {
+            writeToPng( name1 );
+        } else {
+            writeToPng( "/home/jbf/ct/hudson/privateArtifacts/"+name1 );
+            int width= getApplicationModel().getDocumentModel().getController().getCanvas().getWidth();
+            int height= getApplicationModel().getDocumentModel().getController().getCanvas().getHeight();
+            BufferedImage image = getApplicationModel().getDocumentModel().getController().getCanvas().getController().getDasCanvas().getImage( width, height );
+            ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
+            ImageIO.write(image, "png", outputStream);
+            byte[] data = outputStream.toByteArray();
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            md.update(data);
+            byte[] hash = md.digest();
+            try (PrintStream bout = new PrintStream( new FileOutputStream( getUniqueFilename( name, ".txt", true ) ) )) {
+                for ( byte b: hash ) {
+                    bout.println(String.format("%03d",b));
+                }
+            }
+        }
+        
+        if ( isPublic ) {
+            System.err.printf( "wrote to file: %s\n", name1 );
+            System.err.printf( "Read in %9.3f seconds (%s): %s\n", tsec, label, uri );
+            System.err.printf( "Plot in %9.3f seconds (%s): %s\n", psec, label, uri );
+        } else {
+            System.err.printf( "wrote to file: %s\n", "/home/jbf/ct/hudson/privateArtifacts/"+name1  );
+            System.err.printf( "Read in %9.3f seconds (%s): %s\n", tsec, label, "(uri is not public)" );
+            System.err.printf( "Plot in %9.3f seconds (%s): %s\n", psec, label, "(uri is not public)" );            
+        }
 
         if ( uri.endsWith(".vap") || uri.contains(".vap?timerange=") ) {
             reset();
@@ -215,7 +263,7 @@ public class Test140 {
                 } else {
                     String uri= ((Bookmark.Item)b).getUri();
                     try {
-                        do1( uri, iid, true );
+                        do1(uri, iid, true, true );
                     } catch ( Exception ex ) {
                         exceptions.put( uri, ex );
                     } finally {
@@ -246,7 +294,7 @@ public class Test140 {
             for ( URL url1 : result ) {
                 String uri= url1.toString();
                 try {
-                    do1( url1.toString(), iid, true );
+                    do1(url1.toString(), iid, true, true );
                 } catch (Exception ex) {
                     exceptions.put( uri, ex );
                     exceptionNumbers.put( uri, iid );
@@ -280,9 +328,20 @@ public class Test140 {
                     //    System.err.println("Here at doHistory #"+iid+": "+s);
                     //}
                     String[] ss= s.split("\t");
-                    String uri= ss[ss.length-1];
+                    String uri= ss[ss.length-1].trim();
+                    
+                    // private URIs should be <id>TAB<URI> or <character>SPACE<URI>
+                    boolean publc= true;
+                    if ( ss.length>1 ) {
+                        boolean isPrivate= ss[ss.length-2].trim().startsWith("x");
+                        publc= !isPrivate;
+                    }
+                    if ( uri.startsWith("x ") ) {
+                        uri= uri.substring(2).trim();
+                        publc= false;
+                    }
                     try {
-                        do1( uri, iid, true );
+                        do1(uri, iid, true, publc );
                     } catch ( Exception ex ) {
                         exceptions.put( uri, ex );
                         exceptionNumbers.put( uri, iid );
@@ -320,7 +379,8 @@ public class Test140 {
             //args= new String[] { "142", "http://jfaden.net/~jbf/autoplot/test142.txt" };
             //args= new String[] { "147", "http://autoplot.org//developer.listOfUris" };
             //args= new String[] { "148", "http://www-pw.physics.uiowa.edu/~jbf/pdsppi/examples/pdsppi.xml" };
-            args= new String[] { "149", "http://sarahandjeremy.net/~jbf/" };
+            //args= new String[] { "149", "http://sarahandjeremy.net/~jbf/" };
+            args= new String[] { "099", "/home/jbf/ct/hudson/test099.txt" };
         }
         testid= Integer.parseInt( args[0] );
         int iid= 0;

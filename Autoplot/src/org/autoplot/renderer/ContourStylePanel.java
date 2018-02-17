@@ -10,6 +10,7 @@ import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import javax.swing.DefaultComboBoxModel;
 import org.das2.graph.Renderer;
 import org.jdesktop.beansbinding.AutoBinding.UpdateStrategy;
 import org.jdesktop.beansbinding.BeanProperty;
@@ -17,6 +18,7 @@ import org.jdesktop.beansbinding.BindingGroup;
 import org.jdesktop.beansbinding.Bindings;
 import org.autoplot.PlotStylePanel;
 import org.autoplot.dom.PlotElement;
+import org.das2.graph.ContoursRenderer;
 
 /**
  * GUI for controlling a ContoursRenderer.
@@ -37,6 +39,8 @@ public class ContourStylePanel extends javax.swing.JPanel implements PlotStylePa
                 update();
             }
         });
+        formatComboBox.setModel(new DefaultComboBoxModel<>( new String[] { "","%.1f",".2f","%d","%.1e" } ));
+        labelOrientationComboBox.setModel(new DefaultComboBoxModel<>( new String[] { "","N" } ));
     }
 
     BindingGroup elementBindingContext;
@@ -65,10 +69,14 @@ public class ContourStylePanel extends javax.swing.JPanel implements PlotStylePa
     private void update() {
         String oldValue= this.control;
         Map<String,String> controls= new LinkedHashMap();
-        controls.put( "levels", levelsTextField.getText() );
-        controls.put( "labels", Renderer.encodeBooleanControl( drawLabelsCheckBox.isSelected() ) );
-        controls.put( Renderer.CONTROL_KEY_LINE_THICK, String.valueOf(lineThickSpinner.getValue()) );
+        controls.put( ContoursRenderer.CONTROL_KEY_LEVELS, levelsTextField.getText() );
+        controls.put( ContoursRenderer.CONTROL_KEY_LABELS, Renderer.encodeBooleanControl( drawLabelsCheckBox.isSelected() ) );
+        controls.put( Renderer.CONTROL_KEY_LINE_THICK, String.format("%.1f",lineThickSpinner.getValue()) );
+        controls.put( ContoursRenderer.CONTROL_KEY_LABEL_CADENCE, labelCadenceComboBox.getSelectedItem().toString() );
         controls.put( Renderer.CONTROL_KEY_COLOR, Renderer.encodeColorControl( (Color)colorEditor1.getValue() ) );
+        controls.put( ContoursRenderer.CONTROL_KEY_FORMAT, formatComboBox.getSelectedItem().toString() );
+        controls.put( Renderer.CONTROL_KEY_FONT_SIZE, fontSizeComboBox.getSelectedItem().toString() );
+        controls.put( ContoursRenderer.CONTROL_KEY_LABEL_ORIENT, labelOrientationComboBox.getSelectedItem().toString() );
         String c= Renderer.formatControl(controls);
         this.control= c;
         firePropertyChange( Renderer.PROP_CONTROL, oldValue, c );
@@ -76,10 +84,14 @@ public class ContourStylePanel extends javax.swing.JPanel implements PlotStylePa
     
     private void updateGUI( Renderer renderer ) {
         this.control= renderer.getControl();
-        levelsTextField.setText( renderer.getControl( "levels", "0." ) );
-        drawLabelsCheckBox.setSelected( renderer.getBooleanControl( "labels", false ) );
+        levelsTextField.setText( renderer.getControl( ContoursRenderer.CONTROL_KEY_LEVELS, "0." ) );
+        drawLabelsCheckBox.setSelected( renderer.getBooleanControl( ContoursRenderer.CONTROL_KEY_LABELS, false ) );
         lineThickSpinner.setValue( renderer.getDoubleControl( Renderer.CONTROL_KEY_LINE_THICK, 1.0 ) );
+        labelCadenceComboBox.setSelectedItem( renderer.getControl( ContoursRenderer.CONTROL_KEY_LABEL_CADENCE, "100px") );    
         colorEditor1.setValue( renderer.getColorControl( Renderer.CONTROL_KEY_COLOR, Color.BLACK ) );
+        formatComboBox.setSelectedItem( renderer.getControl( ContoursRenderer.CONTROL_KEY_FORMAT, "" ) );
+        fontSizeComboBox.setSelectedItem( renderer.getControl( Renderer.CONTROL_KEY_FONT_SIZE, "" ) );
+        labelOrientationComboBox.setSelectedItem( renderer.getControl( ContoursRenderer.CONTROL_KEY_LABEL_ORIENT, "" ));
     }
     
 
@@ -134,6 +146,14 @@ public class ContourStylePanel extends javax.swing.JPanel implements PlotStylePa
         jLabel3 = new javax.swing.JLabel();
         colorPanel = new javax.swing.JPanel();
         jLabel1 = new javax.swing.JLabel();
+        jLabel4 = new javax.swing.JLabel();
+        formatComboBox = new javax.swing.JComboBox<>();
+        jLabel5 = new javax.swing.JLabel();
+        fontSizeComboBox = new javax.swing.JComboBox<>();
+        jLabel7 = new javax.swing.JLabel();
+        labelCadenceComboBox = new javax.swing.JComboBox<>();
+        jLabel8 = new javax.swing.JLabel();
+        labelOrientationComboBox = new javax.swing.JComboBox<>();
 
         jPanel1.setBorder(javax.swing.BorderFactory.createTitledBorder("Contour"));
 
@@ -175,26 +195,92 @@ public class ContourStylePanel extends javax.swing.JPanel implements PlotStylePa
 
         jLabel1.setText("Levels:");
 
+        jLabel4.setText("Format:");
+
+        formatComboBox.setEditable(true);
+        formatComboBox.setModel(new javax.swing.DefaultComboBoxModel<>(new String[] { "%d", "%.1f", "%.2f", "%e" }));
+        formatComboBox.addItemListener(new java.awt.event.ItemListener() {
+            public void itemStateChanged(java.awt.event.ItemEvent evt) {
+                formatComboBoxItemStateChanged(evt);
+            }
+        });
+
+        jLabel5.setText("Font Size:");
+
+        fontSizeComboBox.setEditable(true);
+        fontSizeComboBox.setModel(new javax.swing.DefaultComboBoxModel<>(new String[] { "8pt", "12pt", ".8em", "1.2em" }));
+        fontSizeComboBox.addItemListener(new java.awt.event.ItemListener() {
+            public void itemStateChanged(java.awt.event.ItemEvent evt) {
+                fontSizeComboBoxItemStateChanged(evt);
+            }
+        });
+
+        jLabel7.setText("Label Cadence:");
+
+        labelCadenceComboBox.setEditable(true);
+        labelCadenceComboBox.setModel(new javax.swing.DefaultComboBoxModel<>(new String[] { "100px", "15em" }));
+        labelCadenceComboBox.addItemListener(new java.awt.event.ItemListener() {
+            public void itemStateChanged(java.awt.event.ItemEvent evt) {
+                labelCadenceComboBoxItemStateChanged(evt);
+            }
+        });
+
+        jLabel8.setText("Label Orientation:");
+
+        labelOrientationComboBox.setModel(new javax.swing.DefaultComboBoxModel<>(new String[] { "\"\"", "up" }));
+        labelOrientationComboBox.addItemListener(new java.awt.event.ItemListener() {
+            public void itemStateChanged(java.awt.event.ItemEvent evt) {
+                labelOrientationComboBoxItemStateChanged(evt);
+            }
+        });
+
         javax.swing.GroupLayout jPanel1Layout = new javax.swing.GroupLayout(jPanel1);
         jPanel1.setLayout(jPanel1Layout);
         jPanel1Layout.setHorizontalGroup(
             jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(jPanel1Layout.createSequentialGroup()
                 .addContainerGap()
-                .addGroup(jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING)
-                    .addComponent(jLabel3, javax.swing.GroupLayout.DEFAULT_SIZE, 276, Short.MAX_VALUE)
-                    .addGroup(javax.swing.GroupLayout.Alignment.LEADING, jPanel1Layout.createSequentialGroup()
-                        .addComponent(jLabel2)
-                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addComponent(lineThickSpinner, javax.swing.GroupLayout.PREFERRED_SIZE, 61, javax.swing.GroupLayout.PREFERRED_SIZE))
-                    .addGroup(javax.swing.GroupLayout.Alignment.LEADING, jPanel1Layout.createSequentialGroup()
-                        .addComponent(jLabel6)
-                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                        .addComponent(colorPanel, javax.swing.GroupLayout.PREFERRED_SIZE, 89, javax.swing.GroupLayout.PREFERRED_SIZE))
-                    .addComponent(drawLabelsCheckBox, javax.swing.GroupLayout.Alignment.LEADING)
-                    .addComponent(jLabel1, javax.swing.GroupLayout.Alignment.LEADING, javax.swing.GroupLayout.PREFERRED_SIZE, 244, javax.swing.GroupLayout.PREFERRED_SIZE)
-                    .addComponent(levelsTextField))
-                .addContainerGap())
+                .addGroup(jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                    .addGroup(jPanel1Layout.createSequentialGroup()
+                        .addGap(12, 12, 12)
+                        .addGroup(jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                            .addGroup(jPanel1Layout.createSequentialGroup()
+                                .addGroup(jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                                    .addComponent(jLabel4)
+                                    .addComponent(jLabel5))
+                                .addGap(47, 47, 47)
+                                .addGroup(jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING, false)
+                                    .addComponent(formatComboBox, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                                    .addGroup(jPanel1Layout.createSequentialGroup()
+                                        .addComponent(fontSizeComboBox, 0, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                                        .addContainerGap(35, Short.MAX_VALUE))))
+                            .addGroup(jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING, false)
+                                .addGroup(javax.swing.GroupLayout.Alignment.LEADING, jPanel1Layout.createSequentialGroup()
+                                    .addComponent(jLabel8)
+                                    .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                                    .addComponent(labelOrientationComboBox, 0, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                                .addGroup(javax.swing.GroupLayout.Alignment.LEADING, jPanel1Layout.createSequentialGroup()
+                                    .addComponent(jLabel7)
+                                    .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.UNRELATED)
+                                    .addComponent(labelCadenceComboBox, javax.swing.GroupLayout.PREFERRED_SIZE, 132, javax.swing.GroupLayout.PREFERRED_SIZE)))))
+                    .addGroup(jPanel1Layout.createSequentialGroup()
+                        .addGroup(jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                            .addGroup(jPanel1Layout.createSequentialGroup()
+                                .addGroup(jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                                    .addGroup(jPanel1Layout.createSequentialGroup()
+                                        .addComponent(jLabel2)
+                                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                                        .addComponent(lineThickSpinner, javax.swing.GroupLayout.PREFERRED_SIZE, 61, javax.swing.GroupLayout.PREFERRED_SIZE))
+                                    .addGroup(jPanel1Layout.createSequentialGroup()
+                                        .addComponent(jLabel6)
+                                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                                        .addComponent(colorPanel, javax.swing.GroupLayout.PREFERRED_SIZE, 132, javax.swing.GroupLayout.PREFERRED_SIZE))
+                                    .addComponent(jLabel1, javax.swing.GroupLayout.PREFERRED_SIZE, 244, javax.swing.GroupLayout.PREFERRED_SIZE)
+                                    .addComponent(drawLabelsCheckBox))
+                                .addGap(0, 0, Short.MAX_VALUE))
+                            .addComponent(levelsTextField)
+                            .addComponent(jLabel3, javax.swing.GroupLayout.Alignment.TRAILING, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                        .addContainerGap())))
         );
         jPanel1Layout.setVerticalGroup(
             jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
@@ -215,7 +301,23 @@ public class ContourStylePanel extends javax.swing.JPanel implements PlotStylePa
                     .addComponent(colorPanel, javax.swing.GroupLayout.Alignment.TRAILING, javax.swing.GroupLayout.PREFERRED_SIZE, 29, javax.swing.GroupLayout.PREFERRED_SIZE))
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                 .addComponent(drawLabelsCheckBox)
-                .addContainerGap(106, Short.MAX_VALUE))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addGroup(jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(jLabel4)
+                    .addComponent(formatComboBox, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addGap(4, 4, 4)
+                .addGroup(jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(jLabel5)
+                    .addComponent(fontSizeComboBox, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addGroup(jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(jLabel7)
+                    .addComponent(labelCadenceComboBox, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addGroup(jPanel1Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(jLabel8)
+                    .addComponent(labelOrientationComboBox, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addContainerGap(37, Short.MAX_VALUE))
         );
 
         javax.swing.GroupLayout layout = new javax.swing.GroupLayout(this);
@@ -246,16 +348,40 @@ public class ContourStylePanel extends javax.swing.JPanel implements PlotStylePa
         update();
     }//GEN-LAST:event_levelsTextFieldFocusLost
 
+    private void formatComboBoxItemStateChanged(java.awt.event.ItemEvent evt) {//GEN-FIRST:event_formatComboBoxItemStateChanged
+        update();
+    }//GEN-LAST:event_formatComboBoxItemStateChanged
+
+    private void fontSizeComboBoxItemStateChanged(java.awt.event.ItemEvent evt) {//GEN-FIRST:event_fontSizeComboBoxItemStateChanged
+        update();
+    }//GEN-LAST:event_fontSizeComboBoxItemStateChanged
+
+    private void labelCadenceComboBoxItemStateChanged(java.awt.event.ItemEvent evt) {//GEN-FIRST:event_labelCadenceComboBoxItemStateChanged
+        update();
+    }//GEN-LAST:event_labelCadenceComboBoxItemStateChanged
+
+    private void labelOrientationComboBoxItemStateChanged(java.awt.event.ItemEvent evt) {//GEN-FIRST:event_labelOrientationComboBoxItemStateChanged
+        update();
+    }//GEN-LAST:event_labelOrientationComboBoxItemStateChanged
+
 
     // Variables declaration - do not modify//GEN-BEGIN:variables
     private org.das2.components.propertyeditor.ColorEditor colorEditor1;
     private javax.swing.JPanel colorPanel;
     private javax.swing.JCheckBox drawLabelsCheckBox;
+    private javax.swing.JComboBox<String> fontSizeComboBox;
+    private javax.swing.JComboBox<String> formatComboBox;
     private javax.swing.JLabel jLabel1;
     private javax.swing.JLabel jLabel2;
     private javax.swing.JLabel jLabel3;
+    private javax.swing.JLabel jLabel4;
+    private javax.swing.JLabel jLabel5;
     private javax.swing.JLabel jLabel6;
+    private javax.swing.JLabel jLabel7;
+    private javax.swing.JLabel jLabel8;
     private javax.swing.JPanel jPanel1;
+    private javax.swing.JComboBox<String> labelCadenceComboBox;
+    private javax.swing.JComboBox<String> labelOrientationComboBox;
     private javax.swing.JTextField levelsTextField;
     private javax.swing.JSpinner lineThickSpinner;
     // End of variables declaration//GEN-END:variables

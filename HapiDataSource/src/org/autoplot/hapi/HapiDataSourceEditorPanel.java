@@ -4,6 +4,7 @@ package org.autoplot.hapi;
 import java.awt.Component;
 import java.awt.Desktop;
 import java.awt.Dimension;
+import java.awt.Frame;
 import java.awt.Window;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -11,6 +12,7 @@ import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
+import java.io.File;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.net.MalformedURLException;
@@ -19,8 +21,10 @@ import java.net.URL;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.text.ParseException;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -29,10 +33,13 @@ import javax.swing.BoxLayout;
 import javax.swing.DefaultComboBoxModel;
 import javax.swing.DefaultListModel;
 import javax.swing.JCheckBox;
+import javax.swing.JDialog;
 import javax.swing.JEditorPane;
+import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
+import javax.swing.JTextPane;
 import javax.swing.SwingUtilities;
 import javax.swing.event.HyperlinkEvent;
 import javax.swing.event.HyperlinkListener;
@@ -51,9 +58,11 @@ import org.json.JSONException;
 import org.json.JSONObject;
 import org.autoplot.datasource.DataSetSelector;
 import org.autoplot.datasource.DataSourceEditorPanel;
+import org.autoplot.datasource.DataSourceUtil;
 import org.autoplot.datasource.RecentComboBox;
 import org.autoplot.datasource.TimeRangeTool;
 import org.autoplot.datasource.URISplit;
+import org.das2.util.FileUtil;
 
 /**
  * Swing editor for HAPI URIs
@@ -115,6 +124,7 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         
     private String currentParameters= null;
     private URL currentServer= null;
+    private DatumRange currentRange= null;
     private String currentId= null;
     private String currentExtra=null;
     private int lastParamIndex= -1; // the index of the last parameter selection.
@@ -190,11 +200,27 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         } );
     }
 
-    TickleTimer resetVariableTimer= new TickleTimer( 500, new PropertyChangeListener() {
+    TickleTimer resetVariableTimer= new TickleTimer( 100, new PropertyChangeListener() {
         @Override
         public void propertyChange(PropertyChangeEvent evt) {
             try {
-                resetVariable( new URL( (String)serversComboBox.getSelectedItem() ), idsList2.getSelectedValue() );  
+                String s= idsList2.getSelectedValue();
+                if ( s!=null ) {
+                    resetVariable( new URL( (String)serversComboBox.getSelectedItem() ), idsList2.getSelectedValue() );  
+                } else {
+                    parametersPanel.removeAll();
+                    parametersPanel.add(new JLabel(" "));
+//                    JEditorPane p= new JEditorPane();
+//                    try {
+//                        p.setPage( new URL( (String)serversComboBox.getSelectedItem() ));
+//                        parametersPanel.add( p );
+//                    } catch (IOException ex) {
+//                        Logger.getLogger(HapiDataSourceEditorPanel.class.getName()).log(Level.SEVERE, null, ex);
+//                    }
+                    
+                    titleLabel.setText(" ");
+                    
+                }
             } catch (MalformedURLException ex) {
                 JOptionPane.showMessageDialog( parametersPanel, ex.toString() );
             }
@@ -253,15 +279,17 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         setAllB = new javax.swing.JButton();
         extraInfoButton = new javax.swing.JButton();
         titleLabel = new javax.swing.JLabel();
+        cachedFileButton = new javax.swing.JButton();
         jPanel1 = new javax.swing.JPanel();
         jScrollPane2 = new javax.swing.JScrollPane();
         idsList2 = new javax.swing.JList<>();
         clearButton = new javax.swing.JButton();
         filtersComboBox = new org.autoplot.datasource.RecentComboBox();
-        jLabel3 = new javax.swing.JLabel();
+        messagesLabel = new javax.swing.JLabel();
         binaryCB = new javax.swing.JCheckBox();
         timeRangeComboBox = new org.autoplot.datasource.RecentComboBox();
         exampleTimeRangesCB = new javax.swing.JComboBox<>();
+        disableCacheCheckBox = new javax.swing.JCheckBox();
 
         jLabel1.setText("HAPI Server:");
 
@@ -323,15 +351,24 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
 
         titleLabel.setText(" ");
 
+        cachedFileButton.setText("Cached Files...");
+        cachedFileButton.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                cachedFileButtonActionPerformed(evt);
+            }
+        });
+
         javax.swing.GroupLayout jPanel3Layout = new javax.swing.GroupLayout(jPanel3);
         jPanel3.setLayout(jPanel3Layout);
         jPanel3Layout.setHorizontalGroup(
             jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addComponent(jScrollPane4, javax.swing.GroupLayout.DEFAULT_SIZE, 384, Short.MAX_VALUE)
+            .addComponent(jScrollPane4, javax.swing.GroupLayout.DEFAULT_SIZE, 486, Short.MAX_VALUE)
             .addGroup(jPanel3Layout.createSequentialGroup()
                 .addComponent(clearAllB)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                 .addComponent(setAllB)
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addComponent(cachedFileButton)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                 .addComponent(extraInfoButton))
             .addComponent(titleLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
@@ -346,7 +383,8 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
                 .addGroup(jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
                     .addComponent(clearAllB)
                     .addComponent(setAllB)
-                    .addComponent(extraInfoButton)))
+                    .addComponent(extraInfoButton)
+                    .addComponent(cachedFileButton)))
         );
 
         jSplitPane1.setRightComponent(jPanel3);
@@ -358,12 +396,14 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         jScrollPane2.setViewportView(idsList2);
 
         clearButton.setIcon(new javax.swing.ImageIcon(getClass().getResource("/org/autoplot/hapi/clearTextButton.png"))); // NOI18N
+        clearButton.setToolTipText("clear search bar");
         clearButton.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
                 clearButtonActionPerformed(evt);
             }
         });
 
+        filtersComboBox.setToolTipText("search bar");
         filtersComboBox.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
                 filtersComboBoxActionPerformed(evt);
@@ -396,7 +436,7 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
 
         jSplitPane1.setLeftComponent(jPanel1);
 
-        jLabel3.setText("(messages here)");
+        messagesLabel.setText("(messages here)");
 
         binaryCB.setText("Use Binary");
         binaryCB.setToolTipText("Some servers support binary data transfers, and this will use binary to transfer data.");
@@ -409,11 +449,13 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
             }
         });
 
+        disableCacheCheckBox.setText("Disable Cache");
+
         javax.swing.GroupLayout layout = new javax.swing.GroupLayout(this);
         this.setLayout(layout);
         layout.setHorizontalGroup(
             layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addComponent(jSplitPane1, javax.swing.GroupLayout.DEFAULT_SIZE, 579, Short.MAX_VALUE)
+            .addComponent(jSplitPane1, javax.swing.GroupLayout.DEFAULT_SIZE, 707, Short.MAX_VALUE)
             .addGroup(layout.createSequentialGroup()
                 .addContainerGap()
                 .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
@@ -430,7 +472,9 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                         .addComponent(exampleTimeRangesCB, javax.swing.GroupLayout.PREFERRED_SIZE, 224, javax.swing.GroupLayout.PREFERRED_SIZE))
                     .addGroup(layout.createSequentialGroup()
-                        .addComponent(jLabel3, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                        .addComponent(messagesLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                        .addComponent(disableCacheCheckBox)
                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                         .addComponent(binaryCB)))
                 .addContainerGap())
@@ -446,8 +490,9 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
                 .addComponent(jSplitPane1)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                 .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
-                    .addComponent(jLabel3)
-                    .addComponent(binaryCB, javax.swing.GroupLayout.DEFAULT_SIZE, 25, Short.MAX_VALUE))
+                    .addComponent(messagesLabel)
+                    .addComponent(binaryCB, javax.swing.GroupLayout.DEFAULT_SIZE, 25, Short.MAX_VALUE)
+                    .addComponent(disableCacheCheckBox))
                 .addGap(5, 5, 5)
                 .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                     .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
@@ -575,11 +620,56 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         }
     }//GEN-LAST:event_exampleTimeRangesCBItemStateChanged
 
+    private void cachedFileButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_cachedFileButtonActionPerformed
+        
+        String[] params= getParameters(true).split(",");
+        Map<String,DatumRange> ff;
+        String str= (String)timeRangeComboBox.getSelectedItem();
+        try {
+            DatumRange tr;
+            if ( str==null ) {
+                tr= currentRange;
+            } else {
+                tr= DatumRangeUtil.parseTimeRange(str);
+            }
+            if ( tr==null ) {
+                JOptionPane.showMessageDialog(this,"id doesn't provide range");
+                return;
+            }
+            ff = HapiDataSource.getCacheFiles( this.currentServer, this.currentId, params, tr );
+        } catch ( ParseException ex ) {
+            JOptionPane.showMessageDialog( this, "Unable to parse timerange: "+str);
+            return;
+        }
+        
+        if ( ff==null ) {
+            JOptionPane.showMessageDialog( this, "No cache files found in the interval");
+            return;
+        }
+        File cacheFolder= HapiDataSource.cacheFolder(  this.currentServer, "/data/" + this.currentId  );
+        HapiCacheManager mm= new HapiCacheManager();
+        String[] ss= ff.keySet().toArray( new String[ff.size()] );
+        mm.setFiles( cacheFolder, ss );
+        if ( JOptionPane.showConfirmDialog(this,mm,"Manage Cached Data",JOptionPane.OK_CANCEL_OPTION)==JOptionPane.OK_OPTION ) {
+            System.err.println("cacheFolder: "+cacheFolder );
+            for ( String s: ff.keySet() ) {
+                File f1= new File( cacheFolder, s );
+                if ( !f1.delete() ) {
+                    logger.log(Level.INFO, "unable to delete {0}", f1);
+                }
+            }
+            //FileUtil.deleteFileTree(cacheFolder); //TODO: off of the event thread
+        }
+        
+    }//GEN-LAST:event_cachedFileButtonActionPerformed
+
 
     // Variables declaration - do not modify//GEN-BEGIN:variables
     private javax.swing.JCheckBox binaryCB;
+    private javax.swing.JButton cachedFileButton;
     private javax.swing.JButton clearAllB;
     private javax.swing.JButton clearButton;
+    private javax.swing.JCheckBox disableCacheCheckBox;
     private javax.swing.JComboBox<String> exampleTimeRangesCB;
     private javax.swing.JButton extraInfoButton;
     private org.autoplot.datasource.RecentComboBox filtersComboBox;
@@ -587,12 +677,12 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
     private javax.swing.JButton jButton1;
     private javax.swing.JLabel jLabel1;
     private javax.swing.JLabel jLabel2;
-    private javax.swing.JLabel jLabel3;
     private javax.swing.JPanel jPanel1;
     private javax.swing.JPanel jPanel3;
     private javax.swing.JScrollPane jScrollPane2;
     private javax.swing.JScrollPane jScrollPane4;
     private javax.swing.JSplitPane jSplitPane1;
+    private javax.swing.JLabel messagesLabel;
     private javax.swing.JPanel parametersPanel;
     private javax.swing.JComboBox<String> serversComboBox;
     private javax.swing.JButton setAllB;
@@ -614,7 +704,7 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         try {
             idsJSON= HapiServer.getCatalog(new URL(split.file));
         } catch ( IOException ex ) {
-            jLabel3.setText("Unable to connect to server");
+            messagesLabel.setText("Unable to connect to server");
         }
         return true;
     }
@@ -651,7 +741,12 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         }
     }
 
-    private String getParameters() {
+    /**
+     * 
+     * @param enumerate if true show all parameters, instead of ""
+     * @return all the parameters
+     */
+    private String getParameters(boolean enumerate) {
         StringBuilder b= new StringBuilder();
         boolean areAllTrue= true;
         for ( Component c: parametersPanel.getComponents() ) {
@@ -663,7 +758,7 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
                 }
             }
         }
-        if ( areAllTrue ) {
+        if ( areAllTrue && !enumerate ) {
             return "";
         } else {
             return b.substring(1); // remove first comma.
@@ -713,6 +808,13 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
             this.binaryCB.setSelected(false);
         }
         
+        if ( !HapiServer.useCache() ) {
+            cachedFileButton.setVisible(false);
+            disableCacheCheckBox.setVisible(false);
+        }
+        
+        disableCacheCheckBox.setSelected( "F".equals(params.get("cache")) );
+        
     }
 
     @Override
@@ -726,7 +828,7 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
 
     @Override
     public String getURI() {
-        String parameters= getParameters();
+        String parameters= getParameters(false);
         String id= idsList2.getSelectedValue();
         if ( id==null ) {
             id= "";
@@ -740,6 +842,9 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         String uri= "vap+hapi:" + serversComboBox.getSelectedItem().toString() + "?id=" + id + "&timerange="+timeRangeComboBox.getText().replaceAll(" ","+");
         if ( binaryCB.isSelected() && binaryCB.isEnabled() ) {
             uri+= "&format=binary";
+        }
+        if ( disableCacheCheckBox.isSelected() ) {
+            uri+= "&cache=F";
         }
         if ( parameters.length()>0 ) {
             return uri + "&parameters="+parameters;
@@ -896,6 +1001,32 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         return Units.seconds.createDatum(seconds);
     }
     
+    /**
+     * return the duration in a easily-human-consumable form.
+     * @param milliseconds the duration in milliseconds.
+     * @return a duration like "2.6 hours"
+     */
+    public static String getDurationForHumans( long milliseconds ) {
+        if ( milliseconds<2*1000 ) {
+            return milliseconds+" milliseconds";
+        } else if ( milliseconds<2*60000 ) {
+            return String.format( Locale.US, "%.1f",milliseconds/1000.)+" seconds";
+        } else if ( milliseconds<2*3600000 ) {
+            return String.format( Locale.US, "%.1f",milliseconds/60000.)+" minutes";
+        } else if ( milliseconds<2*86400000 ) {
+            return String.format( Locale.US, "%.1f",milliseconds/3600000.)+" hours";
+        } else {
+            double ddays= milliseconds/86400000.;
+            if ( ddays<48 ) {
+                return String.format( Locale.US, "%.1f",ddays)+" days";
+            } else if ( ddays<400 ) {
+                return String.format( Locale.US, "%.1f",ddays/7)+" weeks";
+            } else {
+                return String.format( Locale.US, "%.1f",ddays/365)+" years";
+            }
+        }
+    }    
+    
     private void resetVariable( URL server, String id ) {
         try {
             JSONObject info= HapiServer.getInfo( server, id );
@@ -935,6 +1066,7 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
             extra.append("</table></html>");
             currentExtra= extra.toString();
             parametersPanel.removeAll();
+            String[] sparams= new String[parameters.length()];
             for ( int i=0; i<parameters.length(); i++ ) {
                 JSONObject parameter= parameters.getJSONObject(i);
 //                if ( parameter.has("size") ) {
@@ -947,8 +1079,15 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
 //                    logger.log(Level.WARNING, "size is array is not supported in Autoplot.");
 //                    continue;
 //                }
-                JCheckBox cb= new JCheckBox(parameter.getString("name"));
-                cb.setName(parameter.getString("name"));
+                sparams[i]= parameter.getString("name");
+                JCheckBox cb= new JCheckBox(sparams[i]);
+                
+                String label= sparams[i];
+                if ( parameter.has("size") ) {
+                    label= label+parameter.getString("size");
+                }
+                cb.setName(sparams[i]);
+                
                 cb.setSelected(true);
                 final int fi= i;
                 cb.addActionListener(new ActionListener() {
@@ -975,7 +1114,9 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
                     String d= parameter.getString("description");
                     //parametersPanel.add( new javax.swing.JLabel( d ) );
                     cb.setToolTipText(d);
-                    cb.setText( cb.getName()+": "+d);
+                    cb.setText( label+": "+d);
+                } else {
+                    cb.setText( label );
                 }
                 parametersPanel.add( cb );
             }
@@ -984,11 +1125,11 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
             parametersPanel.repaint();
             if ( currentParameters!=null ) {
                 setParameters(currentParameters);
-            }
+            }            
             DatumRange range= getRange(info);
             if ( range==null ) {
                 logger.warning("server is missing required startDate and stopDate parameters.");
-                jLabel3.setText( "range is not provided (non-compliant server)" );
+                messagesLabel.setText( "range is not provided (non-compliant server)" );
             } else {
                 DatumRange sampleRange=null;
                 if ( info.has("sampleStartDate") && info.has("sampleStopDate") ) {
@@ -1010,10 +1151,10 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
                     }    
                     if (range.max().ge(myValidTime)) { // Note stopDate is required since 2017-01-17.
                         logger.warning("server is missing required stopDate parameter.");
-                        jLabel3.setText(range.min().toString() + " to ?");
+                        messagesLabel.setText(range.min().toString() + " to ?");
                         sampleRange = new DatumRange(range.min(), range.min().add(1, Units.days));
                     } else {
-                        jLabel3.setText(range.toString());
+                        messagesLabel.setText(range.toString());
                         if ( cadence.ge(Units.days.createDatum(1)) ) {
                             Datum end = TimeUtil.nextMidnight(range.max());
                             end= end.subtract( 10,Units.days );
@@ -1041,6 +1182,18 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
                             sampleRange= sampleRange.next();
                         }
                     }
+                } else {
+                    String s= range.toString();
+                    if ( info.has("modificationDate") ) {
+                        try {
+                            Datum tmod= Units.us2000.parse(info.getString("modificationDate"));
+                            Datum ago= TimeUtil.now().subtract(tmod);
+                            s += "   last modified " + getDurationForHumans((long)ago.doubleValue(Units.milliseconds) ) + " ago.";
+                        } catch (ParseException ex) {
+                        }
+                        
+                    }
+                    messagesLabel.setText( s );
                 }
                 DefaultComboBoxModel m= new DefaultComboBoxModel(new String[] { "Example Time Ranges",sampleRange.toString() } );
                 exampleTimeRangesCB.setModel(m);
@@ -1051,6 +1204,28 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
             }
         } catch (IOException | JSONException ex) {
             logger.log(Level.SEVERE, null, ex);
+            parametersPanel.removeAll();
+            parametersPanel.add(new javax.swing.JLabel("Error reported on server:"));
+            String s= ex.getMessage();
+            parametersPanel.add(new javax.swing.JLabel(s));
+            JLabel space= new javax.swing.JLabel(" ");
+            //space.setMinimumSize(new Dimension(30,30));
+            //space.setPreferredSize(new Dimension(30,30));
+            parametersPanel.add(space);
+            final URL url= HapiServer.createURL(server, HapiSpec.INFO_URL, Collections.singletonMap(HapiSpec.URL_PARAM_ID, id ) );
+            javax.swing.JButton l= new javax.swing.JButton("Load URL in Browser");
+            l.addActionListener(new ActionListener() {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    try {
+                        Desktop.getDesktop().browse( url.toURI() );
+                    } catch (URISyntaxException | IOException ex1) {
+                        logger.log(Level.SEVERE, null, ex1);
+                    }
+                }
+            });
+            parametersPanel.add(l);
+            titleLabel.setText("");
         }
                 
     }

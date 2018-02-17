@@ -192,7 +192,8 @@ public class ApplicationController extends DomNodeController implements RunLater
     }
 
     public void removeActionListener(ActionListener list) {
-        AWTEventMulticaster.remove(eventListener, list);
+        ActionListener l= AWTEventMulticaster.remove(eventListener, list);
+        logger.log(Level.FINEST, "removed {0}", l);
     }
 
     PropertyChangeSupport das2PeerListenerSupport= new DebugPropertyChangeSupport(this);
@@ -578,23 +579,23 @@ public class ApplicationController extends DomNodeController implements RunLater
         item.setToolTipText("bind the plot's context property to the application timerange, for example when browsing histograms of data.");
         editPlotMenu.add(item);
 
-        item = new JMenuItem(new AbstractAction("Move this plot below others") {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                LoggerManager.logGuiEvent(e);
-                int i= application.plots.indexOf(domPlot);
-                Application ap= (Application)getApplication().copy();
-                List<Plot> pps= new ArrayList<>( Arrays.asList(ap.getPlots()) );
-                Plot pp= pps.remove(i);
-                pps.add(0, (Plot)pp.copy() );
-                ap.setPlots(pps.toArray(new Plot[pps.size()]));
-                application.controller.reset();
-                application.syncTo(ap);
-                AutoplotUtil.reloadAll(application);
-            }
-        });
-        item.setToolTipText("Move this plot below others, so that it is drawn before.");
-        editPlotMenu.add(item);
+//        item = new JMenuItem(new AbstractAction("Move this plot below others") {
+//            @Override
+//            public void actionPerformed(ActionEvent e) {
+//                LoggerManager.logGuiEvent(e);
+//                int i= application.plots.indexOf(domPlot);
+//                Application ap= (Application)getApplication().copy();
+//                List<Plot> pps= new ArrayList<>( Arrays.asList(ap.getPlots()) );
+//                Plot pp= pps.remove(i);
+//                pps.add(0, (Plot)pp.copy() );
+//                ap.setPlots(pps.toArray(new Plot[pps.size()]));
+//                application.controller.reset();
+//                application.syncTo(ap);
+//                AutoplotUtil.reloadAll(application);
+//            }
+//        });
+//        item.setToolTipText("Move this plot below others, so that it is drawn before.");
+//        editPlotMenu.add(item);
     }
 
     /**
@@ -605,14 +606,18 @@ public class ApplicationController extends DomNodeController implements RunLater
     public Plot getPlotFor(Component c) {
         Plot plot1 = null;
         for (Plot p : application.getPlots()) {
-            DasPlot p1 = p.controller.getDasPlot();
-            if ( p1!=null && ( p1 == c || p1.getXAxis() == c || p1.getYAxis() == c ) ) {
-                plot1 = p;
-                break;
-            }
-            if (p.controller.getDasColorBar() == c) {
-                plot1 = p;
-                break;
+            if ( p.controller!=null ) {
+                DasPlot p1 = p.controller.getDasPlot();
+                if ( p1!=null && ( p1 == c || p1.getXAxis() == c || p1.getYAxis() == c ) ) {
+                    plot1 = p;
+                    break;
+                }
+                if (p.controller.getDasColorBar() == c) {
+                    plot1 = p;
+                    break;
+                }
+            } else {
+                logger.warning("application contains plot without controller (rte_0492573640)");
             }
         }
         return plot1;
@@ -1042,7 +1047,7 @@ public class ApplicationController extends DomNodeController implements RunLater
                     Datum y2= plot.getController().getDasPlot().getYAxis().invTransform(r.y+r.height);                   
                     annotation.setXrange( DatumRangeUtil.union(x,x2) );
                     annotation.setYrange( DatumRangeUtil.union(y,y2) );
-                    annotation.setAnchorPosition(AnchorPosition.W);
+                    //annotation.setAnchorPosition(AnchorPosition.W);
                     annotation.setAnchorOffset("");
                     annotation.setAnchorType(AnchorType.DATA);
                 } else {

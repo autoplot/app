@@ -12,8 +12,11 @@ import org.das2.datum.UnitsUtil;
 import java.awt.*;
 import java.awt.geom.*;
 import java.awt.image.BufferedImage;
+import java.awt.image.ConvolveOp;
+import java.awt.image.Kernel;
 import java.text.DecimalFormat;
 import java.text.NumberFormat;
+import java.text.ParseException;
 import java.util.Locale;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -24,6 +27,7 @@ import org.das2.qds.DataSetOps;
 import org.das2.qds.QDataSet;
 import org.das2.qds.SemanticOps;
 import org.das2.qds.ops.Ops;
+import org.jdesktop.beansbinding.Converter;
 //import org.apache.xml.serialize.*;
 
 /**
@@ -34,6 +38,18 @@ import org.das2.qds.ops.Ops;
  * @author  Jeremy
  */
 public class GraphUtil {
+	
+	/**
+	 * Classes that implement this interface provide their instances with
+	 * the ability to copy themselves in a manner similar to Cloneable objects,
+	 * but without the drawbacks of Cloneable.
+	 * 
+	 * Implementers need not return an object of their exact type, but the object
+	 * they return should have all the same supertypes as the original object.
+	 */
+	public interface Copyable<T> {
+		T copy();
+	}
 
     private static final Logger logger= LoggerManager.getLogger("das2.graphics.util");
     
@@ -347,6 +363,111 @@ public class GraphUtil {
         return plot;
     }
 
+    /**
+     * return a copy of the plot.  It does not have the
+     * row and column set to its own row and column.
+     * @param a
+     * @return 
+     */
+    public static DasAxis copyAxis( DasAxis a ) {
+        DasAxis c= new DasAxis( a.getDatumRange(), a.getOrientation() );
+        c.setDataMinimum( a.getDataMinimum() );
+        c.setDataMaximum( a.getDataMaximum() );
+        c.setLog(a.isLog());
+        c.setLabel(a.getLabel());
+        c.setFlipLabel(a.isFlipLabel());
+        c.setFlipped(a.isFlipped());
+        c.setEnabled( a.isEnabled() );
+        c.setEnableHistory( a.isEnableHistory() );
+        c.setLog( a.isLog() );
+        c.setOpaque( a.isOpaque() );
+        c.setOppositeAxisVisible( a.isOppositeAxisVisible() );
+        c.setTickLabelsVisible( a.isTickLabelsVisible() );
+        c.setUseDomainDivider( a.isUseDomainDivider() );
+        c.setUserDatumFormatter( a.getUserDatumFormatter() );
+        return c;
+    }
+    
+    /**
+     * return a copy of the plot.  It does not have the
+     * row and column set to its own row and column.
+     * @param a
+     * @return 
+     */
+    public static DasColorBar copyColorBar( DasColorBar a ) {
+        DasColorBar c= new DasColorBar( a.getDataMinimum(), a.getDataMaximum(), a.getOrientation(), a.isLog() );
+        c.setLabel(a.getLabel());
+        c.setFlipLabel(a.isFlipLabel());
+        c.setType(a.getType());
+        return c;
+    }
+    
+    /**
+     * return a copy of the plot.  This will include the Renderers and the 
+     * data they contain.  The plot is not attached to a canvas or row 
+     * and column.
+     * <pre>
+     * {@code
+     *   cnvsNew= new DasCanvas(500,500);
+     *   row= new DasRow(cnvsNew,0.2,0.8);
+     *   column= new DasColumn(cnvsNew,0.2,0.8);
+     *   p= GraphUtil.copyPlot(dp); 
+     *   cnvsNew.add(p,row,column); 
+     * }
+     * </pre>
+     * @param p
+     * @return 
+     */
+    public static DasPlot copyPlot( DasPlot p ) {
+        DasAxis xaxis= copyAxis(p.getXAxis());
+        DasAxis yaxis= copyAxis(p.getYAxis());
+        DasPlot c= new DasPlot(xaxis, yaxis);
+        c.setTitle( p.getTitle() );
+        c.setDisplayTitle( p.isDisplayTitle() );
+        c.setDrawGrid( p.isDrawGrid() );
+        c.setPreviewEnabled( p.isPreviewEnabled() );
+        c.setLegendPosition( p.getLegendPosition() );
+        c.setDisplayLegend( p.isDisplayLegend() );
+        for ( Renderer r: p.getRenderers() ) {
+            Renderer cr;
+            if ( r instanceof Copyable ) {
+            	@SuppressWarnings("unchecked")
+				Copyable<Renderer> copyable = (Copyable<Renderer>) r;
+            	cr = copyable.copy();
+            } else if ( r instanceof SpectrogramRenderer ) {
+                DasColorBar cb= copyColorBar(((SpectrogramRenderer)r).getColorBar());
+                cr= new SpectrogramRenderer(null,cb);
+                SpectrogramRenderer sr= (SpectrogramRenderer)cr;
+                sr.setRebinner(((SpectrogramRenderer)r).getRebinner());
+            } else if ( r instanceof SeriesRenderer ) {
+                cr= new SeriesRenderer();
+                SeriesRenderer sr= (SeriesRenderer)cr;
+                ((SeriesRenderer)cr).setAntiAliased(((SeriesRenderer) r).isAntiAliased());
+                sr.setColor( ((SeriesRenderer) r).getColor() );
+                sr.setFillColor(((SeriesRenderer) r).getFillColor() );
+                sr.setFillStyle(((SeriesRenderer) r).getFillStyle() );
+                sr.setLineWidth(((SeriesRenderer) r).getLineWidth() );
+                sr.setFillToReference(((SeriesRenderer) r).isFillToReference() );
+                sr.setReference(((SeriesRenderer) r).getReference() );
+                sr.setSymSize(((SeriesRenderer) r).getSymSize() );
+                sr.setPsym(((SeriesRenderer) r).getPsym() );
+                sr.setPsymConnector(((SeriesRenderer) r).getPsymConnector() );
+                sr.setLegendLabel(((SeriesRenderer) r).getLegendLabel());
+                sr.setDrawLegendLabel(((SeriesRenderer) r).isDrawLegendLabel());
+            } else if ( r instanceof ImageVectorDataSetRenderer ) {
+                cr= new ImageVectorDataSetRenderer(null);
+                ImageVectorDataSetRenderer sr= (ImageVectorDataSetRenderer)cr;
+                sr.setColor( ((ImageVectorDataSetRenderer) r).getColor() );
+            } else {
+                throw new UnsupportedOperationException("source renderer cannot be copied");
+            }
+            cr.setControl(r.getControl());
+            cr.setDataSet(r.getDataSet());
+            c.addRenderer( cr );
+        }
+        return c;
+    }
+    
     /**
      * get a plot and add it to a JFrame.
      * @param ds
@@ -812,9 +933,65 @@ public class GraphUtil {
      * @return translucent white color 
      */
     public static Color getRicePaperColor() {
-        return new Color(255, 255, 255, 128);
+        return ColorUtil.getRicePaperColor();
     }
 
+    /**
+     * return a Gaussian filter for blurring images.
+     * @param radius the radius filter in pixels.
+     * @param horizontal true if horizontal blur. 
+     * @return the ConvolveOp
+     */
+    public static ConvolveOp getGaussianBlurFilter(int radius,
+            boolean horizontal) {
+        if (radius < 1) {
+            throw new IllegalArgumentException("Radius must be >= 1");
+        }
+        
+        int size = radius * 2 + 1;
+        float[] data = new float[size];
+        
+        float sigma = radius / 3.0f;
+        float twoSigmaSquare = 2.0f * sigma * sigma;
+        float sigmaRoot = (float) Math.sqrt(twoSigmaSquare * Math.PI);
+        float total = 0.0f;
+        
+        for (int i = -radius; i <= radius; i++) {
+            float distance = i * i;
+            int index = i + radius;
+            data[index] = (float) Math.exp(-distance / twoSigmaSquare) / sigmaRoot;
+            total += data[index];
+        }
+        
+        for (int i = 0; i < data.length; i++) {
+            data[i] /= total;
+        }        
+        
+        Kernel kernel;
+        if (horizontal) {
+            kernel = new Kernel(size, 1, data);
+        } else {
+            kernel = new Kernel(1, size, data);
+        }
+        return new ConvolveOp(kernel, ConvolveOp.EDGE_NO_OP, null);
+    }
+    
+    /**
+     * blur the image with a Guassian blur. 
+     * @param im
+     * @param size the size of the blur, roughly in pixels.
+     * @return image
+     */
+    public static BufferedImage blurImage( BufferedImage im, int size ) {
+        ConvolveOp op= getGaussianBlurFilter( size, true );
+        BufferedImage out= new BufferedImage( im.getWidth(), im.getHeight(), im.getType() );
+        op.filter( im, out );
+        op= getGaussianBlurFilter( size, false );
+        im= out;
+        out= new BufferedImage( im.getWidth(), im.getHeight(), im.getType() );
+        return op.filter( im, out );
+    }
+        
     /**
      * describe the path for debugging.
      * @param path the Path to describe
@@ -985,4 +1162,139 @@ public class GraphUtil {
             bounds.height * percent / 100 );
         return result;
     }
+    
+    public static class DebuggingGeneralPath {
+        GeneralPath delegate;
+        int count= 0;
+        double lastfx0=0;
+        double lastfy0=0;
+        double initx=0;
+        double inity=0;
+        boolean arrows=false;
+        boolean printRoute= true;
+        
+        DebuggingGeneralPath( int rule, int capacity ) {
+            delegate= new GeneralPath( rule, capacity );
+            System.err.println(String.format("==newPath=="));
+            count= 0;
+        }
+        
+        DebuggingGeneralPath( ) {
+            delegate= new GeneralPath(GeneralPath.WIND_NON_ZERO, 20 );
+            System.err.println(String.format("==newPath=="));
+            count= 0;
+        }        
+
+        public void setArrows( boolean drawArrows ) {
+            this.arrows= drawArrows;
+        }
+        
+        public void lineTo(double fx, double fy) {
+            if ( printRoute ) {
+                System.err.println(String.format("lineTo(%5.1f,%5.1f) %d",fx,fy,count));
+            }
+            if ( arrows ) {
+                if ( inity==lastfy0 && initx==lastfx0 ) {
+                    double perpy= fx-lastfx0;
+                    double perpx= -1 * ( fy-lastfy0 );
+                    double n= Math.sqrt( perpx*perpx + perpy*perpy );
+                    perpx= perpx/n;
+                    perpy= perpy/n;
+                    int len=4;
+                    delegate.lineTo( lastfx0 - perpx*len, lastfy0 - perpy*len );
+                    delegate.lineTo( lastfx0 + perpx*len, lastfy0 + perpy*len );
+                    delegate.moveTo( lastfx0, lastfy0 );
+                }
+            }
+            delegate.lineTo(fx, fy);
+            if ( arrows ) {
+                double perpy= fx-lastfx0;
+                double perpx= -1 * ( fy-lastfy0 );
+                double n= Math.sqrt( perpx*perpx + perpy*perpy );
+                perpx= perpx/n;
+                perpy= perpy/n;
+                int len=4;
+                delegate.lineTo( fx+perpx*len - perpy*len, fy+perpy*len + perpx*len );
+                delegate.lineTo( fx , fy );
+            }
+            lastfx0= fx;
+            lastfy0= fy;
+            count++;
+        }
+
+        public void moveTo(double fx, double fy) {
+            if ( printRoute ) {
+                System.err.println(String.format("moveTo(%5.1f,%5.1f) %d",fx,fy,count));
+            }
+            //if ( count==3 ) {
+            //    System.err.println("here1112");
+            //}
+            delegate.moveTo(fx,fy);
+            lastfx0= fx;
+            lastfy0= fy;       
+            if ( count==0 ) {
+                initx= fx;
+                inity= fy;
+            }
+            count++;
+        }
+
+        PathIterator getPathIterator(AffineTransform at) {
+            return delegate.getPathIterator(at);
+        }
+
+        GeneralPath getGeneralPath() {
+            return delegate;
+        }
+    }
+    
+    /**
+     * converts forward from relative font spec to point size, used by
+     * the annotation and axis nodes.
+     * @param dcc the canvas component.
+     * @param fallbackFont the font to use when a font is not available, like "sans-8"
+     * @return the converter that converts between strings like "1em" and the font.
+     */
+    public static Converter getFontConverter( final DasCanvasComponent dcc, final String fallbackFont ) {
+        return new Converter() {
+            @Override
+            public Object convertForward(Object s) {
+                try {
+                    double[] dd= DasDevicePosition.parseLayoutStr((String)s);
+                    Font f= dcc.getFont();
+                    if ( f==null ) {
+                        f= Font.decode( fallbackFont );
+                    }
+                    if ( dd[1]==1 && dd[2]==0 ) {
+                        return f.getSize2D();
+                    } else {
+                        double parentSize= f.getSize2D();
+                        double newSize= dd[1]*parentSize + dd[2];
+                        return (float)newSize;
+                    }
+                } catch (ParseException ex) {
+                    ex.printStackTrace();
+                    return 0.f;
+                }
+            }
+
+            @Override
+            public Object convertReverse(Object t) {
+                float size= (float)t;
+                Font f= dcc.getFont();
+                if ( f==null ) {
+                    f= Font.decode( fallbackFont );
+                }                
+                if ( size==0 ) {
+                    return "1em";
+                } else {
+                    double parentSize= f.getSize2D();
+                    double relativeSize= size / parentSize;
+                    return String.format( Locale.US, "%.2fem", relativeSize );
+                }
+            }  
+        };
+    }
+
+
 }

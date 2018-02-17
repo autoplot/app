@@ -599,11 +599,13 @@ public class Das2ServerDataSource extends AbstractDataSource {
         return new TimeSeriesBrowse() {
             @Override
             public void setTimeRange(DatumRange dr) {
+                logger.log(Level.INFO, "setTimeRange to {0} ({1})", new Object[] { dr, dr.width().toString() } );
                 timeRange = dr;
             }
 
             @Override
             public void setTimeResolution(Datum d) {
+                logger.log(Level.INFO, "setTimeResolution to {0}", d);
                 resolution = d;
             }
 
@@ -626,7 +628,7 @@ public class Das2ServerDataSource extends AbstractDataSource {
                 }
                 String sparams = URISplit.formatParams(c);
                 //if ( dsParams!=null && dsParams.trim().length()>0 )  sparams+= "&" + dsParams; //TODO: Double-load was caused by extra & at the end.  It's silly to have it so sensitive.
-                return "vap+das2Server:" + resourceURI + "?" + sparams;
+                return "vap+das2server:" + resourceURI + "?" + sparams;
             }
 
             @Override
@@ -639,7 +641,7 @@ public class Das2ServerDataSource extends AbstractDataSource {
                     sparams += "&" + dsParams;
                 }
 
-                return "vap+das2Server:" + resourceURI + "?" + sparams;
+                return "vap+das2server:" + resourceURI + "?" + sparams;
             }
 
             @Override

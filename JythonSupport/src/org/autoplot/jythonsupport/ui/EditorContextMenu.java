@@ -1,13 +1,13 @@
-/*
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
- */
+
 package org.autoplot.jythonsupport.ui;
 
 import ZoeloeSoft.projects.JFontChooser.JFontChooser;
+import java.awt.Dimension;
 import java.awt.Font;
 import org.das2.components.propertyeditor.PropertyEditor;
 import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.awt.print.PrinterException;
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
 import java.io.BufferedReader;
@@ -18,17 +18,22 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.swing.AbstractAction;
 import javax.swing.Action;
+import javax.swing.JDialog;
+import javax.swing.JEditorPane;
 import javax.swing.JFrame;
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPopupMenu;
+import javax.swing.JScrollPane;
 import javax.swing.SwingUtilities;
 import javax.swing.text.BadLocationException;
 import javax.swing.text.DefaultEditorKit;
 import javax.swing.text.Element;
+import jsyntaxpane.DefaultSyntaxKit;
 import jsyntaxpane.SyntaxStyle;
 import jsyntaxpane.SyntaxStyles;
+import jsyntaxpane.TokenType;
 import jsyntaxpane.actions.ActionUtils;
 import jsyntaxpane.actions.IndentAction;
 import org.das2.jythoncompletion.CompletionSettings;
@@ -37,6 +42,7 @@ import org.das2.util.LoggerManager;
 import org.python.parser.SimpleNode;
 import org.autoplot.datasource.DataSetSelector;
 import org.autoplot.datasource.DataSourceUtil;
+import org.autoplot.jythonsupport.JythonToJavaConverter;
 import org.autoplot.jythonsupport.JythonUtil;
 
 /**
@@ -458,8 +464,65 @@ public class EditorContextMenu {
             jumpToMenu.setToolTipText("Jump To Position in code");
             jumpToMenuPosition= actionsMenu.getItemCount();
             actionsMenu.add(jumpToMenu);
+
+            JMenu developerMenu= new JMenu( "Developer" );
+            developerMenu.setToolTipText("Special actions for developers");
+            actionsMenu.add(developerMenu);
+
+            JMenuItem printMenuItem= new JMenuItem( "Print" );
+            printMenuItem.setToolTipText("Print to printer");
+            printMenuItem.addActionListener( new ActionListener() {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    try {
+                        editor.print();
+                    } catch (PrinterException ex) {
+                        Logger.getLogger(EditorContextMenu.class.getName()).log(Level.SEVERE, null, ex);
+                    }
+                }
+            });
+            actionsMenu.add(printMenuItem);
+
             
             JMenuItem mi;
+            
+            mi= new JMenuItem( new AbstractAction("Convert To Java") {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    LoggerManager.logGuiEvent(e);       
+                    String doThis= editor.getSelectedText();
+                    if ( doThis==null || doThis.length()==0 ) {
+                        doThis= editor.getText();
+                    }
+                    try {
+                        String java= JythonToJavaConverter.convert(doThis);
+                        JEditorPane a= new JEditorPane();
+                        DefaultSyntaxKit.initKit();
+                        SyntaxStyles.getInstance().getStyle(TokenType.DELIMITER).isDrawTabs();
+                        a.setContentType("text/java");
+                        a.setText(java);
+                        JDialog d= new JDialog();
+                        a.setMinimumSize( new Dimension(400,400) );
+                        a.setPreferredSize( new Dimension(400,400) );
+                        d.getContentPane().add(new JScrollPane(a));
+                        d.pack();
+                        d.setVisible(true);
+                    } catch ( Exception ex ) {
+                        JOptionPane.showMessageDialog( menu, ex.toString() );
+                    }
+                }                
+            });
+            developerMenu.add(mi);
+            
+            mi= new JMenuItem( new AbstractAction("Show Simplified Script Used for Completions") {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    LoggerManager.logGuiEvent(e);       
+                    editor.showCompletionsView();
+                }                
+            });
+            
+            developerMenu.add(mi);
             
             mi= new JMenuItem( new AbstractAction("Plot") {
                 @Override

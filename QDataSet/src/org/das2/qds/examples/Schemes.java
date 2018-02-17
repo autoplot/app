@@ -103,9 +103,57 @@ public class Schemes {
         if ( ds.rank()!=2 ) return false;
         QDataSet dep0= (QDataSet)ds.property(QDataSet.DEPEND_0);
         if ( dep0==null ) return false;
-        QDataSet dep1= (QDataSet)ds.property(QDataSet.DEPEND_1);
-        if ( dep1==null ) return false;
-        return SemanticOps.getUnits(dep0).getOffsetUnits().isConvertibleTo(SemanticOps.getUnits(dep1));
+        Units u0= SemanticOps.getUnits(dep0);
+        if ( u0==Units.dimensionless ) {
+            return false;
+        } else {
+            QDataSet dep1= (QDataSet)ds.property(QDataSet.DEPEND_1);
+            if ( dep1==null ) return false;
+            if ( dep1.length()<QDataSet.MIN_WAVEFORM_LENGTH ) return false;
+            return u0.getOffsetUnits().isConvertibleTo(SemanticOps.getUnits(dep1));
+        }
+    }
+    
+    /**
+     * return a join of rank 2 waveforms, also called a rank 3 waveform.  
+     * @return rank 3 waveform
+     */
+    public static QDataSet rank3Waveform( ) {
+        QDataSet w1= Ops.ripplesWaveformTimeSeries(20);
+        
+        WritableDataSet w2= Ops.maybeCopy(Ops.ripplesWaveformTimeSeries(14));
+        WritableDataSet t2= Ops.maybeCopy( (QDataSet)w2.property(QDataSet.DEPEND_0) );
+        QDataSet et= Ops.extent((QDataSet)w1.property(QDataSet.DEPEND_0));
+        double dt= et.value(1)-et.value(0);
+        for ( int i=0; i<t2.length(); i++ ) t2.putValue(i,t2.value(i)+dt);
+        w2.putProperty( QDataSet.DEPEND_0, t2);
+        w2.putProperty( QDataSet.DEPEND_1, Ops.multiply(w2.property(QDataSet.DEPEND_1), 0.8 ) );
+        
+        WritableDataSet w3= Ops.maybeCopy(Ops.ripplesWaveformTimeSeries(3));
+        WritableDataSet t3= Ops.maybeCopy( (QDataSet)w3.property(QDataSet.DEPEND_0) );
+        Units tu= (Units)t3.property(QDataSet.UNITS);
+                
+        et= Ops.extent((QDataSet)w2.property(QDataSet.DEPEND_0));
+        double dt2= et.value(1)-et.value(0);
+        for ( int i=0; i<t3.length(); i++ ) t3.putValue(i,t3.value(i)+dt + dt2 + Units.seconds.convertDoubleTo( tu.getOffsetUnits(), 1) );
+        w3.putProperty( QDataSet.DEPEND_0, t3);
+
+        return Ops.join( Ops.join( w1, w2 ), w3 );
+        
+    }
+    
+    /**
+     * return true if the data is a rank 3 join of rank 2 waveforms.
+     * @param ds a dataset
+     * @return true if the data is a rank 3 waveform.
+     */
+    public static boolean isRank3Waveform( QDataSet ds ) {
+        if ( ds.rank()!=3 ) return false;
+        boolean isWaveform= true;
+        for ( int i=0; i<ds.length(); i++ ) {
+            if ( !isRank2Waveform(ds.slice(i) ) ) isWaveform=false;
+        }
+        return isWaveform;
     }
     
     /**
@@ -484,8 +532,8 @@ public class Schemes {
     }
     
     /**
-     * return a complex rank 2 dataset, which can be thought of as a 1-D array of complex numbers
-     * @return a complex rank 2 dataset
+     * return a complex rank 2 dataset, N by 2, which can be thought of as a 1-D array of N complex numbers
+     * @return a complex rank 2 dataset ds[N,2]
      * @see #isComplexNumbers(org.das2.qds.QDataSet) 
      */
     public static QDataSet rank2ComplexNumbers() {

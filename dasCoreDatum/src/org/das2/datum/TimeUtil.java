@@ -25,6 +25,7 @@ package org.das2.datum;
 import java.util.*;
 
 import java.text.ParseException;
+import java.util.logging.Logger;
 import org.das2.datum.format.TimeDatumFormatter;
 
 /**
@@ -32,6 +33,8 @@ import org.das2.datum.format.TimeDatumFormatter;
  * @author  jbf
  */
 public final class TimeUtil {
+    
+    private static final Logger logger= LoggerManager.getLogger("das2.datum");
 
     private TimeUtil() {
     }
@@ -420,12 +423,18 @@ public final class TimeUtil {
         double midnight= Units.mj1958.convertDoubleTo( u, mjd1958 );
         double sinceMidnight= d-midnight;
         
-        if ( u==Units.cdfTT2000 && sinceMidnight<0.0 ) {
-            mjd1958= mjd1958-1;
-            sinceMidnight= sinceMidnight+86401e9;
+        int jd= 2436205 + mjd1958;
+
+        if ( u==Units.cdfTT2000 && sinceMidnight<0.0 ) { //TODO: huh?  this needs review
+            TimeStruct result= julianToGregorian( jd );
+            boolean isLeap= ( result.month==1 && result.day==1 ) || ( result.month==1 && result.day==1 ); // TODO: still kludgy
+            if ( isLeap ) {
+                mjd1958= mjd1958-1;
+                jd= 2436205 + mjd1958;
+                sinceMidnight= sinceMidnight+86401e9;
+            } 
         }
 
-        int jd= 2436205 + mjd1958;
         double nanoseconds= u.getOffsetUnits().convertDoubleTo( Units.nanoseconds, sinceMidnight );
 
         if ( jd<0 ) {
@@ -587,6 +596,17 @@ public final class TimeUtil {
         int year = timeArray[0];
         int month = timeArray[1];
         int day = timeArray[2];
+        if ( month<1 ) { // support a little slop, like 2018-00-01 to mean Dec 2017.
+            logger.info("month was less than 0");
+            month+=12;
+            year-=1;
+        }
+        if ( month>12 ) {
+            month-=12;
+            year+=1;
+        }
+        if ( month<1 ) throw new IllegalArgumentException("month is less than 1");
+        if ( month>12 ) throw new IllegalArgumentException("month is greater than 12");
         int jd = 367 * year - 7 * (year + (month + 9) / 12) / 4 -
                 3 * ((year + (month - 9) / 7) / 100 + 1) / 4 +
                 275 * month / 9 + day + 1721029;
@@ -680,9 +700,15 @@ public final class TimeUtil {
     public static TimeStruct carry(TimeStruct t) {
         TimeStruct result= t;
         
-        if (result.seconds>=60 && ( result.hour<23 || result.minute<59 ) ) {
-            result.seconds-=60;
-            result.minute++;
+        boolean isLeap= false;
+        if ( result.seconds>=60 ) {
+            if ( ( result.month==6 && result.day==30 ) || ( result.month==12 && result.day==31 ) ) {
+                isLeap= true; //TODO: note this incorrect for non-leap-seconds.
+            }
+            if ( result.hour<23 || result.minute<59 || !isLeap ) {
+                result.seconds-=60;
+                result.minute++;
+            }
         }
         if (result.minute>=60) {
             result.minute-=60;
@@ -778,6 +804,33 @@ public final class TimeUtil {
         }
         return carry(borrow(t));
     }
+
+    /**
+     * round seconds to N decimal places.  For example, n=3 means round to the 
+     * millisecond.
+     * @param ts a time structure
+     * @param n number of digits, 3 is millis, 6 is micros.
+     * @return rounded and normalized TimeStruct.
+     */
+    public static TimeStruct roundNDigits(TimeStruct ts, int n) {
+        if ( n>6 ) {
+            throw new IllegalArgumentException("only 0 to 6 digits supported");
+        }
+        double fracSeconds= ts.seconds - (int)ts.seconds;
+        ts.seconds= (int)ts.seconds;
+        ts.micros+= ts.millis*1000;
+        ts.millis= 0;
+        double pow= Math.pow( 10, 6-n );
+        int roundMicros= (int)( Math.round( (double)( ts.micros + 1000000 * fracSeconds ) / pow ) * pow );
+        ts.micros= roundMicros;
+        if ( ts.micros>=1000000 ) {
+            ts.micros-= 1000000;
+            ts.seconds++;
+        }
+        return normalize(ts);
+        
+    }
+    
     
     /**
      * return the next boundary
@@ -957,6 +1010,18 @@ public final class TimeUtil {
     }
 
     /**
+     * return a DatumRange for the day containing the given time.  Midnight
+     * is contained within the following day.
+     * @param t a time.
+     * @return the day containing the time.
+     */
+    public static DatumRange dayContaining( Datum t ) {
+        Datum midnight= prevMidnight(t);
+        return new DatumRange( midnight, next( DAY, midnight ) );
+    }
+    
+    
+    /**
      * step down the previous ordinal.  If the datum is already at an ordinal
      * boundary, then step down by one ordinal.
      * @param step the ordinal location, such as TimeUtil.DAY or TimeUtil.HALF_YEAR
@@ -1012,7 +1077,7 @@ public final class TimeUtil {
     
     /**
      * convert the month components to a double in the given units.
-     * @param year the year 
+     * @param year the year, which must be greater than 1582
      * @param month the month
      * @param day the day of month, unless month==0, then day is day of year.
      * @param hour additional hours
@@ -1121,6 +1186,10 @@ public final class TimeUtil {
         int tokIndex;
         
         StringTokenizer st;
+        
+        s= s.trim();
+        if ( s.length()==0 ) throw new java.text.ParseException("string is empty",0);
+        if ( s.charAt(0)=='-') throw new ParseException("string starts with minus sign",0);
         
         /* handl PDS time format */
         
@@ -1465,11 +1534,23 @@ public final class TimeUtil {
         }
     }
     
+    /**
+     * provide the previous midnight, similar to the floor function, noting that
+     * if the datum provided is midnight exactly then it is simply returned.
+     * @param datum
+     * @return the Datum for the next day boundary.
+     */
     public static Datum prevMidnight(Datum datum) {
         //return datum.subtract(getMicroSecondsSinceMidnight(datum), Units.microseconds);
         return datum.subtract(getSecondsSinceMidnight(datum), Units.seconds);
     }
     
+    /**
+     * provide the next midnight, similar to the ceil function, noting that
+     * if the datum provided is midnight already then it is simply returned.
+     * @param datum
+     * @return the Datum for the next day boundary.
+     */
     public static Datum nextMidnight( Datum datum ) {
         double d= getMicroSecondsSinceMidnight(datum);
         if ( d==0 ) {

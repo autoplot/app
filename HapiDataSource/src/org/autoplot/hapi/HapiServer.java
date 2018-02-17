@@ -3,15 +3,20 @@ package org.autoplot.hapi;
 
 import java.awt.EventQueue;
 import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileReader;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.UnsupportedEncodingException;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLEncoder;
+import java.text.ParseException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -19,14 +24,25 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.das2.datum.DatumRange;
 import org.das2.datum.TimeParser;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 import org.autoplot.datasource.AutoplotSettings;
+import org.autoplot.datasource.DataSetURI;
+import org.das2.datum.Datum;
+import org.das2.datum.DatumRangeUtil;
+import org.das2.datum.TimeUtil;
+import org.das2.datum.Units;
+import org.das2.util.filesystem.FileSystem;
+import org.das2.util.monitor.NullProgressMonitor;
 
 /**
  * Utility methods for interacting with HAPI servers.  
@@ -37,18 +53,32 @@ public class HapiServer {
     protected final static Logger logger= Logger.getLogger("apdss.hapi");
     
     /**
+     * this logger is for opening connections to remote sites.
+     */
+    protected static final Logger loggerUrl= org.das2.util.LoggerManager.getLogger( "das2.url" );
+    
+    /**
      * get known servers.  
      * @return known servers
      */
     public static List<String> getKnownServers() {
         ArrayList<String> result= new ArrayList<>();
-        if ( "true".equals(System.getProperty("hapiDeveloper","false")) ) {
-            result.add("http://tsds.org/get/IMAGE/PT1M/hapi");
-            result.add("https://cdaweb.gsfc.nasa.gov/registry/hdp/hapi");
-            result.add("http://jfaden.net/HapiServerDemo/hapi");
-        }            
+        try {
+            URL url= new URL("https://raw.githubusercontent.com/hapi-server/servers/master/all.txt");
+            String s= readFromURL(url,"");
+            String[] ss= s.split("\n");
+            result.addAll(Arrays.asList(ss));
+            if ( "true".equals(System.getProperty("hapiDeveloper","false")) ) {
+                result.add("http://tsds.org/get/IMAGE/PT1M/hapi");
+                result.add("https://cdaweb.gsfc.nasa.gov/registry/hdp/hapi");
+                result.add("http://jfaden.net/HapiServerDemo/hapi");
+            }
+        } catch (IOException  ex) {
+            Logger.getLogger(HapiServer.class.getName()).log(Level.SEVERE, null, ex);
+        }
+        result.remove("http://datashop.elasticbeanstalk.com/hapi");
         result.add("http://datashop.elasticbeanstalk.com/hapi");
-
+            
         return result;
     }
     
@@ -148,16 +178,8 @@ public class HapiServer {
         }        
         URL url;
         url= HapiServer.createURL( server, "catalog" );
-        StringBuilder builder= new StringBuilder();
-        logger.log(Level.FINE, "getCatalogIds {0}", url.toString());
-        try ( BufferedReader in= new BufferedReader( new InputStreamReader( url.openStream() ) ) ) {
-            String line= in.readLine();
-            while ( line!=null ) {
-                builder.append(line);
-                line= in.readLine();
-            }
-        }
-        JSONObject o= new JSONObject(builder.toString());
+        String s= readFromURL(url, "json");
+        JSONObject o= new JSONObject(s);
         JSONArray catalog= o.getJSONArray( HapiSpec.CATALOG );
         List<String> result= new ArrayList<>(catalog.length());
         for ( int i=0; i<catalog.length(); i++ ) {
@@ -180,19 +202,8 @@ public class HapiServer {
         }        
         URL url;
         url= HapiServer.createURL( server, HapiSpec.CATALOG_URL  );
-        StringBuilder builder= new StringBuilder();
-        logger.log(Level.FINE, "getCatalog {0}", url.toString());
-        try ( BufferedReader in= new BufferedReader( new InputStreamReader( url.openStream() ) ) ) {
-            String line= in.readLine();
-            while ( line!=null ) {
-                builder.append(line);
-                line= in.readLine();
-            }
-        }
-        if ( builder.length()==0 ) {
-            throw new IOException("empty response from "+url );
-        }
-        JSONObject o= new JSONObject(builder.toString());
+        String s= readFromURL(url, "json");
+        JSONObject o= new JSONObject(s);
         JSONArray catalog= o.getJSONArray( HapiSpec.CATALOG );
         return catalog;
     }
@@ -274,17 +285,9 @@ public class HapiServer {
         }
         URL url;
         url= HapiServer.createURL(server, HapiSpec.INFO_URL, Collections.singletonMap(HapiSpec.URL_PARAM_ID, id ) );
-        StringBuilder builder= new StringBuilder();
         logger.log(Level.FINE, "getInfo {0}", url.toString());
-        try ( BufferedReader in= new BufferedReader( new InputStreamReader( url.openStream() ) ) ) {
-            String line= in.readLine();
-            while ( line!=null ) {
-                builder.append(line);
-                line= in.readLine();
-            }
-        }
-        JSONObject o= new JSONObject(builder.toString());
-        
+        String s= readFromURL(url, "json");
+        JSONObject o= new JSONObject(s);
         return o;
     }
     
@@ -302,20 +305,191 @@ public class HapiServer {
         }
         URL url;
         url= HapiServer.createURL(server, HapiSpec.CAPABILITIES_URL);
+        String s= readFromURL(url, "json" );
+        JSONObject o= new JSONObject(s);
+        return o;
+    }
+
+    /**
+     * use cache of HAPI responses, to allow for use in offline mode.
+     * @return 
+     */
+    protected static boolean useCache() {
+        return ( "true".equals( System.getProperty("hapiServerCache","false") ) );
+    }
+    
+    /**
+     * allow cached files to be used for no more than 1 hour.
+     * @return 
+     */
+    protected static long cacheAgeLimitMillis() {
+        return 3600000;
+    }
+    
+    /**
+     * return the resource, if cached, or null if the data is not cached.
+     * @param url
+     * @param type "json" (the extension) or "" for no additional extension.
+     * @return the data or null.
+     * @throws IOException 
+     */
+    public static String readFromCachedURL( URL url, String type ) throws IOException {
+        String s= AutoplotSettings.settings().resolveProperty(AutoplotSettings.PROP_FSCACHE);
+        if ( s.endsWith("/") ) s= s.substring(0,s.length()-1);
+        String u= url.getProtocol() + "/" + url.getHost() + "/" + url.getPath();
+        if ( url.getQuery()!=null ) {
+            Pattern p= Pattern.compile("id=(.+)");
+            Matcher m= p.matcher(url.getQuery());
+            if ( m.matches() ) {
+                u= u + "/" + m.group(1);
+                if ( type.length()>0 ) u= u+ "." + type;
+            } else {
+                throw new IllegalArgumentException("query not supported, implementation error");
+            }
+        } else {
+            if ( type.length()>0 ) u= u + "." + type;
+        }
+        String su= s + "/hapi/" + u;
+        File f= new File(su);
+        if ( f.exists() && f.canRead() ) {
+            if ( ( System.currentTimeMillis() - f.lastModified() < cacheAgeLimitMillis() ) || FileSystem.settings().isOffline() ) {
+                logger.log(Level.FINE, "read from hapi cache: {0}", url);
+                String r= readFromFile( f );
+                return r;
+            } else {
+                logger.log(Level.FINE, "old cache item will not be used: {0}", url);
+                return null;
+            }
+        } else {
+            return null;
+        }
+    }
+
+    /**
+     * return the resource, if cached, or null if the data is not cached.
+     * @param url the resource location, query param id is handled specially, but others are ignored.
+     * @param type "json" (the extension), or "" if no extension should be added.
+     * @param data the data.
+     * @throws IOException 
+     */
+    public static void writeToCachedURL( URL url, String type, String data ) throws IOException {
+        String s= AutoplotSettings.settings().resolveProperty(AutoplotSettings.PROP_FSCACHE);
+        if ( s.endsWith("/") ) s= s.substring(0,s.length()-1);
+        String u= url.getProtocol() + "/" + url.getHost() + "/" + url.getPath();
+        if ( url.getQuery()!=null ) {
+            Pattern p= Pattern.compile("id=(.+)");
+            Matcher m= p.matcher(url.getQuery());
+            if ( m.matches() ) {
+                u= u + "/" + m.group(1);
+                if ( type.length()>0 ) {
+                    u= u + "." + type;
+                }
+            } else {
+                throw new IllegalArgumentException("query not supported, implementation error");
+            }
+        } else {
+            if ( type.length()>0 ) {
+                u= u + "." + type;
+            }
+        }
+        
+        String su= s + "/hapi/" + u;
+        File f= new File(su);
+        if ( f.exists() ) {
+            f.delete();
+        }
+        if ( !f.getParentFile().exists() ) {
+            if ( !f.getParentFile().mkdirs() ) {
+                throw new IOException("unable to make parent directories");
+            }
+        }
+        if ( !f.exists() ) {
+            logger.log(Level.FINE, "write to hapi cache: {0}", url);
+            try ( BufferedWriter w= new BufferedWriter( new FileWriter(f) ) ) {
+                w.write(data);
+            }
+        } else {
+            throw new IOException("unable to write to file: "+f);
+        }
+    }
+    
+    private static final Lock lock= new ReentrantLock();
+    
+    /**
+     * read the file into a string.  
+     * @param f non-empty file
+     * @return String containing file contents.
+     * @throws IOException 
+     */
+    public static String readFromFile( File f ) throws IOException {
         StringBuilder builder= new StringBuilder();
-        logger.log(Level.FINE, "getCapabilities {0}", url.toString());
+        try ( BufferedReader in= new BufferedReader( new InputStreamReader( new FileInputStream(f) ) ) ) {
+            String line= in.readLine();
+            while ( line!=null ) {
+                builder.append(line);
+                builder.append("\n");
+                line= in.readLine();
+            }
+        }
+        if ( builder.length()==0 ) {
+            throw new IOException("file is empty:" + f );
+        }
+        String result=builder.toString();
+        return result;
+    }
+    
+    /**
+     * read data from the URL.  
+     * @param url the URL to read from
+     * @param type the extension to use for the cache file (JSON).
+     * @return non-empty string
+     * @throws IOException 
+     */
+    public static String readFromURL( URL url, String type) throws IOException {
+        
+        if ( FileSystem.settings().isOffline() ) {
+            String s= readFromCachedURL( url, type );
+            if ( s!=null ) return s;
+        }
+        loggerUrl.log(Level.FINE, "GET {0}", new Object[] { url } );
+        StringBuilder builder= new StringBuilder();
         try ( BufferedReader in= new BufferedReader( new InputStreamReader( url.openStream() ) ) ) {
             String line= in.readLine();
             while ( line!=null ) {
                 builder.append(line);
+                builder.append("\n");
                 line= in.readLine();
             }
+        } catch ( IOException ex ) {
+            logger.log( Level.FINE, ex.getMessage(), ex );
+            lock.lock();
+            try {
+                if ( useCache() ) {
+                    String s= readFromCachedURL( url, type );
+                    if ( s!=null ) return s;
+                } else {
+                    throw ex;
+                }
+            } finally {
+                lock.unlock();
+            }
         }
-        JSONObject o= new JSONObject(builder.toString());
         
-        return o;
+        if ( builder.length()==0 ) {
+            throw new IOException("empty response from "+url );
+        }
+        String result=builder.toString();
+        
+        lock.lock();
+        try {
+            if ( useCache() ) {
+                writeToCachedURL( url, type, result );
+            }
+        } finally {
+            lock.unlock();
+        }
+        return result;
     }
-
     
     /**
      * return the URL by appending the text to the end of the server URL.  This
@@ -362,4 +536,129 @@ public class HapiServer {
         }
     }
     
+    /**
+     * [yr,mon,day,hour,min,sec,nanos]
+     * @param array
+     * @return approximate seconds
+     */
+    private static Datum cadenceArrayToDatum( int[] array ) {
+        double seconds= array[6]/1e9;
+        seconds+= array[5];
+        seconds+= array[4]*60;
+        seconds+= array[3]*3600;
+        seconds+= array[2]*86400; //approx, just to get scale
+        seconds+= array[1]*86400*30; //approx, just to get scale
+        seconds+= array[0]*86400*365; // approx, just to get scale
+        return Units.seconds.createDatum(seconds);
+    }
+    
+    
+    /**
+     * return the range of available data. For example, Polar/Hydra data is available
+     * from 1996-03-20 to 2008-04-15.  Note this supports old schemas.
+     * @param info
+     * @return the range of available data.
+     */
+    public static DatumRange getRange( JSONObject info ) {
+        try {
+            if ( info.has("firstDate") && info.has("lastDate") ) { // this is deprecated behavior
+                String firstDate= info.getString("firstDate");
+                String lastDate= info.getString("lastDate");
+                if ( firstDate!=null && lastDate!=null ) {
+                    Datum t1= Units.us2000.parse(firstDate);
+                    Datum t2= Units.us2000.parse(lastDate);
+                    if ( t1.le(t2) ) {
+                        return new DatumRange( t1, t2 );
+                    } else {
+                        logger.warning( "firstDate and lastDate are out of order, ignoring.");
+                    }
+                }
+            } else if ( info.has("startDate") ) { // note startDate is required.
+                String startDate= info.getString("startDate");
+				String stopDate;
+				if ( info.has("stopDate") ) {
+					stopDate= info.getString("stopDate");
+				} else {
+					stopDate= null;
+				}
+                if ( startDate!=null ) {
+                    Datum t1= Units.us2000.parse(startDate);
+                    Datum t2= Units.us2000.parse(stopDate);
+                    if ( t1.le(t2) ) {
+                        return new DatumRange( t1, t2 );
+                    } else {
+                        logger.warning( "firstDate and lastDate are out of order, ignoring.");
+                    }
+                }
+			}
+        } catch ( JSONException | ParseException ex ) {
+            logger.log( Level.WARNING, ex.getMessage(), ex );
+        }
+        return null;
+    }    
+
+    /**
+     * return a time which is a suitable time to discover the data.
+     * @param info
+     * @return 
+     */
+    public static DatumRange getSampleTimeRange( JSONObject info ) throws JSONException {
+        DatumRange range= getRange(info);
+        if ( range==null ) {
+            logger.warning("server is missing required startDate and stopDate parameters.");
+            throw new IllegalArgumentException("here fail");
+        } else {
+            DatumRange sampleRange=null;
+            if ( info.has("sampleStartDate") && info.has("sampleStopDate") ) {
+                try {
+                    sampleRange = new DatumRange( Units.us2000.parse(info.getString("sampleStartDate")), Units.us2000.parse(info.getString("sampleStopDate")) );
+                } catch (JSONException | ParseException ex) {
+                    logger.log(Level.SEVERE, null, ex);
+                }
+            } 
+            if ( sampleRange==null ) {
+                Datum cadence= Units.seconds.createDatum(60);  // assume default cadence of 1 minute results in 1 day sample range.
+                if ( info.has("cadence") ) {
+                    try{
+                        int[] icadence= DatumRangeUtil.parseISO8601Duration(info.getString("cadence"));
+                        cadence= cadenceArrayToDatum(icadence);
+                    } catch ( ParseException ex ) {
+                        logger.log(Level.WARNING, "parse error in cadence: {0}", info.getString("cadence"));
+                    }
+                }    
+                if ( false ) { // range.max().ge(myValidTime)) { // Note stopDate is required since 2017-01-17.
+                    logger.warning("server is missing required stopDate parameter.");
+                    sampleRange = new DatumRange(range.min(), range.min().add(1, Units.days));
+                } else {
+                    if ( cadence.ge(Units.days.createDatum(1)) ) {
+                        Datum end = TimeUtil.nextMidnight(range.max());
+                        end= end.subtract( 10,Units.days );
+                        if ( range.max().subtract(end).ge( Datum.create(1,Units.days ) ) ) {
+                            sampleRange = new DatumRange( end, end.add(10,Units.days) );
+                        } else {
+                            sampleRange = new DatumRange( end.subtract(10,Units.days), end );
+                        } 
+                    } else if ( cadence.ge(Units.seconds.createDatum(1)) ) {
+                        Datum end = TimeUtil.prevMidnight(range.max());
+                        if ( range.max().subtract(end).ge( Datum.create(1,Units.hours ) ) ) {
+                            sampleRange = new DatumRange( end, end.add(1,Units.days) );
+                        } else {
+                            sampleRange = new DatumRange( end.subtract(1,Units.days), end );
+                        } 
+                    } else {
+                        Datum end = TimeUtil.prev( TimeUtil.HOUR, range.max() );
+                        if ( range.max().subtract(end).ge( Datum.create(1,Units.minutes ) ) ) {
+                            sampleRange = new DatumRange( end, end.add(1,Units.hours) );
+                        } else {
+                            sampleRange = new DatumRange( end.subtract(1,Units.hours), end );
+                        } 
+                    }
+                    if ( !sampleRange.intersects(range) ) {
+                        sampleRange= sampleRange.next();
+                    }
+                }
+            }
+            return sampleRange;                
+        }
+    }
 }

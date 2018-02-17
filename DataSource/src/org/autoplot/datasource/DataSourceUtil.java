@@ -71,7 +71,8 @@ public class DataSourceUtil {
      * remove escape sequences like %20 to create a human-editable string
      * This contains a kludge that looks for single spaces that are the result of
      * cut-n-pasting on Linux.  If there is a space and a "%3A", then single spaces
-     * are removed.  <tt>&amp;</tt> is replaced with <tt>&</tt>.
+     * are removed.
+     * <code>&amp;amp;</code> is replaced with <code>&</code>.
      * @param s
      * @return
      */
@@ -442,7 +443,27 @@ public class DataSourceUtil {
             }
         }
     }
-        
+    
+    /**
+     * something which returns a new URI given an old one.
+     */
+    public interface URIMap {
+        public String map(String uri);
+    }
+    
+    private static final Map<String,URIMap> makeAggSchemes= new HashMap<>();
+    
+    /**
+     * register a map which might modify a URI so that it uses aggregation. 
+     * This was introduced for "vap+inline" URIs which must be taken apart and
+     * then each of the getDataSet calls is aggregated.
+     * @param scheme the scheme where this should be used, e.g. "vap+inline"
+     * @param map the map, which might return the input URI or an aggregated one.
+     */
+    public static void addMakeAggregationForScheme( String scheme, URIMap map ) {
+        makeAggSchemes.put(scheme,map);
+    }
+            
     /**
      * attempt to create an equivalent URL that uses an aggregation template
      * instead of the explicit filename.  This also return null when things go wrong.
@@ -462,6 +483,13 @@ public class DataSourceUtil {
             return surl;
         }
             
+        if ( split.vapScheme!=null ) {
+            URIMap map= makeAggSchemes.get(split.vapScheme);
+            if ( map!=null ) {
+                return map.map(surl);
+            }
+        }
+                
         String yyyy= "/(19|20)\\d{2}/";
 
         String yyyymmdd= "(?<!\\d)(19|20)(\\d{6})(?!\\d)"; //"(\\d{8})";
@@ -502,11 +530,17 @@ public class DataSourceUtil {
         
         // it looks like to have $Y$m01 resolution, we would need to have a flag to only accept the aggregation if the more general one is not needed for other files.
         
-        String s= replaceLast( split.file, 
+        String s;
+        try {
+            s= replaceLast( split.file, 
                 search,
                 replac,
                 resol );
-
+        } catch ( IllegalArgumentException ex ) {
+            logger.log( Level.FINE, ex.getMessage(), ex );
+            return null;
+        }
+        
         try {
             TimeParser tp= TimeParser.create(s);
             timeRange= tp.parse( split.file ).getTimeRange().toString();

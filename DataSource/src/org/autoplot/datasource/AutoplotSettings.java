@@ -152,25 +152,34 @@ public final class AutoplotSettings {
      */
     private String resolvedAutoplotData= null;
     
+    private static String maybeFixWindows( String n ) {
+        if ( System.getProperty("os.name").toLowerCase().startsWith("win") ) {
+            return n.replace('\\','/');
+        } else {
+            return n;
+        }
+    }
+    
     /**
      * resolve the property, resolving references.  For example, ${HOME} 
      * is replaced with System.getProperty("user.home").
      * @param name the name to resolve, such as PROP_AUTOPLOTDATA or PROP_FSCACHE
      * @return the value with references resolved.
+     * TODO: this should always make result end in slash...
      */
     public String resolveProperty( String name ) {
         if ( name.equals("autoplotData") ) {
             String l= resolvedAutoplotData;
             if ( l!=null ) return l;
-            String s=  getAutoplotData().replace("${HOME}", System.getProperty("user.home") );
+            String s=  getAutoplotData().replace("${HOME}", maybeFixWindows( System.getProperty("user.home") ) );
             File f= new File(s);
             f= f.getAbsoluteFile();
             resolvedAutoplotData= f.toString();
-            return f.toString();
+            return maybeFixWindows(f.toString());
         } else if ( name.equals("fscache" ) ) {
             String result= getFscache();
             result= result.replace("${autoplotData}", resolveProperty("autoplotData") );
-            result= result.replace("${HOME}", System.getProperty("user.home") );
+            result= result.replace("${HOME}", maybeFixWindows( System.getProperty("user.home") ) );
             return result;
         } else {
             throw new IllegalArgumentException("unable to resolve property: "+ name );

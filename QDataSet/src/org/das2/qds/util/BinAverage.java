@@ -19,9 +19,10 @@ import org.das2.qds.IDataSet;
 import org.das2.qds.SemanticOps;
 import org.das2.qds.WeightsDataSet;
 import org.das2.qds.ops.Ops;
+import static org.das2.qds.util.BinAverage.rebin;
 
 /**
- *
+ * utility class providing methods for bin averaging.
  * @author jbf
  */
 public class BinAverage {
@@ -31,13 +32,32 @@ public class BinAverage {
 
     /**
      * returns a dataset with tags specified by newTags0.  Data from <tt>ds</tt>
-     * are averaged together when they fall into the same bin.  
+     * are averaged together when they fall into the same bin.  Note the result
+     * will have the property WEIGHTS.
      *
      * @param ds a rank 1 dataset, no fill
      * @param newTags0 a rank 1 tags dataset, that must be MONOTONIC.
      * @return rank 1 dataset with DEPEND_0 = newTags.
+     * @see #rebin(org.das2.qds.QDataSet, org.das2.qds.QDataSet, org.das2.qds.QDataSet) 
+     * @see #binAverage(QDataSet, QDataSet ) 
      */
     public static DDataSet rebin(QDataSet ds, QDataSet newTags0) {
+        return binAverage( ds, newTags0 );
+    } 
+    
+    /**
+     * returns a dataset with tags specified by newTags0.  Data from <tt>ds</tt>
+     * are averaged together when they fall into the same bin.  Note the result
+     * will have the property WEIGHTS.
+     *
+     * @param ds a rank 1 dataset, no fill
+     * @param newTags0 a rank 1 tags dataset, that must be MONOTONIC.
+     * @return rank 1 dataset with DEPEND_0 = newTags.
+     * @see #rebin(org.das2.qds.QDataSet, org.das2.qds.QDataSet, org.das2.qds.QDataSet) 
+     * @see #binAverage(QDataSet, QDataSet ) 
+     * @see #binAverage(QDataSet, QDataSet, QDataSet ) 
+     */
+    public static DDataSet binAverage(QDataSet ds, QDataSet newTags0 ) {
         QDataSet dstags = (QDataSet) ds.property(QDataSet.DEPEND_0);
 
         QDataSet wds = DataSetUtil.weightsDataSet(ds);
@@ -74,7 +94,108 @@ public class BinAverage {
 
         return result;
     }
+    
+    /**
+     * returns a dataset with tags specified by newTags.
+     * @param ds a rank 2 dataset.  If it's a bundle, then rebinBundle is called.
+     * @param newTags0 rank 1 monotonic dataset
+     * @param newTags1 rank 1 monotonic dataset
+     * @return rank 2 dataset with newTags0 for the DEPEND_0 tags, newTags1 for the DEPEND_1 tags.  WEIGHTS property contains the weights.
+     * @see #rebin(org.das2.qds.QDataSet, int, int) 
+     * @see #rebinBundle(org.das2.qds.QDataSet, org.das2.qds.QDataSet, org.das2.qds.QDataSet) 
+     * @see #rebin(org.das2.qds.QDataSet, org.das2.qds.QDataSet) 
+     * @deprecated see binAverage
+     * @see #binAverage(QDataSet, QDataSet, QDataSet ) 
+     */
+    public static DDataSet rebin(QDataSet ds, QDataSet newTags0, QDataSet newTags1) {
+        return binAverage( ds, newTags0, newTags1 );
+    }
+    
+    
+    /**
+     * returns a dataset with tags specified by newTags.
+     * @param ds a rank 2 dataset.  If it's a bundle, then rebinBundle is called.
+     * @param newTags0 rank 1 monotonic dataset
+     * @param newTags1 rank 1 monotonic dataset
+     * @return rank 2 dataset with newTags0 for the DEPEND_0 tags, newTags1 for the DEPEND_1 tags.  WEIGHTS property contains the weights.
+     * @see #rebin(org.das2.qds.QDataSet, int, int) 
+     * @see #rebinBundle(org.das2.qds.QDataSet, org.das2.qds.QDataSet, org.das2.qds.QDataSet) 
+     * @see #binAverage(org.das2.qds.QDataSet, org.das2.qds.QDataSet) 
+     * @see #binAverage(org.das2.qds.QDataSet ) 
+     */
+    public static DDataSet binAverage(QDataSet ds, QDataSet newTags0, QDataSet newTags1) {
+    
+        if (ds.rank() != 2) {
+            throw new IllegalArgumentException("ds must be rank2");
+        }
 
+        if ( SemanticOps.isBundle(ds) ) {
+            return rebinBundle( ds, newTags0, newTags1 );
+        }
+
+        QDataSet dstags0 = (QDataSet) ds.property(QDataSet.DEPEND_0);
+        if ( dstags0==null ) {
+            throw new IllegalArgumentException("expected ds to have DEPEND_0");
+        }
+
+        QDataSet wds = DataSetUtil.weightsDataSet(ds);
+
+        double fill = ((Number) wds.property(QDataSet.FILL_VALUE)).doubleValue();
+
+        DDataSet result = DDataSet.createRank2(newTags0.length(), newTags1.length());
+        DDataSet weights = DDataSet.createRank2(newTags0.length(), newTags1.length());
+
+        QDataSet ibin1CacheDs = null;
+        int[] ibins1 = null;
+
+        int ibin0 = -1;
+        for (int i = 0; i < ds.length(); i++) {
+            ibin0 = DataSetUtil.closest(newTags0, dstags0.value(i), ibin0);
+
+            QDataSet dstags1 = (QDataSet) ds.property(QDataSet.DEPEND_1, i);
+
+            if (dstags1 != ibin1CacheDs) {
+                ibins1 = new int[dstags1.length()];
+                Arrays.fill(ibins1, -1);
+                for (int j = 0; j < dstags1.length(); j++) {
+                    ibins1[j] = DataSetUtil.closest(newTags1, dstags1.value(j), ibins1[j]);
+                }
+                ibin1CacheDs = dstags1;
+            }
+
+            for (int j = 0; j < dstags1.length(); j++) {
+                int ibin1 = ibins1[j];
+                double d = ds.value(i, j);
+                double w = wds.value(i, j);
+                double s = result.value(ibin0, ibin1);
+                result.putValue(ibin0, ibin1, s + w * d);
+                double n = weights.value(ibin0, ibin1);
+                weights.putValue(ibin0, ibin1, n + w);
+
+            }
+        }
+
+        for (int i = 0; i < result.length(); i++) {
+            for (int j = 0; j < result.length(i); j++) {
+                if (weights.value(i, j) > 0) {
+                    result.putValue(i, j, result.value(i, j) / weights.value(i, j));
+                } else {
+                    result.putValue(i, j, fill);
+                }
+            }
+        }
+
+        weights.putProperty(QDataSet.DEPEND_0, newTags0);
+        weights.putProperty(QDataSet.DEPEND_1, newTags1);
+        result.putProperty(QDataSet.DEPEND_0, newTags0);
+        result.putProperty(QDataSet.DEPEND_1, newTags1);
+        result.putProperty(QDataSet.FILL_VALUE, fill );
+        result.putProperty(QDataSet.WEIGHTS, weights);
+
+        return result;
+    }
+
+    
     /**
      * return true if the data is linearly spaced with the given base and offset.
      * @param dep0
@@ -102,8 +223,25 @@ public class BinAverage {
      * @param dep2 the rank 1 depend2 for the result, which must be uniformly spaced.
      * @return rank 3 dataset of z averages with depend_0, depend_1, and depend_2.  WEIGHTS contains the total weight for each bin.
      * @see #rebinBundle(org.das2.qds.QDataSet, org.das2.qds.QDataSet, org.das2.qds.QDataSet) 
+     * @deprecated see binAverageBundle
+     * @see #binAverageBundle(org.das2.qds.QDataSet, org.das2.qds.QDataSet, org.das2.qds.QDataSet, org.das2.qds.QDataSet ) 
      */
     public static DDataSet rebinBundle( QDataSet ds, QDataSet dep0, QDataSet dep1, QDataSet dep2 ) {
+        return binAverageBundle( ds, dep0, dep1, dep2 );
+    }
+    
+    /**
+     * 
+     * takes rank 2 bundle (x,y,z,f) and averages it into rank 3 qube f(x,y,z).  This is 
+     * similar to what happens in the spectrogram routine.
+     * @param ds rank 2 bundle(x,y,z,f)
+     * @param dep0 the rank 1 depend0 for the result, which must be uniformly spaced.
+     * @param dep1 the rank 1 depend1 for the result, which must be uniformly spaced.
+     * @param dep2 the rank 1 depend2 for the result, which must be uniformly spaced.
+     * @return rank 3 dataset of z averages with depend_0, depend_1, and depend_2.  WEIGHTS contains the total weight for each bin.
+     * @see #rebinBundle(org.das2.qds.QDataSet, org.das2.qds.QDataSet, org.das2.qds.QDataSet) 
+     */    
+    public static DDataSet binAverageBundle( QDataSet ds, QDataSet dep0, QDataSet dep1, QDataSet dep2 ) {        
         DDataSet sresult= DDataSet.createRank3( dep0.length(), dep1.length(), dep2.length() );
         IDataSet nresult= IDataSet.createRank3( dep0.length(), dep1.length(), dep2.length() );
         QDataSet wds= DataSetUtil.weightsDataSet( DataSetOps.slice1(ds,3) );
@@ -190,8 +328,25 @@ public class BinAverage {
      * @return rank 2 dataset of z averages with depend_0 and depend_1.  WEIGHTS contains the total weight for each bin.
      * @see #rebin(org.das2.qds.QDataSet, org.das2.qds.QDataSet, org.das2.qds.QDataSet) 
      * @see #rebinBundle(org.das2.qds.QDataSet, org.das2.qds.QDataSet, org.das2.qds.QDataSet, org.das2.qds.QDataSet) 
+     * @deprecated see binAverageBundle
+     * @see #binAverageBundle(org.das2.qds.QDataSet, org.das2.qds.QDataSet, org.das2.qds.QDataSet) 
      */
     public static DDataSet rebinBundle( QDataSet ds, QDataSet dep0, QDataSet dep1 ) {
+        return binAverageBundle( ds, dep0, dep1 );
+    }
+    
+    /**
+     * takes rank 2 bundle (x,y,z) and averages it into table z(x,y).  This is 
+     * similar to what happens in the spectrogram routine.
+     * @param ds rank 2 bundle(x,y,z)
+     * @param dep0 the rank 1 depend0 for the result, which must be uniformly spaced.
+     * @param dep1 the rank 1 depend1 for the result, which must be uniformly spaced.
+     * @return rank 2 dataset of z averages with depend_0 and depend_1.  WEIGHTS contains the total weight for each bin.
+     * @see #rebin(org.das2.qds.QDataSet, org.das2.qds.QDataSet, org.das2.qds.QDataSet) 
+     * @see #rebinBundle(org.das2.qds.QDataSet, org.das2.qds.QDataSet, org.das2.qds.QDataSet, org.das2.qds.QDataSet) 
+     */
+    public static DDataSet binAverageBundle( QDataSet ds, QDataSet dep0, QDataSet dep1 ) {
+    
         DDataSet sresult= DDataSet.createRank2( dep0.length(), dep1.length() );
         IDataSet nresult= IDataSet.createRank2( dep0.length(), dep1.length() );
         QDataSet wds= DataSetUtil.weightsDataSet( DataSetOps.slice1(ds,2) );
@@ -256,88 +411,7 @@ public class BinAverage {
 
         return sresult;
     }
-
-    /**
-     * returns a dataset with tags specified by newTags
-     * @param ds a rank 2 dataset.  If it's a bundle, then rebinBundle is called.
-     * @param newTags0 rank 1 monotonic dataset
-     * @param newTags1 rank 1 monotonic dataset
-     * @return rank 2 dataset with newTags0 for the DEPEND_0 tags, newTags1 for the DEPEND_1 tags.  WEIGHTS property contains the weights.
-     * @see #rebin(org.das2.qds.QDataSet, int, int) 
-     * @see #rebinBundle(org.das2.qds.QDataSet, org.das2.qds.QDataSet, org.das2.qds.QDataSet) 
-     */
-    public static DDataSet rebin(QDataSet ds, QDataSet newTags0, QDataSet newTags1) {
-
-        if (ds.rank() != 2) {
-            throw new IllegalArgumentException("ds must be rank2");
-        }
-
-        if ( SemanticOps.isBundle(ds) ) {
-            return rebinBundle( ds, newTags0, newTags1 );
-        }
-
-        QDataSet dstags0 = (QDataSet) ds.property(QDataSet.DEPEND_0);
-        if ( dstags0==null ) {
-            throw new IllegalArgumentException("expected ds to have DEPEND_0");
-        }
-
-        QDataSet wds = DataSetUtil.weightsDataSet(ds);
-
-        double fill = ((Number) wds.property(QDataSet.FILL_VALUE)).doubleValue();
-
-        DDataSet result = DDataSet.createRank2(newTags0.length(), newTags1.length());
-        DDataSet weights = DDataSet.createRank2(newTags0.length(), newTags1.length());
-
-        QDataSet ibin1CacheDs = null;
-        int[] ibins1 = null;
-
-        int ibin0 = -1;
-        for (int i = 0; i < ds.length(); i++) {
-            ibin0 = DataSetUtil.closest(newTags0, dstags0.value(i), ibin0);
-
-            QDataSet dstags1 = (QDataSet) ds.property(QDataSet.DEPEND_1, i);
-
-            if (dstags1 != ibin1CacheDs) {
-                ibins1 = new int[dstags1.length()];
-                Arrays.fill(ibins1, -1);
-                for (int j = 0; j < dstags1.length(); j++) {
-                    ibins1[j] = DataSetUtil.closest(newTags1, dstags1.value(j), ibins1[j]);
-                }
-                ibin1CacheDs = dstags1;
-            }
-
-            for (int j = 0; j < dstags1.length(); j++) {
-                int ibin1 = ibins1[j];
-                double d = ds.value(i, j);
-                double w = wds.value(i, j);
-                double s = result.value(ibin0, ibin1);
-                result.putValue(ibin0, ibin1, s + w * d);
-                double n = weights.value(ibin0, ibin1);
-                weights.putValue(ibin0, ibin1, n + w);
-
-            }
-        }
-
-        for (int i = 0; i < result.length(); i++) {
-            for (int j = 0; j < result.length(i); j++) {
-                if (weights.value(i, j) > 0) {
-                    result.putValue(i, j, result.value(i, j) / weights.value(i, j));
-                } else {
-                    result.putValue(i, j, fill);
-                }
-            }
-        }
-
-        weights.putProperty(QDataSet.DEPEND_0, newTags0);
-        weights.putProperty(QDataSet.DEPEND_1, newTags1);
-        result.putProperty(QDataSet.DEPEND_0, newTags0);
-        result.putProperty(QDataSet.DEPEND_1, newTags1);
-        result.putProperty(QDataSet.FILL_VALUE, fill );
-        result.putProperty(QDataSet.WEIGHTS, weights);
-
-        return result;
-    }
-
+    
     /**
      * returns number of stddev from adjacent data.
      * @param ds, rank 1 dataset.
@@ -463,8 +537,10 @@ public class BinAverage {
     /**
      * reduce the rank 1 dataset by averaging blocks of bins together
      * @param ds rank 1 dataset with N points
-     * @param n0 number of bins in the result.  Note this changed in v2013a_6 from earlier versions of this routine.
+     * @param n0 number of bins in the result.
      * @return rank 1 dataset with n0 points.  Weights plane added.
+     * @see #rebin(org.das2.qds.QDataSet, int, int) 
+     * @see #rebin(org.das2.qds.QDataSet, int, int, int) 
      */
     public static QDataSet rebin(QDataSet ds, int n0 ) {
 
@@ -556,8 +632,86 @@ public class BinAverage {
 
         QDataSet dep1 = (QDataSet) ds.property(QDataSet.DEPEND_1);
         if (dep1 != null) {
+            if ( dep1.rank()!=1 ) throw new IllegalArgumentException("dep1 must be rank 1");
             result.putProperty(QDataSet.DEPEND_1, rebin(dep1, n1));
         }
+        DataSetUtil.copyDimensionProperties( ds, result );
+        
+        return result;
+    }
+
+    /**
+     * reduce the rank 3 dataset by averaging blocks of bins together.  depend
+     * datasets reduced as well.
+     * @param ds rank 3 dataset 
+     * @param n0 the number of bins in the result.
+     * @param n1 the number of bins in the result.
+     * @param n2 the number of bins in the result.
+     * @return rank 3 dataset ds[n0,n1,n2]
+     * @see #rebin(org.das2.qds.QDataSet, org.das2.qds.QDataSet, org.das2.qds.QDataSet) 
+     * @see #rebin(org.das2.qds.QDataSet, int) 
+     */
+    public static QDataSet rebin(QDataSet ds, int n0, int n1, int n2) {
+        DDataSet result = DDataSet.createRank3( n0, n1, n2);
+        DDataSet weights = DDataSet.createRank3( n0, n1, n2);
+
+        QDataSet wds = DataSetUtil.weightsDataSet(ds);
+
+        double fill = ((Number) wds.property( WeightsDataSet.PROP_SUGGEST_FILL )).doubleValue();
+
+        int binSize0= ds.length() / n0;
+        int binSize1= ds.length(0) / n1;
+        int binSize2= ds.length(0,0) / n2;
+        
+        if ( binSize0==0 ) throw new IllegalArgumentException("rebin can only be used to reduce data");
+        if ( binSize1==0 ) throw new IllegalArgumentException("rebin can only be used to reduce data");
+        if ( binSize2==0 ) throw new IllegalArgumentException("rebin can only be used to reduce data");
+        
+        for (int i0 = 0; i0 < n0; i0++) {
+            for (int i1 = 0; i1 < n1; i1++) {
+                for (int i2 = 0; i2 < n2; i2++) {
+                    int j0 = i0 * binSize0;
+                    int j1 = i1 * binSize1;
+                    int j2 = i2 * binSize2;
+                    double s = 0, w = 0;
+
+                    for (int k0 = 0; k0 < binSize0; k0++) {
+                        for (int k1 = 0; k1 < binSize1; k1++) {
+                            for (int k2 = 0; k2 < binSize2; k2++) {
+                                double w1 = wds.value(j0 + k0, j1 + k1, j2 + k2 );
+                                if ( w1>0 ) {
+                                    w += w1;
+                                    s += w1 * ds.value(j0 + k0, j1 + k1, j2 + k2 );
+                                }
+                            }
+                        }
+                    }
+                    weights.putValue(i0, i1, i2, w);
+                    result.putValue(i0, i1, i2, w == 0 ? fill : s / w);
+                }
+            }
+        }
+
+        result.putProperty(QDataSet.WEIGHTS, weights);
+        result.putProperty(QDataSet.FILL_VALUE, fill);
+
+        QDataSet dep0 = (QDataSet) ds.property(QDataSet.DEPEND_0);
+        if (dep0 != null) {
+            result.putProperty(QDataSet.DEPEND_0, rebin(dep0, n0));
+        }
+
+        QDataSet dep1 = (QDataSet) ds.property(QDataSet.DEPEND_1);
+        if (dep1 != null) {
+            if ( dep1.rank()!=1 ) throw new IllegalArgumentException("dep1 must be rank 1");
+            result.putProperty(QDataSet.DEPEND_1, rebin(dep1, n1));
+        }
+        
+        QDataSet dep2 = (QDataSet) ds.property(QDataSet.DEPEND_2);
+        if (dep2 != null) {
+            if ( dep2.rank()!=1 ) throw new IllegalArgumentException("dep2 must be rank 1");
+            result.putProperty(QDataSet.DEPEND_2, rebin(dep2, n2));
+        }
+        
         DataSetUtil.copyDimensionProperties( ds, result );
         
         return result;

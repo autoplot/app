@@ -44,6 +44,7 @@ import org.das2.qds.JoinDataSet;
 import org.das2.qds.QDataSet;
 import org.das2.qds.RankZeroDataSet;
 import org.das2.qds.SemanticOps;
+import org.das2.qds.TagGenDataSet;
 import org.das2.qds.WritableDataSet;
 import org.das2.qds.ops.Ops;
 import org.das2.qds.util.DataSetBuilder;
@@ -205,7 +206,8 @@ public class EventsRenderer extends Renderer {
                     return String.format( "%s", d ) ; // don't indicate time if it's zero width, because this is redundant and clutter.
                 }
             } else {
-                return String.format( "%s (%s)!c%s", dr, sy, d ) ;
+                String ssy= sy.toString().trim();
+                return String.format( "%s (%s)!c%s", dr, ssy, d ) ;
             }
         }
     };
@@ -248,6 +250,8 @@ public class EventsRenderer extends Renderer {
             if ( vds.length()==0 ) return new Rectangle[0];
 
             QDataSet ds= cds;
+            if ( ds==null ) return new Rectangle[0];
+            
             QDataSet xmins= DataSetOps.unbundle( ds,0 );
             QDataSet xmaxs= DataSetOps.unbundle( ds,1 );
             QDataSet msgs= DataSetOps.unbundle(ds,ds.length(0)-1);
@@ -347,7 +351,7 @@ public class EventsRenderer extends Renderer {
     private MouseModule getMouseModule() {
         if ( mouseModule==null ) {
             DasPlot parent= getParent();
-            mouseModule= new MouseModule( parent, new DragRenderer(parent), "event lookup" );
+            mouseModule= new MouseModule( parent, new DragRenderer(parent), "Event Lookup" );
         }
         return mouseModule;
     }
@@ -480,9 +484,15 @@ public class EventsRenderer extends Renderer {
         } else if ( vds.rank()==1 ) {
             QDataSet dep0= (QDataSet) vds.property(QDataSet.DEPEND_0);
             if ( dep0==null ) {
-                xmins= vds;
-                xmaxs= vds;
-                msgs= vds;
+                if ( UnitsUtil.isNominalMeasurement(SemanticOps.getUnits(vds)) ) {
+                    xmins= new TagGenDataSet(vds.length(),1.0,0.0);
+                    xmaxs= new TagGenDataSet(vds.length(),1.0,1.0);
+                    msgs= vds;
+                } else {
+                    xmins= vds;
+                    xmaxs= vds;
+                    msgs= vds;
+                }
             } else if ( dep0.rank() == 2  ) {
                 if ( SemanticOps.isBins(dep0) ) {
                     xmins= DataSetOps.slice1( dep0, 0 );

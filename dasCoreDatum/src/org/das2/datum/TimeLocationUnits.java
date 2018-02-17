@@ -51,6 +51,8 @@ public class TimeLocationUnits extends LocationUnits {
 
     double vmin;
     double vmax;
+    
+    private Datum fill= createDatum( Double.NaN );
 
     @Override
     public DatumFormatterFactory getDatumFormatterFactory() {
@@ -59,6 +61,9 @@ public class TimeLocationUnits extends LocationUnits {
         
     @Override
     public Datum parse(String s) throws java.text.ParseException {
+        if ( s.equals("NaN") ) {
+            return fill;
+        }
         int [] rr= DatumRangeUtil.parseISO8601(s);
         if ( rr!=null ) {
             return TimeUtil.toDatum(rr,this);
@@ -66,6 +71,17 @@ public class TimeLocationUnits extends LocationUnits {
             return TimeUtil.toDatum(TimeUtil.parseTime(s),this);
         }
     }
+
+    @Override
+    public Datum getFillDatum() {
+        return this.fill;
+    }
+
+    @Override
+    public double getFillDouble() {
+        return this.fill.doubleValue(this);
+    }
+    
     
     public String getTimeZone() {
         return "UT";

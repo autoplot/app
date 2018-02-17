@@ -29,6 +29,7 @@ import org.das2.system.DasLogger;
 import java.awt.BorderLayout;
 import java.awt.Rectangle;
 import java.awt.event.ActionEvent;
+import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.io.BufferedReader;
@@ -296,18 +297,21 @@ public class DataPointRecorder extends JPanel implements DataPointSelectionListe
                 if ( j==0 && timeFormatter!=null && UnitsUtil.isTimeLocation( d.getUnits() ) ) {
                     return timeFormatter.format(d);
                 } else {
-                    DatumFormatter format = d.getFormatter();
                     if ( d.isFill() ) {
                         return "fill";
                     } else {
-                        return format.format(d, unitsArray[j]);
+                        return d.getFormatter().format(d, unitsArray[j]);
                     }
                 }
             } else {
                 Object o = x.getPlane(planesArray[j]);
                 if (o instanceof Datum) {
                     Datum d = (Datum) o;
-                    return d.getFormatter().format(d, unitsArray[j]);
+                    if ( d.isFill() ) {
+                        return "fill";
+                    } else {
+                        return d.getFormatter().format(d, unitsArray[j]);
+                    }
                 } else {
                     return (String) o;
                 }
@@ -671,7 +675,7 @@ public class DataPointRecorder extends JPanel implements DataPointSelectionListe
                     for (int j = 2; j < planesArray.length; j++) {
                         Object o = x.getPlane(planesArray[j]);
                         if ( o==null ) {
-                            x.getPlane(planesArray[j]); // for debugging
+                            //x.getPlane(planesArray[j]); // for debugging
                             throw new IllegalArgumentException("unable to find plane: "+planesArray[j]);
                         }
                         if (unitsArray[j] == null) {
@@ -748,6 +752,7 @@ public class DataPointRecorder extends JPanel implements DataPointSelectionListe
 
             // tabs detected in file.
             String delim= "\t";
+            boolean delimCheck= true;
             
             mon.setTaskSize(lineCount);
             mon.started();
@@ -757,19 +762,36 @@ public class DataPointRecorder extends JPanel implements DataPointSelectionListe
                 if (mon.isCancelled()) {
                     break;
                 }
-                line= line.trim();
-                if ( line.length()==0 ) {
+                String tline= line.trim();
+                if ( tline.length()==0 ) {
                     continue;
                 }
+                
+                if ( delimCheck && !line.contains("\t") ) {
+                    Pattern p= Pattern.compile("([\\s\\,\\;])");
+                    Matcher m= p.matcher(line);
+                    if ( m.find() ) {
+                        char cdelim= m.group(1).charAt(0);
+                        if ( Character.isWhitespace(cdelim) ) {
+                            delim= "\\s+";
+                        } else {
+                            delim= m.group(1);
+                        }
+                    }
+                }
+                delimCheck= false;
+                
                 mon.setTaskProgress(linenum);
                 if (line.startsWith("## ") || line.length()>0 && Character.isJavaIdentifierStart( line.charAt(0) ) ) {
                     if ( unitsArray1!=null ) continue;
                     while ( line.startsWith("#") ) line = line.substring(1);
-                    if ( !line.contains("\t") ) delim= "\\s+";
                     String[] s = line.split(delim,-2);
                     for ( int i=0; i<s.length; i++ ) {
                         s[i]= s[i].trim();
-                    }                    
+                    }
+                    if ( s[s.length-1].length()==0 ) {
+                        s= Arrays.copyOf(s,s.length-1);
+                    }
                     Pattern p = Pattern.compile("([^\\(]+)\\((.*)\\)");
                     planesArray1 = new String[s.length];
                     unitsArray1 = new Units[s.length];
@@ -797,7 +819,7 @@ public class DataPointRecorder extends JPanel implements DataPointSelectionListe
                     }
                     continue;
                 }
-                String[] s = line.split(delim);
+                String[] s = line.split(delim,-2);
                 for ( int i=0; i<s.length; i++ ) {
                     s[i]= s[i].trim();
                 }
@@ -813,14 +835,18 @@ public class DataPointRecorder extends JPanel implements DataPointSelectionListe
                             unitsArray1[i] = DatumUtil.parseValid(s[i]).getUnits();
                         }
                     }
-                    planesArray1 = new String[]{"X", "Y", "comment"};
+                    planesArray1 = new String[s.length];
+                    System.arraycopy( new String[]{"X", "Y", "comment"}, 0, planesArray1, 0, planesArray1.length );
+                    for ( int i=3; i<planesArray1.length; i++ ) {
+                        planesArray1[i]= "comment"+i;
+                    }
                 }
 
                 try {
 
                     planes = new LinkedHashMap();
 
-                    for (int i = 2; i < s.length; i++) {
+                    for (int i = 2; i < unitsArray1.length; i++) {
                         if (unitsArray1[i] == null) {
                             Pattern p = Pattern.compile("\"(.*)\".*");
                             Matcher m = p.matcher(s[i]);
@@ -888,7 +914,7 @@ public class DataPointRecorder extends JPanel implements DataPointSelectionListe
             Runnable run= new Runnable() {
                 @Override
                 public void run() {
-                    table.getColumnModel();
+                    //table.getColumnModel();
                     myTableModel.fireTableStructureChanged();
                     table.repaint();
                 }
@@ -1215,6 +1241,71 @@ public class DataPointRecorder extends JPanel implements DataPointSelectionListe
             myTableModel.fireTableStructureChanged();
         }
     }
+    
+    private Action getInsertFillAction() {
+        return new AbstractAction("Insert Fill...") {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                if ( ( e.getModifiers() & KeyEvent.SHIFT_MASK )==KeyEvent.SHIFT_MASK ) {
+                    insertFill(true);
+                } else {
+                    int index= table.getSelectedRow();
+                    if ( index==-1 ) {
+                        JOptionPane.showMessageDialog(DataPointRecorder.this,"Row must be selected");
+                        return;
+                    }
+                    if ( JOptionPane.OK_OPTION==
+                            JOptionPane.showConfirmDialog(DataPointRecorder.this,
+                                    "Insert a fill record into in data?", 
+                                    "Insert Fill", JOptionPane.OK_CANCEL_OPTION ) ) {
+                        insertFill(false);
+                    }
+                }
+            }            
+        };
+    }
+    
+    /**
+     * insert a fill record at the selected cell.
+     */
+    private void insertFill( boolean appendToEnd ) { 
+        Map planes= new LinkedHashMap<>();
+        int icol=0;
+        for ( String p: planesArray ) {
+            planes.put( p, unitsArray[icol].getFillDatum() );
+            icol++;
+        }
+        DataPoint fill= new DataPoint( unitsArray[0].getFillDatum(), unitsArray[1].getFillDatum(), planes );
+        int index;
+        if ( appendToEnd ) {
+            index= table.getRowCount();
+        } else {
+            index= table.getSelectedRow();
+            if ( index==-1 ) {
+                throw new IllegalArgumentException("Row must be selected");
+            }
+            index= table.convertRowIndexToModel(index);
+        }
+        dataPoints.add( index, fill );
+        modified = true;
+        Runnable run= new Runnable() {
+            public void run() {
+                updateStatus();
+                updateClients();
+                table.repaint();
+                if (active) {
+                    fireDataSetUpdateListenerDataSetUpdated(new DataSetUpdateEvent(this));
+                }
+            }
+        };   
+        if ( SwingUtilities.isEventDispatchThread() ) {
+            run.run();
+        } else {
+            SwingUtilities.invokeLater(run);
+        }
+    }
+    
+    
     /**
      * Notify listeners that the dataset has updated.  Pressing the "Update" 
      * button calls this.
@@ -1248,6 +1339,9 @@ public class DataPointRecorder extends JPanel implements DataPointSelectionListe
         editMenu.add(new JMenuItem(getPropertiesAction()));
         
         editMenu.add(new JMenuItem(getSetUnitsAction()));
+        JMenuItem i= new JMenuItem(getInsertFillAction());
+        i.setToolTipText("insert a fill record (interrupts data cadence) at the selected row, or hold shift to append a fill record.");
+        editMenu.add(i);
         
         editMenu.add( new JMenuItem( new AbstractAction("Clear Table Sorting") {
             @Override
@@ -1471,7 +1565,16 @@ public class DataPointRecorder extends JPanel implements DataPointSelectionListe
                         dp1= (DataPoint)dataPoints.get(~index+1);
                     }
                     
-                    Datum epsilon= Units.microseconds.createDatum(10000);
+                    Datum epsilon= Units.microseconds.createDatum(100);
+//                    if ( dp0!=null ) { // if we can check for numerical resolution, use this.
+//                        double eps= Math.abs( newPoint.data[0].doubleValue(((DataPoint)dataPoints.get(0)).data[0].getUnits()) );
+//                        for ( int i=0; i<dataPoints.size(); i++ ) {
+//                            double teps= Math.abs( ((DataPoint)dataPoints.get(i)).data[0].doubleValue(newPoint.data[0].getUnits()) );
+//                            if ( teps>eps ) eps= teps;
+//                        } 
+//                        eps= eps * 0.00000000001;// something like numerical noise * 10.
+//                        epsilon= newPoint.data[0].getUnits().getOffsetUnits().createDatum(eps);
+//                    }
                     if ( newPoint.data[0].getUnits().getOffsetUnits().isConvertibleTo(Units.milliseconds) ) {
                         if ( dp0!=null && dp0.data[0].subtract(newPoint.data[0]).abs().lt(epsilon) ) {
                             dataPoints.set( ~index, newPoint );
@@ -1985,6 +2088,7 @@ public class DataPointRecorder extends JPanel implements DataPointSelectionListe
             this.timeFormatter= null;
         } else {
             this.timeFormatter= TimeParser.create(timeFormat);
+            //TODO: 
         }
     }
 

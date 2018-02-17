@@ -84,10 +84,10 @@ public class CdfDataSource extends AbstractDataSource {
     }
 
     private static final int FILE_CACHE_SIZE_LIMIT= 2;
-    protected static final LinkedHashMap<String,CDFReader> openFiles= new LinkedHashMap();
-    protected static final Map<CDFReader,String> openFilesRev= new HashMap();
-    protected static final Map<String,Long> openFilesFresh= new HashMap();
-    protected static final Object lock= new Object();
+    private static final LinkedHashMap<String,CDFReader> openFiles= new LinkedHashMap();
+    private static final Map<CDFReader,String> openFilesRev= new HashMap();
+    private static final Map<String,Long> openFilesFresh= new HashMap();
+    private static final Object lock= new Object();
 
     private static final int DS_CACHE_SIZE_LIMIT= 2;
     private static final LinkedHashMap<String,MutablePropertyDataSet> dsCache= new LinkedHashMap();
@@ -115,7 +115,24 @@ public class CdfDataSource extends AbstractDataSource {
             }
         }
     }
+    
+    protected static void cdfCacheReset() {
+        synchronized (CdfDataSource.lock) {
+            CdfDataSource.openFiles.clear();
+            CdfDataSource.openFilesRev.clear();
+            CdfDataSource.openFilesFresh.clear();
+        }
+        System.gc();
+    }
 
+    protected static String cdfCacheFileForReader( CDFReader cdf ) {
+        String cdfFile;
+        synchronized ( CdfDataSource.lock ) {
+            cdfFile= CdfDataSource.openFilesRev.get(cdf);
+        }
+        return cdfFile;
+    }
+    
     /**
      * put the dataset into the cache, probably removing the least valuable entry from the cache.
      * @param uri
@@ -517,6 +534,15 @@ public class CdfDataSource extends AbstractDataSource {
 
             Map<String, Object> istpProps = model.properties(attr1);
             CdfUtil.maybeAddValidRange(istpProps, result);
+            Number n= (Number)istpProps.get(QDataSet.FILL_VALUE);
+            if ( result instanceof BufferDataSet ) {
+                Class c= ((BufferDataSet)result).getCompatibleComponentType();
+                if ( n instanceof Double ) {
+                    if ( c==float.class ) {
+                        istpProps.put( QDataSet.FILL_VALUE, (float)n.doubleValue() );
+                    }
+                }
+            }
             result.putProperty(QDataSet.FILL_VALUE, istpProps.get(QDataSet.FILL_VALUE));
             result.putProperty(QDataSet.LABEL, istpProps.get(QDataSet.LABEL)  );
             result.putProperty(QDataSet.TITLE, istpProps.get(QDataSet.TITLE)  );
@@ -953,11 +979,19 @@ public class CdfDataSource extends AbstractDataSource {
             }
         }
 
+        long recCount = (recs[1] - recs[0]) / recs[2];
+        if ( !reform ) {
+            if ( recCount==0 && ndimensions.length>0 && ndimensions[0]==1 ) {
+                logger.fine("variable is not marked as non-time-varying");
+                reform= true;
+            }
+        }
+        
         if (reform) {
             //result = CdfUtil.wrapCdfHyperDataHacked(variable, 0, -1, 1); //TODO: this doesn't handle strings properly.
             result = CdfUtil.wrapCdfData(cdf,svariable, 0, -1, 1, slice1, dependantVariable, new NullProgressMonitor() );
         } else {
-            long recCount = (recs[1] - recs[0]) / recs[2];
+            
             if ( slice ) {
                 recCount= -1;
                 recs[2]= 1;
@@ -1113,11 +1147,7 @@ public class CdfDataSource extends AbstractDataSource {
                     }
                 }
             } else {
-                if ( UnitsUtil.isTimeLocation(units) ) {
-                    logger.log(Level.FINE, "DELTA_PLUS_VAR variable is not found for {0}: {1}", new Object[] { svariable, deltaPlus } );                    
-                } else {
-                    logger.log(Level.FINE, "DELTA_PLUS_VAR variable is not found for {0}: {1}", new Object[] { svariable, deltaPlus } );
-                }
+                logger.log(Level.FINE, "DELTA_PLUS_VAR variable is not found for {0}: {1}", new Object[] { svariable, deltaPlus } );                    
             }
         }
 

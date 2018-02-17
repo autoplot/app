@@ -210,8 +210,26 @@ public class CdfDataSourceFormat implements DataSourceFormat {
                 logger.log( Level.WARNING, ex.getMessage() , ex );
             }
         }
-                
-        write( ffile.toString() );
+         
+        if ( !append ) {
+            if ( ffile.exists() ) {
+                CdfDataSource.cdfCacheReset();
+                File tempFile= File.createTempFile( "deleteme",".cdf");
+                if ( !ffile.renameTo( tempFile) ) {
+                    ffile.delete();
+                    logger.log(Level.WARNING, "file {0} cannot be renamed", ffile);
+                } 
+                write( ffile.toString() );
+                if ( tempFile.exists() && !tempFile.delete() ) {
+                    logger.log(Level.WARNING, "file {0} cannot be deleted", tempFile);
+                }
+            } else {
+                write( ffile.toString() );
+            }
+        } else {
+            write( ffile.toString() );
+        }
+        
         
     }
 
@@ -253,7 +271,7 @@ public class CdfDataSourceFormat implements DataSourceFormat {
             throw new IllegalArgumentException("not supported!");
             
         }
-        copyMetadata(units, name, isSupport, ds);
+        copyMetadata(units, name, type, isSupport, ds);
         
     }
 
@@ -664,7 +682,7 @@ public class CdfDataSourceFormat implements DataSourceFormat {
             
         }
 
-        copyMetadata( units, name, isSupport, ds );
+        copyMetadata( units, name, type, isSupport, ds );
         
     }
     
@@ -698,20 +716,11 @@ public class CdfDataSourceFormat implements DataSourceFormat {
     private void write( String name ) throws IOException {
         logger.log(Level.FINE, "call cdf.write({0})", new Object[] { logName(name) } );
         try {
-            synchronized (CdfDataSource.lock) {
-                CdfDataSource.openFiles.clear();
-                CdfDataSource.openFilesRev.clear();
-                CdfDataSource.openFilesFresh.clear();
-            }
-            System.gc();
+            CdfDataSource.cdfCacheReset();
             cdf.write( name );
         } catch ( FileNotFoundException ex ){
             logger.log(Level.WARNING, "first attempt to write \"{0}\" fails, try again for good measure", name);
-            synchronized (CdfDataSource.lock) {
-                CdfDataSource.openFiles.clear();
-                CdfDataSource.openFilesRev.clear();
-                CdfDataSource.openFilesFresh.clear();
-            }
+            CdfDataSource.cdfCacheReset();
             System.gc();
             try {
                 Thread.sleep(1000);
@@ -755,17 +764,20 @@ public class CdfDataSourceFormat implements DataSourceFormat {
      * @param ds the dataset containing metadata.
      * @throws Exception 
      */
-    private void copyMetadata( Units units, String name, boolean isSupport, QDataSet ds ) throws Exception {
+    private void copyMetadata( Units units, String name, CDFDataType type, boolean isSupport, QDataSet ds ) throws Exception {
         
         if ( units!=null ) {
-            if (units != Units.cdfEpoch) {
-                addVariableAttributeEntry( name, "UNITS", CDFDataType.CHAR, units.toString() );
-            } else {
+            if (units == Units.cdfEpoch) {
                 addVariableAttributeEntry( name, "UNITS", CDFDataType.CHAR, "ms" );
+            } else if ( units==Units.cdfTT2000 ) {
+                addVariableAttributeEntry( name, "UNITS", CDFDataType.CHAR, "ns" );
+            } else {
+                addVariableAttributeEntry( name, "UNITS", CDFDataType.CHAR, units.toString() );
             }
         } else {
             addVariableAttributeEntry( name, "UNITS", CDFDataType.CHAR, " " );
         }
+        
         String label = (String) ds.property(QDataSet.LABEL);
         if (label != null && label.length()>0 ) {
             if ( units!=null && label.endsWith("("+units+")") ) {
@@ -786,16 +798,21 @@ public class CdfDataSourceFormat implements DataSourceFormat {
                 //if ( vmin==null ) vmin= -1e38; else vmin= uc.convert(vmin);
                 //cdf.addVariableAttributeEntry( name, "VALIDMIN", CDFDataType.DOUBLE, vmin.doubleValue() );
                 //cdf.addVariableAttributeEntry( name, "VALIDMAX", CDFDataType.DOUBLE, vmax.doubleValue() );
+            } else if ( units==Units.cdfTT2000 ) {
+                if ( vmax!=null && vmin !=null ) {
+                    cdf.addVariableAttributeEntry( name, "VALIDMIN", CDFDataType.TT2000, new long[] { vmin.longValue() } );
+                    cdf.addVariableAttributeEntry( name, "VALIDMAX", CDFDataType.TT2000, new long[] { vmax.longValue() } );
+                }
             } else {
                 if ( vmax==null ) vmax= 1e38;
                 if ( vmin==null ) vmin= -1e38;
-                cdf.addVariableAttributeEntry( name, "VALIDMIN", CDFDataType.DOUBLE, new double[] { vmin.doubleValue() } );
-                cdf.addVariableAttributeEntry( name, "VALIDMAX", CDFDataType.DOUBLE, new double[] { vmax.doubleValue() } );
+                cdf.addVariableAttributeEntry( name, "VALIDMIN", type, new double[] { vmin.doubleValue() } );
+                cdf.addVariableAttributeEntry( name, "VALIDMAX", type, new double[] { vmax.doubleValue() } );
             }
         }
         Number fillval= (Number) ds.property( QDataSet.FILL_VALUE );
         if ( fillval!=null ) {
-            //cdf.addVariableAttributeEntry( name,"FILLVAL",CDFDataType.DOUBLE,fillval.doubleValue());
+            cdf.addVariableAttributeEntry( name,"FILLVAL", type, new double[] { fillval.doubleValue() });
         } else {
             //cdf.addVariableAttributeEntry( name,"FILLVAL",CDFDataType.DOUBLE,-1e31);
         }
@@ -811,8 +828,8 @@ public class CdfDataSourceFormat implements DataSourceFormat {
             } else {
                 if ( smax==null ) smax= 1e38;
                 if ( smin==null ) smin= -1e38;
-                cdf.addVariableAttributeEntry( name,"SCALEMIN", CDFDataType.DOUBLE, new double[] { smin.doubleValue() } );
-                cdf.addVariableAttributeEntry( name,"SCALEMAX", CDFDataType.DOUBLE, new double[] { smax.doubleValue() } );
+                cdf.addVariableAttributeEntry( name,"SCALEMIN", type, new double[] { smin.doubleValue() } );
+                cdf.addVariableAttributeEntry( name,"SCALEMAX", type, new double[] { smax.doubleValue() } );
             }
         }
         String scaleTyp= (String) ds.property(QDataSet.SCALE_TYPE);

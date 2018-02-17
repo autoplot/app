@@ -301,7 +301,9 @@ public class DataSetOps {
      * @return rank 1 waveform
      */
     public static QDataSet flattenWaveform( final QDataSet ds ) {
+        if ( ds.rank()==1 ) throw new IllegalArgumentException("data is rank 1 and already flat.");
         QDataSet dep1= (QDataSet) ds.property( QDataSet.DEPEND_1 );
+        if ( dep1==null ) throw new IllegalArgumentException("data does not have DEPEND_1, and is not a rank 2 waveform.");
         if ( dep1.rank()==1 ) {
             return new FlattenWaveformDataSet(ds);
         } else {
@@ -1041,8 +1043,8 @@ public class DataSetOps {
             int rank= bundle1.length(j);
             int n=1;
 
-            for (int k = 0; k < rank; k++) {
-                 n *= bundle1.value(j, k);
+            for (int k = 1; k < rank; k++) {
+                 n *= bundle1.value(j, k-1);
             }
             nr1+= n;
 

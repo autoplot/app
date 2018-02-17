@@ -2,6 +2,8 @@
 package org.das2.qds.ops;
 
 import java.awt.Color;
+import java.io.File;
+import java.io.IOException;
 import java.lang.reflect.Array;
 import java.security.NoSuchAlgorithmException;
 import java.util.logging.Level;
@@ -34,7 +36,7 @@ import org.das2.datum.DatumRange;
 import org.das2.datum.DatumRangeUtil;
 import org.das2.datum.DatumUtil;
 import org.das2.datum.InconvertibleUnitsException;
-import org.das2.datum.TimeLocationUnits;
+import org.das2.datum.TimeParser;
 import org.das2.datum.UnitsConverter;
 import org.das2.datum.UnitsUtil;
 import org.das2.math.filter.Butterworth;
@@ -75,7 +77,6 @@ import org.das2.qds.IndexListDataSetIterator;
 import org.das2.qds.SortDataSet;
 import org.das2.qds.SparseDataSet;
 import org.das2.qds.TailBundleDataSet;
-import org.das2.qds.TrimDataSet;
 import org.das2.qds.TrimStrideWrapper;
 import org.das2.qds.WeightsDataSet;
 import org.das2.qds.WritableDataSet;
@@ -83,12 +84,14 @@ import org.das2.qds.WritableJoinDataSet;
 import org.das2.qds.examples.Schemes;
 import org.das2.qds.util.AutoHistogram;
 import org.das2.qds.util.BinAverage;
-import org.das2.qds.util.BundleBuilder;
 import org.das2.qds.util.DataSetBuilder;
 import org.das2.qds.util.FFTUtil;
 import org.das2.qds.util.LSpec;
 import org.das2.qds.util.LinFit;
 import org.das2.qds.math.Contour;
+import org.das2.qds.util.AsciiFormatter;
+import org.das2.qds.util.QStreamFormatter;
+import org.das2.util.ColorUtil;
 
 /**
  * A fairly complete set of operations for QDataSets, including binary operations
@@ -334,6 +337,9 @@ public class Ops {
             };
             if ( units1!=Units.dimensionless ) properties.put( QDataSet.UNITS, units1 );
         } else if ( UnitsUtil.isIntervalMeasurement(units1) ) {
+            if ( UnitsUtil.isIntervalMeasurement(units2) ) {
+                throw new IllegalArgumentException("two location units cannot be added: " + units1 + ", "+ units2  );
+            }
             final UnitsConverter uc= UnitsConverter.getConverter( units2, units1.getOffsetUnits() );
             result= new BinaryOp() {
                 @Override
@@ -351,6 +357,14 @@ public class Ops {
                 }
             };
             properties.put( QDataSet.UNITS, units2 );
+        } else if ( UnitsUtil.isRatioMeasurement(units1) && units2.isConvertibleTo(Units.dimensionless)  ) {
+            result= new BinaryOp() {
+                @Override
+                public double op(double d1, double d2) {
+                    return d1 + d2;
+                }
+            };
+            properties.put( QDataSet.UNITS, units1 );
         } else {
             throw new IllegalArgumentException("units cannot be added: " + units1 + ", "+ units2 );
         }
@@ -432,6 +446,24 @@ public class Ops {
             result.putProperty( QDataSet.UNITS, units1 );
         } else if ( UnitsUtil.isIntervalMeasurement(units2) && !UnitsUtil.isIntervalMeasurement(units1)) {
             throw new IllegalArgumentException("cannot subtract interval measurement from ratio measurement: " + units1 + " - "+ units2 );
+
+        } else if ( UnitsUtil.isRatioMeasurement(units1) && units2.isConvertibleTo(Units.dimensionless) ) {
+            result= (MutablePropertyDataSet) applyBinaryOp(ds1, ds2, new BinaryOp() {
+                @Override
+                public double op(double d1, double d2) {
+                    return d1 - d2;
+                }
+            } );
+            result.putProperty( QDataSet.UNITS, units1 );
+
+        } else if ( UnitsUtil.isRatioMeasurement(units2) && units1.isConvertibleTo(Units.dimensionless) ) {
+            result= (MutablePropertyDataSet) applyBinaryOp(ds1, ds2, new BinaryOp() {
+                @Override
+                public double op(double d1, double d2) {
+                    return d1 - d2;
+                }
+            } );
+            result.putProperty( QDataSet.UNITS, units2 );            
         } else {
             throw new IllegalArgumentException("cannot subtract: " + units1 + " - "+ units2 );
         }
@@ -1094,6 +1126,13 @@ public class Ops {
         }
     }
     
+    /**
+     * Collapse the rank 4 dataset on the zeroth index.
+     * @see org.das2.qds.OperationsProcessor#sprocess(java.lang.String, org.das2.qds.QDataSet, org.das2.util.monitor.ProgressMonitor) 
+     * @param ds rank 4 dataset
+     * @param mon
+     * @return rank 3 dataset
+     */
     public static QDataSet collapse0R4( QDataSet ds, ProgressMonitor mon ) {
         if ( ds.rank()==4 ) {
             int[] qube = DataSetUtil.qubeDims(ds);
@@ -1148,6 +1187,13 @@ public class Ops {
         
     }
 
+    /**
+     * Collapse the rank 4 dataset on the first index.
+     * @see org.das2.qds.OperationsProcessor#sprocess(java.lang.String, org.das2.qds.QDataSet, org.das2.util.monitor.ProgressMonitor) 
+     * @param ds rank 4 dataset
+     * @param mon
+     * @return rank 3 dataset
+     */
     public static QDataSet collapse1R4( QDataSet ds, ProgressMonitor mon ) {
         if ( ds.rank()==4 ) {
             int[] qube = DataSetUtil.qubeDims(ds);
@@ -1232,6 +1278,13 @@ public class Ops {
         }
     }
 
+    /**
+     * Collapse the rank 4 dataset on the second index.
+     * @see org.das2.qds.OperationsProcessor#sprocess(java.lang.String, org.das2.qds.QDataSet, org.das2.util.monitor.ProgressMonitor) 
+     * @param ds rank 4 dataset
+     * @param mon
+     * @return rank 3 dataset
+     */
     public static QDataSet collapse2R4( QDataSet ds, ProgressMonitor mon ) {
         if ( ds.rank()==4 ) {
             int[] qube = DataSetUtil.qubeDims(ds);
@@ -1301,6 +1354,13 @@ public class Ops {
         }
     }
     
+    /**
+     * Collapse the rank 4 dataset on the third index.
+     * @see org.das2.qds.OperationsProcessor#sprocess(java.lang.String, org.das2.qds.QDataSet, org.das2.util.monitor.ProgressMonitor) 
+     * @param ds rank 4 dataset
+     * @param mon
+     * @return rank 3 dataset
+     */
     public static QDataSet collapse3R4( QDataSet ds, ProgressMonitor mon ) {
         if ( ds.rank()==4 ) {
             int[] qube = DataSetUtil.qubeDims(ds);
@@ -1411,7 +1471,12 @@ public class Ops {
         if ( ds==null ) {
             throw new NullPointerException("ds is null");
         }
+        if ( ds.length()==0 ) {
+            return ds;
+        }
+        
         QDataSet dep0= SemanticOps.xtagsDataSet(ds);
+        
         QDataSet dep0en= dep0;
         if ( dep0.rank()!=1 ) {
             if ( dep0.rank()==2 ) { // join of tags
@@ -1436,20 +1501,39 @@ public class Ops {
                 Ops.lt( dep0, dep0en );
             }
         }
+        
+        if ( dep0.length()<1 ) {
+            return ds;
+        } else if ( dep0.length()<2 ) {
+            Datum startDatum= datum(st);
+            Datum stopDatum= datum(en);
+            Datum t= datum(dep0.slice(0));
+            if ( startDatum.le(t) && t.le(stopDatum) ) {
+                return ds;
+            } else {
+                return ds.trim(0, 0);
+            }
+        }
+        
         QDataSet findex= Ops.findex( dep0, st );
-        double f1= findex.value();
+        double f1= Math.ceil( findex.value() );
         findex= Ops.findex( dep0en, en );
-        double f2= findex.value();
+        double f2= Math.ceil( findex.value() ); // f2 is exclusive.
         
         int n= dep0.length();
         f1= 0>f1 ? 0 : f1;
         f1= n<f1 ? n : f1;
         f2= 0>f2 ? 0 : f2;
         f2= n<f2 ? n : f2;
-        
-        if ( f1>f2 ) throw new IllegalArgumentException("st must be less than (or earlier than) en");
-        
-        return ds.trim((int)f1,(int)Math.ceil(f2));
+               
+        if ( f1>f2 ) {
+            if ( Ops.ge(st,en).value()>0 ) {
+                throw new IllegalArgumentException("st must be less than (or earlier than) en");
+            } else {
+                return ds.trim((int)f1,(int)f1);
+            }
+        }
+        return ds.trim((int)f1,(int)f2);
     }
     
     /**
@@ -1485,18 +1569,18 @@ public class Ops {
             return trim( ds, st, en );
         } else {
             QDataSet dep= (QDataSet) ds.property( "DEPEND_"+dim );
-            
+        
             QDataSet findex= Ops.findex( dep, st );
-            double f1= findex.value();
+            double f1= Math.ceil( findex.value() );
             findex= Ops.findex( dep, en );
-            double f2= findex.value();
+            double f2= Math.ceil( findex.value() ); // f2 is exclusive.
         
             int n= dep.length();
             f1= 0>f1 ? 0 : f1;
             f1= n<f1 ? n : f1;
             f2= 0>f2 ? 0 : f2;
-            f2= n<f2 ? n : f2;
-            
+            f2= n<f2 ? n : f2;            
+                                
             TrimStrideWrapper tsw= new TrimStrideWrapper(ds);
             tsw.setTrim( dim, (int)f1, (int)f2, 1 );
             return tsw;
@@ -1527,11 +1611,12 @@ public class Ops {
         if ( dep1.rank()!=1 ) {
             throw new IllegalArgumentException("dataset must have rank 1 tags");
         }
-        QDataSet findex= Ops.findex( dep1, st );
-        double f1= findex.value();
-        findex= Ops.findex( dep1, en );
-        double f2= findex.value();
         
+        QDataSet findex= Ops.findex( dep1, st );
+        double f1= Math.ceil( findex.value() );
+        findex= Ops.findex( dep1, en );
+        double f2= Math.ceil( findex.value() ); // f2 is exclusive.
+                
         int n= dep1.length();
         f1= 0>f1 ? 0 : f1;
         f1= n<f1 ? n : f1;
@@ -4044,6 +4129,11 @@ public class Ops {
                 {
                     QDataSet dep0= (QDataSet) vds.property(QDataSet.DEPEND_0);
                     if ( dep0==null ) {
+                        if ( UnitsUtil.isTimeLocation(SemanticOps.getUnits(vds)) ) {
+                            dep0= vds;
+                        } 
+                    }
+                    if ( dep0==null ) {
                         throw new IllegalArgumentException("cannot make events data set from this rank 1 dataset with no timetags.");
                     } else if ( dep0.rank() == 2  ) {
                         if ( SemanticOps.isBins(dep0) ) {
@@ -4070,7 +4160,11 @@ public class Ops {
                         }
                         xmins= Ops.subtract(dep0, org.das2.qds.DataSetUtil.asDataSet(width) );
                         xmaxs= Ops.add(dep0, org.das2.qds.DataSetUtil.asDataSet(width) );
-                        msgs= vds;
+                        if ( vds==dep0 ) {
+                            msgs= Ops.replicate( dataset( EnumerationUnits.create("default").createDatum("_") ), vds.length() );
+                        } else {
+                            msgs= vds;
+                        }
                     } else {
                         throw new IllegalArgumentException("dataset is not correct form");
                     }       
@@ -4111,6 +4205,87 @@ public class Ops {
         
         return lds;
         
+    }
+    
+    /**
+     * return an events list of when events are found in both events lists.
+     * @param tE rank 2 canonical events list
+     * @param tB rank 2 canonical events list
+     * @return rank 2 canonical events list
+     * @see Schemes#eventsList() 
+     */
+    public static QDataSet eventsConjunction( QDataSet tE, QDataSet tB ) {
+
+        int iE= 0;
+        int iB= 0;
+
+        String state= "open";
+        Object start= null;
+
+        QDataSet tE4= createEvents(tE);
+        tB= createEvents(tB);
+                
+        tE= Ops.trim1( tE4, 0, 2 );
+        Units tu= (Units)tE.slice(0).slice(0).property( QDataSet.UNITS );
+        tB= Ops.trim1( tB, 0, 2 );
+        Units bu= (Units)tB.slice(0).slice(0).property( QDataSet.UNITS );
+        tB= Ops.putProperty( tB, QDataSet.UNITS, bu );
+        tB= convertUnitsTo( tB, tu );
+                
+        DataSetBuilder dsb= new DataSetBuilder(2,100,4);
+        EnumerationUnits eu= EnumerationUnits.create("default");
+            
+        while ( iE<tE.length() && iB<tB.length() ) {
+
+            switch (state) {
+                case "tE":
+                    if ( tE.value(iE,1)<=tB.value(iB,0) ) {
+                        state= "open";
+                        iE= iE+1;
+                    } else if ( tE.value(iE,1)>tB.value(iB,0)) {
+                        state= "tEB";
+                        start= tB.slice(iB).slice(0);
+                    }   break;
+                case "tB":
+                    if ( tB.value(iB,1)<=tE.value(iE,0) ) {
+                        state= "open";
+                        iB= iB+1;
+                    } else if ( tB.value(iB,1)>tE.value(iE,0) ) {
+                        state= "tEB";
+                        start= tE.slice(iE).slice(0);
+                    }   break;
+                case "tEB":
+                    if ( tE.value(iE,1)<= tB.value(iB,1) ) {
+                        state= "tB";
+                        dsb.nextRecord( start, tE.slice(iE).slice(1), 0xA0A0A0, eu.createDatum("x") );
+                        start= null;
+                        iE= iE+1;
+                        
+                    } else if ( tB.value(iB,1)<=tE.value(iE,1) ) {
+                        state= "tE";
+                        dsb.nextRecord( start, tB.slice(iB).slice(1), 0xA0A0A0, eu.createDatum("x") );
+                        start= null;
+                        iB= iB+1;
+                    } else {
+                        System.err.println("huh");
+                    }   break;
+                case "open":
+                    if ( tE.value(iE,0)<=tB.value(iB,0) ) {
+                        state= "tE";
+                    } else if ( tE.value(iE,0)>tB.value(iB,0) ) {
+                        state= "tB";
+                    }   break;
+                default:
+                    break;
+            }
+        }
+        
+        dsb.putProperty( QDataSet.BUNDLE_1, tE4.property(QDataSet.BUNDLE_1 ) );
+        //dsb.putProperty( QDataSet.BINS_1, QDataSet.VALUE_BINS_MIN_MAX );
+        
+        QDataSet result= dsb.getDataSet();
+                
+        return result;
     }
     
     /**
@@ -4548,7 +4723,9 @@ public class Ops {
     }       
     
     /**
-     * element-wise atan2, 4-quadrant atan.
+     * element-wise atan2, 4-quadrant atan.  Note different languages have different argument order.  
+     * Microsoft office uses atan2(x,y); IDL uses atan(y,x);  Matlab uses atan2(y,x); and  
+     * NumPy uses arctan2(y,x).
      * @param y the y values
      * @param x the x values
      * @return angles between -PI and PI
@@ -4700,6 +4877,8 @@ public class Ops {
             return DataSetUtil.asDataSet( ((Number)arg0).doubleValue() );
         } else if ( arg0 instanceof Datum ) {
             return DataSetUtil.asDataSet( (Datum)arg0 );
+        } else if ( arg0 instanceof Boolean ) {
+            return DataSetUtil.asDataSet( ((Boolean)arg0) ? 1.0 : 0.0 );
         } else if ( arg0 instanceof DatumRange ) {
             return DataSetUtil.asDataSet( (DatumRange)arg0 );
         } else if ( arg0 instanceof String ) {
@@ -4713,24 +4892,33 @@ public class Ops {
                    try {
                       DatumRange dr= DatumRangeUtil.parseISO8601Range(sarg); 
                       if ( dr==null ) {
-                         throw new IllegalArgumentException( "unable to parse string: "+sarg ); // legacy.  It should throw ParseException now.
+                          EnumerationUnits eu= EnumerationUnits.create("default");
+                          Datum d= eu.createDatum(sarg);
+                          return DataSetUtil.asDataSet(d);
                       } else {
                          return DataSetUtil.asDataSet(dr);
                       }
                    } catch ( ParseException ex1 ) {
-                       throw new IllegalArgumentException( "unable to parse string: "+sarg, ex1 );
+                       throw new IllegalArgumentException( "unable to parse string: "+sarg, ex1 ); //TODO: does this happen?
                    }
                }
             }
         } else if ( arg0 instanceof List ) {
             List p= (List)arg0;
             double[] j= new double[ p.size() ];
+            Units u= null;
             for ( int i=0; i<p.size(); i++ ) {
                 Object n= p.get(i);
-                //TODO: consider enumerations for Strings.
-                j[i]= ((Number)n).doubleValue();
+                if ( n instanceof Number ) {
+                    j[i]= ((Number)n).doubleValue();
+                } else if ( n instanceof String ) {
+                    QDataSet ds1= dataset(n);
+                    if ( u==null ) u= SemanticOps.getUnits(ds1);
+                    j[i]= ds1.value();
+                }
             }
             QDataSet q= DDataSet.wrap( j );
+            if ( u!=null ) ((DDataSet)q).putProperty(QDataSet.UNITS,u);
             return q;            
         } else if ( arg0.getClass().isArray() ) { // convert Java array into QDataSet.  Assumes qube.
             //return DataSetUtil.asDataSet(arg0); // I think this is probably a better implementation.
@@ -4982,12 +5170,14 @@ public class Ops {
      * @return 
      */
     public static QDataSet toRadians(QDataSet ds) {
-        return applyUnaryOp(ds, new UnaryOp() {
+        MutablePropertyDataSet result= applyUnaryOp(ds, new UnaryOp() {
             @Override
             public double op(double y) {
                 return y * Math.PI / 180.;
             }
         });
+        result.putProperty( QDataSet.UNITS, Units.radians );
+        return result;
     }
 
     public static QDataSet toRadians( Object ds ) {
@@ -5002,12 +5192,14 @@ public class Ops {
      * @return 
      */
     public static QDataSet toDegrees(QDataSet ds) {
-        return applyUnaryOp(ds, new UnaryOp() {
+        MutablePropertyDataSet result= applyUnaryOp(ds, new UnaryOp() {
             @Override
             public double op(double y) {
                 return y * 180 / Math.PI;
             }
         });
+        result.putProperty( QDataSet.UNITS, Units.degrees );
+        return result;
     }
     
     public static QDataSet toDegrees( Object ds ) {
@@ -5078,6 +5270,7 @@ public class Ops {
      * @param ds rank N array, N &gt; 0.
      * @param w rank 1 dataset of length l indexing a rank 1 array, or rank 2 ds[l,N] indexing a rank N array.
      * @return rank 1 indeces.
+     * @see #applyIndex(org.das2.qds.QDataSet, org.das2.qds.QDataSet) which does the same thing.
      */
     public static QDataSet subset( QDataSet ds, QDataSet w ) {
         return DataSetOps.applyIndex( ds, 0, w, true);
@@ -5121,8 +5314,10 @@ public class Ops {
         QubeDataSetIterator iter = new QubeDataSetIterator(ds);
         QDataSet wds= DataSetUtil.weightsDataSet(ds);
 
+        int blocksize= Math.max( 100, ds.length() / 4 );
+        
         if (ds.rank() == 1) {
-            builder = new DataSetBuilder( 1, 100 );
+            builder = new DataSetBuilder( 1, blocksize );
             while (iter.hasNext()) {
                 iter.next();
                 if ( iter.getValue(wds)> 0 && iter.getValue(ds) != 0.) {
@@ -5137,7 +5332,7 @@ public class Ops {
             }
             builder.putProperty( QDataSet.VALID_MAX, ds.length() );
         } else {
-            builder = new DataSetBuilder( 2, 100, ds.rank() );
+            builder = new DataSetBuilder( 2, blocksize, ds.rank() );
             while (iter.hasNext()) {
                 iter.next();
                 if ( iter.getValue(wds)> 0 && iter.getValue(ds) != 0.) {
@@ -5194,7 +5389,15 @@ public class Ops {
      * @see #binsWithin(org.das2.qds.QDataSet, org.das2.qds.QDataSet) 
      */
     public static QDataSet within( QDataSet ds, QDataSet bounds ) {
-        return and( ge( ds, bounds.slice(0) ), lt( ds, bounds.slice(1) ) );
+        final UnitsConverter uc= SemanticOps.getLooseUnitsConverter( bounds, ds );
+        final double min= uc.convert(bounds.value(0));
+        final double max= uc.convert(bounds.value(1));
+        return applyUnaryOp( ds, new UnaryOp() {
+            @Override
+            public double op(double d1) {
+                return ( d1 >= min && d1 < max ) ? 1.0 : 0.0;
+            }
+        });
     }
 
     /**
@@ -5213,8 +5416,7 @@ public class Ops {
      * @see #binsWithin(org.das2.qds.QDataSet, org.das2.qds.QDataSet) 
      */
     public static QDataSet within( Object ds, Object bounds ) {
-        QDataSet boundsDs= dataset( datumRange( bounds ) );
-        return and( ge( ds, boundsDs.slice(0) ), lt( ds, boundsDs.slice(1) ) );
+        return within( dataset(ds), dataset( datumRange( bounds ) ) );
     }
     
     /**
@@ -5597,6 +5799,136 @@ public class Ops {
         return mds;        
         
     }
+    
+    /**
+     * convert the object into the type needed for the property.
+     * @param context the dataset to which we are assigning the value.
+     * @param name the property name
+     * @param value the value
+     * @return the correct value.
+     * @see org.autoplot.jythonsupport.PyQDataSet#convertPropertyValue
+     */
+    public static Object convertPropertyValue( QDataSet context, String name, Object value ) {
+        
+        if ( value==null ) return value;
+        
+        String type= DataSetUtil.getPropertyType(name);
+        if ( type==null ) {
+            throw new IllegalArgumentException("unrecognized property: "+name );
+            
+        } else {
+            Units u= context==null ? Units.dimensionless : (Units)context.property(QDataSet.UNITS);
+        
+            switch (type) {
+                case DataSetUtil.PROPERTY_TYPE_QDATASET:
+                    return Ops.dataset(value);
+                    
+                case DataSetUtil.PROPERTY_TYPE_UNITS:
+                    if ( value instanceof String ) {
+                        String svalue= (String)value;
+                        value= Units.lookupUnits(svalue);
+                        return value;
+                    } else if ( value instanceof Units ) {
+                        return value;
+                    } else {
+                        throw new IllegalArgumentException("cannot convert to value for "+name+": "+value);
+                    }
+                    
+                case DataSetUtil.PROPERTY_TYPE_BOOLEAN:
+                    if ( value instanceof String ) {
+                        String svalue= (String)value;
+                        value= Boolean.valueOf(svalue);
+                    } else if ( value instanceof Number ) {
+                        value= !((Number)value).equals(0);
+                    } else if ( value instanceof QDataSet ) {
+                        value= !(((QDataSet)value).value()==0);
+                    } else if (value instanceof Boolean ) {
+                        return value;
+                    }
+                    
+                case DataSetUtil.PROPERTY_TYPE_NUMBER:
+                    if ( value instanceof String ) {
+                        String svalue= (String)value;
+                        if ( u!=null ) {
+                            try {
+                                value= u.parse(svalue).doubleValue(u);
+                            } catch (ParseException ex) {
+                                try {
+                                    value= Integer.valueOf(svalue);
+                                } catch ( NumberFormatException ex2 ) {
+                                    throw new IllegalArgumentException(ex);
+                                }
+                            }
+                        } else {
+                            if ( svalue.contains(".") || svalue.contains("e") || svalue.contains("E") ) {
+                                value= Double.valueOf(svalue);
+                            } else {
+                                value= Integer.valueOf(svalue);
+                            }
+                        }
+                        return value;
+                    } else if ( value instanceof QDataSet ) {
+                        QDataSet qvalue= (QDataSet)value;
+                        if ( qvalue.rank()>1 ) throw new IllegalArgumentException("rank 0 dataset needed for property of type Number: "+name);
+                        value= datum(qvalue).doubleValue(u);
+                        return value;
+                    } else if ( value instanceof Datum ) {
+                        value= ((Datum)value).doubleValue(u);
+                        return value;
+                    } else if ( value instanceof Number ) {
+                        return value;
+                    }
+                    
+                case DataSetUtil.PROPERTY_TYPE_CACHETAG:
+                    if ( value instanceof String ) {
+                        String svalue= (String)value;
+                        int i= svalue.indexOf("@");
+                        try {
+                            DatumRange tr= DatumRangeUtil.parseTimeRange( svalue.substring(0,i) );
+                            CacheTag r;
+                            if ( i==-1 ) {
+                                value= new CacheTag( tr, null );
+                            } else if ( svalue.substring(i+1).trim().equals("intrinsic") ) {
+                                value= new CacheTag( tr, null );
+                            } else {
+                                Datum res= Units.seconds.parse(svalue.substring(i+1));
+                                value= new CacheTag( tr, res );
+                            }
+                            return value;
+                        } catch ( ParseException ex ) {
+                            throw new IllegalArgumentException(ex);
+                        }
+                    } else if ( value instanceof CacheTag ) {
+                        return value;
+                    } else {
+                        throw new IllegalArgumentException("cannot convert to value for "+name+": "+value);
+                    }
+                    
+                case DataSetUtil.PROPERTY_TYPE_MAP:
+                    if ( !( value instanceof Map ) ) {
+                        try {
+                            String json= value.toString();
+                            JSONObject obj= new JSONObject(json);
+                            Map<String,Object> result= new HashMap<>();
+                            Iterator i= obj.keys();
+                            while ( i.hasNext() ) {
+                                String k= String.valueOf( i.next() );
+                                result.put( k, obj.get(k) );
+                            }
+                            return result;
+                        } catch (JSONException ex) {
+                            throw new IllegalArgumentException("cannot convert to value for "+name+": "+value);                            
+                        }
+                    } else {
+                        return value;
+                    }
+                case DataSetUtil.PROPERTY_TYPE_STRING:
+                    return value.toString();
+                default:
+                    return value;
+            }
+        }
+    }
         
     /**
      * Like putProperty, but this inserts the value at the index.  This
@@ -5775,9 +6107,14 @@ public class Ops {
         double dvalue= Double.NaN;
         UnitsConverter uc=null;
         if ( value!=null ) {
-            uc= SemanticOps.getUnitsConverter(value,ds);
-            if ( value.rank()==0) {
-                dvalue= uc.convert( value.value() );
+            Units vu= SemanticOps.getUnits(value);
+            if ( vu!=Units.dimensionless ) {
+                uc= SemanticOps.getUnitsConverter(value,ds);
+                if ( value.rank()==0) {
+                    dvalue= uc.convert( value.value() );
+                }
+            } else {
+                dvalue= value.value();
             }
         }
             
@@ -5854,7 +6191,45 @@ public class Ops {
     public static WritableDataSet removeValuesLessThan( Object ds, Object v ) {
         return removeValuesLessThan( dataset(ds), dataset(v) );
     }
-           
+        
+    /**
+     * apply the indeces 
+     * @param vv values to return, a rank 1, N-element dataset.
+     * @param ds the indeces.
+     * @return data a dataset with the geometry of ds and the units of values.
+     * @see #subset(org.das2.qds.QDataSet, org.das2.qds.QDataSet) which does the same thing.
+     */
+    public static WritableDataSet applyIndex( QDataSet vv, QDataSet ds ) {
+        QubeDataSetIterator iter= new QubeDataSetIterator(ds);
+        DDataSet result= iter.createEmptyDs();
+        while ( iter.hasNext() ) {
+            iter.next();
+            int idx= (int)( iter.getValue(ds) );
+            iter.putValue( result, vv.value(idx) );
+        }
+        result.putProperty(QDataSet.UNITS,vv.property(QDataSet.UNITS));
+        return result;
+    }
+    
+    /**
+     * apply the indeces 
+     * @param vvo values to return, a rank 1, N-element dataset.
+     * @param ds the indeces.
+     * @return data a dataset with the geometry of ds and the units of values.
+     */
+    public static WritableDataSet applyIndex( Object vvo, QDataSet ds ) {
+        QDataSet vv= dataset(vvo);
+        QubeDataSetIterator iter= new QubeDataSetIterator(ds);
+        DDataSet result= iter.createEmptyDs();
+        while ( iter.hasNext() ) {
+            iter.next();
+            int idx= (int)( iter.getValue(ds) );
+            iter.putValue( result, vv.value(idx) );
+        }
+        result.putProperty(QDataSet.UNITS,vv.property(QDataSet.UNITS));
+        return result;
+    }
+
     /**
      * returns the reverse of the rank 1 dataset.
      * @param ds
@@ -6716,9 +7091,13 @@ public class Ops {
     }
     /**
      * Performs an FFT on the provided rank 1 dataset.  A rank 2 dataset of 
-     * complex numbers is returned.
+     * complex numbers is returned.  The data must not contain fill and
+     * must be uniformly spaced.  DEPEND_0 is used to identify frequencies
+     * if available.
      * @param ds a rank 1 dataset.
      * @return a rank 2 dataset of complex numbers.
+     * @see Schemes#rank2ComplexNumbers() 
+     * @see Ops#ifft(org.das2.qds.QDataSet) 
      */
     public static QDataSet fft(QDataSet ds) {
         GeneralFFT fft = GeneralFFT.newDoubleFFT(ds.length());
@@ -6730,11 +7109,10 @@ public class Ops {
         }
 
         QDataSet dep0 = (QDataSet) ds.property(QDataSet.DEPEND_0);
-        RankZeroDataSet cadence = dep0 == null ? DRank0DataSet.create(1.0) : DataSetUtil.guessCadenceNew(dep0,null);
-        if ( cadence==null ) throw new IllegalArgumentException("can't establish data cadence");
+        if ( dep0==null ) dep0= Ops.findgen(ds.length());
 
-        double[] tags = FFTUtil.getFrequencyDomainTags(1./cadence.value(), ds.length());
-        result.putProperty(QDataSet.DEPEND_0, DDataSet.wrap(tags));
+        QDataSet tags = FFTUtil.getFrequencyDomainTags(dep0);
+        result.putProperty(QDataSet.DEPEND_0, tags );
 
         QDataSet dep1 = complexCoordinateSystem();
 
@@ -6747,6 +7125,7 @@ public class Ops {
      * A rank 2 dataset of complex numbers is returned.
      * @param ds a rank 2 dataset.
      * @return a rank 2 dataset of complex numbers.
+     * @see Ops#fft(org.das2.qds.QDataSet) 
      */
     public static QDataSet ifft(QDataSet ds) {
         GeneralFFT fft = GeneralFFT.newDoubleFFT(ds.length());
@@ -6761,9 +7140,7 @@ public class Ops {
 
         QDataSet dep0 = (QDataSet) ds.property(QDataSet.DEPEND_0);
         if ( dep0!=null ) {
-
-            QDataSet dt= Ops.div( 1,dep0.slice(1) );
-            QDataSet tags= Ops.multiply( Ops.findgen(result.length() ), dt );
+            QDataSet tags= FFTUtil.getTimeDomainTags(dep0);
             //double[] tags = FFTUtil.getFrequencyDomainTags(1./cadence.value(), ds.length());
             result.putProperty(QDataSet.DEPEND_0, tags );
         }
@@ -6807,6 +7184,10 @@ public class Ops {
      */
     public static final QDataSet complexMultiply( QDataSet ds1, QDataSet ds2 ) {
         if ( ds1.rank()>3 ) throw new IllegalArgumentException("ds1 must be ds1[n,2]");
+        if ( !Schemes.isComplexNumbers(ds1) ) ds1= complexDataset( ds1, null );
+        if ( !Schemes.isComplexNumbers(ds2) ) ds2= complexDataset( ds2, null );
+        if ( ds1.rank()==1 && ds2.rank()==2 ) ds1= replicate( ds1, ds2.length() );
+        if ( ds1.rank()==2 && ds1.rank()==1 ) ds2= replicate( ds2, ds1.length() );
         if ( ds1.rank()!=ds2.rank() ) throw new IllegalArgumentException("ds1 and ds2 must have the same rank");
         QDataSet dep1= complexCoordinateSystem();
         ArrayDataSet result= ArrayDataSet.copy(ds1);
@@ -7350,7 +7731,7 @@ public class Ops {
             min= Ops.slice1(ds,0);
             max= Ops.slice1(ds,1);
             ds= min;
-            wds= Ops.slice1(wds,0);
+            if ( wds!=null ) wds= Ops.slice1(wds,0);
         }
         
         if ( ds.property(QDataSet.BIN_MAX )!=null ) {
@@ -7389,16 +7770,8 @@ public class Ops {
 
             monoCheck= Boolean.TRUE.equals( ds.property(QDataSet.MONOTONIC ));
             if ( ds.rank()==1 && monoCheck && n>0 ) {
-                while ( ifirst<n && wds.value(ifirst)==0.0 ) ifirst++;
-                while ( ilast>=0 && wds.value(ilast)==0.0 ) ilast--;
-                int imiddle= ( ifirst + ilast ) / 2;
-                if ( wds.value(imiddle)>0 ) {
-                    double dir= ds.value(ilast) - ds.value(ifirst) ;
-                    if ( ( ds.value(imiddle) - ds.value(ifirst) ) * dir < 0 ) {
-                        logger.fine("this data isn't really monotonic.");
-                        monoCheck= false;
-                    }
-                }
+                monoCheck= DataSetUtil.isMonotonicQuick(ds);
+                if ( !monoCheck ) logger.log(Level.WARNING, "this data isn''t really monotonic: {0}", ds);
             }
         } else {
             monoCheck= false;
@@ -7882,9 +8255,12 @@ public class Ops {
     }
 
     /**
-     * use one pass auto-scaling histogram
-     * @param ds
-     * @return
+     * AutoHistogram is a one-pass self-scaling histogram, useful in autoranging data.  
+     * The data is fed into the routine, and bins will grow as more and more data is added,
+     * to result in about 100 bins.  For example, if the initial binsize is 1.0 unit, and the data extent
+     * is 0-200, then bins are combined so that the new binsize is 2.0 units and 100 bins are used.
+     * @param ds rank N dataset (all ranks are supported).
+     * @return rank 1 dataset
      */
     public static QDataSet autoHistogram( QDataSet ds ) {
         if ( ds==null ) {
@@ -8329,7 +8705,7 @@ public class Ops {
         
         // Starting with v2014a_12, immodest extrapolations beyond 0.5 are no longer allowed.
         boolean noExtrapolate= true;
-        
+               
         while (it.hasNext()) {
             it.next();
 
@@ -9247,6 +9623,7 @@ public class Ops {
     public static QDataSet mean( QDataSet ds ) {
         double avg = 0;
         int n= 0;
+        double offs= Double.NaN;
         
         DataSetIterator it= new QubeDataSetIterator(ds);
         QDataSet wds= valid(ds);
@@ -9254,10 +9631,13 @@ public class Ops {
         while ( it.hasNext() )  {
             it.next();
             if ( it.getValue(wds)==0 ) continue;
-            avg += it.getValue(ds);
             n= n+1;
+            if ( n==1 ) {
+                offs= it.getValue(ds);
+            }
+            avg += ( it.getValue(ds) - offs );
         }
-        double m = avg / n;
+        double m = offs + avg / n;
         return DataSetUtil.asDataSet( m,SemanticOps.getUnits(ds) );
     }
     
@@ -9587,14 +9967,14 @@ public class Ops {
     }
 
     public static QDataSet contour( Object tds, Object vv ) {
-        QDataSet vds = Contour.contour( dataset(tds), dataset(vv) );
-        return vds;
+        return contour( dataset(tds), dataset(vv) );
     }
     
     /**
      * return array that is the differences between each successive pair in the dataset.
      * Result[i]= ds[i+1]-ds[i], so that for an array with N elements, an array with
-     * N-1 elements is returned.  DEPEND_0 will contain the average of the two points.
+     * N-1 elements is returned.  When the data has a DEPEND_0, the result
+     * will have a DEPEND_0 which contains the average of the corresponding points.
      * @param ds a rank 1 dataset with N elements.
      * @return a rank 1 dataset with N-1 elements.
      * @see #accum(org.das2.qds.QDataSet) 
@@ -9621,7 +10001,7 @@ public class Ops {
             }
             if ( dep0ds!=null ) {
                 assert dep0!=null;
-                dep0.putValue(i, ( dep0ds.value(i+1) + dep0ds.value(i)) / 2 );
+                dep0.putValue(i, ( dep0ds.value(i) + ( dep0ds.value(i+1) - dep0ds.value(i) ) / 2 ) );
             }
         }
         result.putProperty(QDataSet.FILL_VALUE, fill );
@@ -9718,6 +10098,50 @@ public class Ops {
     }
     
     /**
+     * for each element i of ds, set the result[i] to the maximum of ds[0:(i+1)]
+     * @param ds rank 1 dataset
+     * @return the cumulative maximum
+     */
+    public static QDataSet cumulativeMax( QDataSet ds ) {
+        if ( ds.rank()!=1 ) throw new IllegalArgumentException("argument must be rank 1");
+        ArrayDataSet result= ArrayDataSet.copy(ds);
+        QDataSet w= Ops.valid(ds);
+        double max= -1*Double.MAX_VALUE;
+        for ( int i=0; i<result.length(); i++ ) {
+            if ( w.value(i)>0 ) {
+                double t= result.value(i);
+                if ( t>max ) max= t;
+                result.putValue( i, max );
+            } else {
+                result.putValue( i, Double.NaN );
+            }
+        }
+        return result;
+    }
+    
+    /**
+     * for each element i of ds, set the result[i] to the minimum of ds[0:(i+1)]
+     * @param ds rank 1 dataset
+     * @return the cumulative minimum
+     */
+    public static QDataSet cumulativeMin( QDataSet ds ) {
+        if ( ds.rank()!=1 ) throw new IllegalArgumentException("argument must be rank 1");
+        ArrayDataSet result= ArrayDataSet.copy(ds);
+        QDataSet w= Ops.valid(ds);
+        double min= Double.MAX_VALUE;
+        for ( int i=0; i<result.length(); i++ ) {
+            if ( w.value(i)>0 ) {
+                double t= result.value(i);
+                if ( t<min ) min= t;
+                result.putValue( i, min );
+            } else {
+                result.putValue( i, Double.NaN );
+            }
+        }
+        return result;
+    }
+    
+    /**
      * append two datasets that are QUBEs.  DEPEND_0 and other metadata is
      * handled as well.  So for example: 
      *<blockquote><pre>
@@ -9793,7 +10217,7 @@ public class Ops {
         if ( nn ) ff= Ops.round(ff);        
         ds= interpolate( ds, ff );
 
-        return ds;        
+        return ds;
     }
     
     /**
@@ -9852,6 +10276,17 @@ public class Ops {
             boolean nn= UnitsUtil.isOrdinalMeasurement( SemanticOps.getUnits(ds) );
             if ( nn ) ff= Ops.round(ff);
             ds= interpolate( ds, ff );
+            QDataSet tlimit= DataSetUtil.guessCadenceNew( tt1, null );
+            if ( tlimit!=null ) {
+                tlimit= Ops.multiply( tlimit, Ops.dataset(1.5) );
+                Number fillValue= (Number) ds.property(QDataSet.FILL_VALUE);
+                if ( fillValue==null ) fillValue= Double.NaN;
+                QDataSet tcel= Ops.applyIndex(tt1,Ops.ceil(ff));
+                QDataSet tflr= Ops.applyIndex(tt1,Ops.floor(ff));
+                QDataSet tdff= Ops.subtract( tcel,tflr );
+                QDataSet r= Ops.where( Ops.gt( tdff, tlimit ) );
+                ds= Ops.putValues( ds, r, fillValue );
+            }
             result.add( ds );
             iarg++;
         }
@@ -9913,8 +10348,19 @@ public class Ops {
                 tt1= (QDataSet)ds.property( QDataSet.DEPEND_0 );
                 ff= findex( tt1, tt );
             }
-            ff= Ops.round(ff);
-            ds= interpolate( ds, ff );
+            QDataSet iff= Ops.round(ff);
+            ds= interpolate( ds, iff );
+            QDataSet tlimit= DataSetUtil.guessCadenceNew( tt1, null );
+            if ( tlimit!=null ) {
+                tlimit= Ops.multiply( tlimit, Ops.dataset(1.5) );
+                Number fillValue= (Number) ds.property(QDataSet.FILL_VALUE);
+                if ( fillValue==null ) fillValue= Double.NaN;
+                QDataSet tcel= Ops.applyIndex(tt1,Ops.ceil(ff));
+                QDataSet tflr= Ops.applyIndex(tt1,Ops.floor(ff));
+                QDataSet tdff= Ops.subtract( tcel,tflr );
+                QDataSet r= Ops.where( Ops.gt( tdff, tlimit ) );
+                ds= Ops.putValues( ds, r, fillValue );
+            }            
             result.add( ds );
             iarg++;
         }
@@ -9929,18 +10375,39 @@ public class Ops {
      */
     public static QDataSet convertUnitsTo( QDataSet ds, Units u ) {
         UnitsConverter uc= Units.getConverter( SemanticOps.getUnits(ds), u );
-        ArrayDataSet ds2= ArrayDataSet.copy(ds);
+        if ( uc==UnitsConverter.IDENTITY ) {
+            return ds;
+        }
+        
+        ArrayDataSet ds2;
+        Class c= ArrayDataSet.guessBackingStore( ds );
+        if ( c==float.class || c==double.class ) {
+            ds2= ArrayDataSet.copy(ds);
+        } else {
+            ds2= DDataSet.copy(ds);
+        }
+        
         for ( int i=0; i<ds.rank(); i++ ) {
             if ( ds2.property("BUNDLE_"+i) !=null ) {
                 ds2.putProperty("BUNDLE_"+i,null);
             }
         }
+        
+        QDataSet wds= DataSetUtil.weightsDataSet(ds);
         DataSetIterator iter= new QubeDataSetIterator( ds2 );
         while ( iter.hasNext() ) {
             iter.next();
-            iter.putValue( ds2, uc.convert( iter.getValue(ds) ) );
+            if ( iter.getValue(wds)>0 ) {
+                iter.putValue( ds2, uc.convert( iter.getValue(ds) ) );
+            } else {
+                iter.putValue( ds2, -1e38 );
+            }
         }
-        ds2.putProperty( QDataSet.UNITS, u );  
+        ds2.putProperty( QDataSet.UNITS, u );
+        ds2.putProperty( QDataSet.FILL_VALUE, -1e38 );
+        ds2.putProperty( QDataSet.VALID_MIN, null );
+        ds2.putProperty( QDataSet.VALID_MAX, null );
+        
         return ds2;
     }
 
@@ -10190,7 +10657,7 @@ public class Ops {
 
     /**
      * return the color encoded as one of:<ul>
-     * <li>"red" or "RED"
+     * <li>"red" or "RED" or X11 color names like "LightPink" 
      * <li>#FF0000
      * <li>255,0,0 or 1.0,0,0
      * </ul>
@@ -10221,7 +10688,7 @@ public class Ops {
                     throw new IllegalArgumentException("color identified in string should be name like 'red' or r,g,b triple like '255,0,0'");
                 }
             } else {
-                c = Color.decode(sval);
+                c= ColorUtil.decodeColor(sval);
             }
         } catch (NumberFormatException ex) {
             c = (Color) ClassMap.getEnumElement(Color.class, sval);
@@ -10775,8 +11242,9 @@ public class Ops {
             if ( w==0 ) continue;
             if ( d <= last  ) {
                 mdep0.putValue(i,fill);
-            } 
-            last = d;
+            } else {
+                last = d; 
+            }
         }
         
         logger.exiting( "org.das2.qds.Ops","ensureMonotonicWithFill" );        

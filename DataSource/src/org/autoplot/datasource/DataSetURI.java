@@ -511,6 +511,9 @@ public class DataSetURI {
         // The scheme-specific part of the URI must itself be a URI, typically a URL pointing at the data.  URIs are used
         // to support other protocols like sftp.
         String resourceSuri = uri.getRawSchemeSpecificPart();
+        if ( resourceSuri.startsWith("'") ) {
+            throw new IllegalArgumentException("URI starts with single quote");
+        }
         resourceUri = new URI(resourceSuri); //bug3055130 okay
 
         ext = DataSetURI.getExt(uri.toString());
@@ -1005,7 +1008,7 @@ public class DataSetURI {
      * 
      * @param url the address to download.
      * @param timeoutSeconds if positive, the number of seconds to allow use of a downloaded resource.  If -1, then the default ten seconds is used.  12 hours is the longest allowed interval.
-     * @param mon a progress monitor.
+     * @param mon a progress monitor, or null.
      * @return a File in the FileSystemCache.  The file will have question marks and ampersands removed.
      * @throws IOException
      */
@@ -1016,6 +1019,8 @@ public class DataSetURI {
         if ( timeoutSeconds>43200 ) {
             throw new IllegalArgumentException("timeoutSeconds is greater than 12 hours.");
         }
+        
+        if ( mon==null ) mon= new NullProgressMonitor();
 
         URISplit split = URISplit.parse( url.toString() ); // get the folder to put the file.
 
@@ -2318,7 +2323,7 @@ public class DataSetURI {
         
         logger.fine( getResourceURI("file:C:\\documents and settings\\jbf\\pngwalk").toString() );
 
-        URL url= new URL("http://apps-pw/hudson/job/autoplot-release/lastSuccessfulBuild/artifact/autoplot/VirboAutoplot/dist/logo64x64.png");
+        URL url= new URL("http://autoplot.org/data/logos/logo64.png");
         File x= downloadResourceAsTempFile( url, new NullProgressMonitor() );
         logger.fine( x.toString() );
 

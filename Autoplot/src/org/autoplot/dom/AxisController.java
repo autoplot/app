@@ -7,7 +7,10 @@ package org.autoplot.dom;
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
 import java.util.List;
+import java.util.logging.Level;
+import org.das2.datum.Datum;
 import org.das2.datum.DatumRange;
+import org.das2.datum.DatumRangeUtil;
 import org.das2.datum.Units;
 import org.das2.graph.DasAxis;
 import org.das2.graph.DasAxis.Lock;
@@ -15,7 +18,6 @@ import org.das2.util.LoggerManager;
 import org.jdesktop.beansbinding.Converter;
 
 /**
- *
  * @author jbf
  */
 public class AxisController extends DomNodeController {
@@ -44,7 +46,7 @@ public class AxisController extends DomNodeController {
     /**
      * checks to see that the axis is still valid and clears the autoRange property.
      */
-    private PropertyChangeListener rangeChangeListener = new PropertyChangeListener() {
+    private final PropertyChangeListener rangeChangeListener = new PropertyChangeListener() {
 
         private DatumRange logCheckRange(DatumRange range, boolean log) {
 
@@ -74,36 +76,126 @@ public class AxisController extends DomNodeController {
             }
         }
 
+        @Override
         public synchronized void propertyChange(PropertyChangeEvent evt) {
             LoggerManager.logPropertyChangeEvent(evt);  
             // ensure that log doesn't make axis invalid, or min trivially close to zero.
             if ( dom.controller.isValueAdjusting() || valueIsAdjusting() ) return;
             if ( evt.getPropertyName().equals( Axis.PROP_RANGE )
                     || evt.getPropertyName().equals( Axis.PROP_LOG ) ) axis.setAutoRange(false);
-            if ( evt.getPropertyName().equals( Axis.PROP_LABEL ) ) {
-                axis.setAutoLabel(false);
-            }
-            if ( evt.getPropertyName().equals(Axis.PROP_LOG) || evt.getPropertyName().equals(Axis.PROP_RANGE) ) {
-                if ( isPendingChanges() ) return;
-                DatumRange oldRange = axis.range;
-                final DatumRange range = logCheckRange(axis.range, axis.log);
-                if (!range.equals(oldRange)) {
-                    changesSupport.registerPendingChange(this,PENDING_RANGE_TWEAK);
-                    changesSupport.performingChange(this, PENDING_RANGE_TWEAK);
-                    axis.setRange(range);
-                    changesSupport.changePerformed(this, PENDING_RANGE_TWEAK);
-                }
+            switch (evt.getPropertyName()) {
+                case Axis.PROP_LABEL:
+                    axis.setAutoLabel(false);
+                    break;
+                case Axis.PROP_LOG:
+                    {
+                        if ( isPendingChanges() ) return;
+                        DatumRange oldRange = axis.range;
+                        final DatumRange range = logCheckRange(axis.range, axis.log);
+                        if (!range.equals(oldRange)) {
+                            if ( new Exception().getStackTrace().length > 280 ) {
+                                changesSupport.registerPendingChange(this,PENDING_RANGE_TWEAK);
+                                changesSupport.performingChange(this, PENDING_RANGE_TWEAK);
+                                axis.setLog(false);
+                                changesSupport.changePerformed(this, PENDING_RANGE_TWEAK);
+                            } else {
+                                changesSupport.registerPendingChange(this,PENDING_RANGE_TWEAK);
+                                changesSupport.performingChange(this, PENDING_RANGE_TWEAK);
+                                axis.setRange(range);
+                                changesSupport.changePerformed(this, PENDING_RANGE_TWEAK);
+                            }
+                        }       break;
+                    }
+                case Axis.PROP_RANGE:
+                    {
+                        if ( isPendingChanges() ) return;
+                        DatumRange oldRange = axis.range;
+                        final DatumRange range = logCheckRange(axis.range, axis.log);
+                        if (!range.equals(oldRange)) {
+                            if ( new Exception().getStackTrace().length > 280 ) {
+                                changesSupport.registerPendingChange(this,PENDING_RANGE_TWEAK);
+                                changesSupport.performingChange(this, PENDING_RANGE_TWEAK);
+                                axis.setLog(false);
+                                changesSupport.changePerformed(this, PENDING_RANGE_TWEAK);
+                            } else {
+                                changesSupport.registerPendingChange(this,PENDING_RANGE_TWEAK);
+                                changesSupport.performingChange(this, PENDING_RANGE_TWEAK);
+                                if ( axis.isLog() ) axis.setLog(false); // pretty sure it is.
+                                axis.setRange(range);
+                                changesSupport.changePerformed(this, PENDING_RANGE_TWEAK);
+                            }
+                        }       break;
+                    }
+                case Axis.PROP_SCALE:
+                    if ( dasAxis!=null ) { // the scale has changed, so let's see if we can reset the range to match the scale
+                        int npixels;
+                        npixels= dasAxis.isHorizontal() ? dasAxis.getColumn().getWidth() : dasAxis.getRow().getHeight();
+                        Datum w;
+                        Units u= dasAxis.getUnits();
+                        if ( u!=u.getOffsetUnits() ) {
+                            w= axis.getRange().width();
+                        } else if ( dasAxis.isLog() ) {
+                            w= Units.log10Ratio.createDatum( Math.log10( axis.getRange().max().divide(axis.getRange().min() ).value() ) );
+                        } else {
+                            w= axis.getRange().width();
+                        }
+                        Datum oldScale= w.divide(npixels);
+                        Datum newScale= (Datum)evt.getNewValue();
+                        if ( !oldScale.getUnits().isConvertibleTo(newScale.getUnits()) ) {
+                            return;
+                        }
+                        if ( !oldScale.equals(newScale) ) {
+                            //System.err.println("105: need to reset scale");
+                            Datum scale = (Datum)evt.getNewValue();
+                            DatumRange otherRange = dasAxis.getDatumRange();
+                            u= otherRange.getUnits();
+                            Datum otherw;
+                            if ( u!=u.getOffsetUnits() ) {
+                                otherw= otherRange.width();
+                            } else if ( dasAxis.isLog() ) {
+                                otherw= Units.log10Ratio.createDatum( Math.log10( otherRange.max().divide( otherRange.min() ).value() ) );
+                            } else {
+                                otherw= otherRange.width();
+                            }
+                            Datum otherScale = otherw.divide(npixels);
+                            
+                            double expand = (scale.divide(otherScale).value() - 1) / 2;
+                            if (Math.abs(expand) > 0.0001) {
+                                logger.log(Level.FINER, "expand={0} scale={1} otherScale={2}", new Object[]{expand, scale, otherScale});
+                                try {
+                                    DatumRange newOtherRange;
+                                    if ( dasAxis.isLog() ) {
+                                        newOtherRange= DatumRangeUtil.rescaleLog(otherRange, 0 - expand, 1 + expand);
+                                    } else {
+                                        newOtherRange= DatumRangeUtil.rescale(otherRange, 0 - expand, 1 + expand);
+                                    }
+                                    axis.setRange(newOtherRange);
+                                } catch ( IllegalArgumentException ex ) {
+                                    System.err.println("here129");
+                                }
+                            }
+                            
+                            //DatumRange nr=
+                        }
+                    }   break;
+                default:
+                    break;
             }
         }
     };
 
-    //TODO: this will confuse with isValueAdjusting
+    /**
+     * true if the Axis is adjusting, or the DasAxis which implements.
+     * @return true if the Axis is adjusting, or the DasAxis which implements.
+     */
     public boolean valueIsAdjusting() {
         return super.isValueAdjusting() || dasAxis.valueIsAdjusting();
     }
 
     /**
      * set the range without affecting the auto state.
+     * @param range the new range
+     * @param log true if the axis should be log.
      */
     public void setRangeAutomatically( DatumRange range, boolean log ) {
         axis.range= range; // don't fire off property change events.
@@ -123,6 +215,16 @@ public class AxisController extends DomNodeController {
         }
         axis.setLabel(label);
         axis.setAutoLabel(true);
+    }
+    
+    /**
+     * reset the axis units to a new unit which is convertable.
+     * @param nu 
+     */
+    public void resetAxisUnits( Units nu ) {
+        DatumRange oldRange=dasAxis.getDatumRange();
+        DatumRange newRange= DatumRange.newDatumRange( oldRange.min().doubleValue(nu), oldRange.max().doubleValue(nu), nu );
+        dasAxis.resetRange(newRange);
     }
 
     private Converter getOppositeConverter( Axis axis, final DasAxis dasAxis ) {
@@ -154,11 +256,7 @@ public class AxisController extends DomNodeController {
             @Override
             public Object convertReverse(Object t) {
                 int orientation= (Integer)t;
-                if ( orientation==DasAxis.TOP || orientation==DasAxis.RIGHT ) {
-                    return true;
-                } else {
-                    return false;
-                }
+                return orientation==DasAxis.TOP || orientation==DasAxis.RIGHT;
             }
         };
     }
@@ -177,8 +275,35 @@ public class AxisController extends DomNodeController {
         ac.bind(axis, "flipped", p, "flipped");
         ac.bind(axis, "visible", p, "visible" );
         ac.bind(axis, "opposite", p, "orientation", getOppositeConverter(axis,dasAxis) );
+        if ( p.isHorizontal() ) {
+            p.getColumn().addPropertyChangeListener(scaleListener);
+        } else {
+            p.getRow().addPropertyChangeListener(scaleListener);
+        }
+        axis.addPropertyChangeListener( Axis.PROP_RANGE, scaleListener );
+        axis.addPropertyChangeListener( Axis.PROP_LOG, scaleListener );
     }
 
+    
+    private final PropertyChangeListener scaleListener= new PropertyChangeListener() {
+        @Override
+        public void propertyChange(PropertyChangeEvent evt) {
+            int npixels;
+            npixels= dasAxis.isHorizontal() ? dasAxis.getColumn().getWidth() : dasAxis.getRow().getHeight();                
+            Datum w;
+            Units u= dasAxis.getUnits();
+            if ( u.getOffsetUnits()!=u ) {
+                w= axis.getRange().width(); // we have to do this, it doesn't matter if it is log.
+            } else if ( dasAxis.isLog() ) {
+                w= Units.log10Ratio.createDatum( Math.log10( axis.getRange().max().divide(axis.getRange().min() ).value() ) );
+            } else {
+                w= axis.getRange().width();
+            }
+            Datum scale= w.divide(npixels);
+            axis.setScale( scale );
+        }
+    };
+            
     public DasAxis getDasAxis() {
         return dasAxis;
     }
@@ -199,6 +324,7 @@ public class AxisController extends DomNodeController {
         if ( !exclude.contains( Axis.PROP_FONTSIZE ) ) axis.setFontSize( that.getFontSize() );
         if ( !exclude.contains( Axis.PROP_AUTORANGE ) ) axis.setAutoRange(that.isAutoRange());
         if ( !exclude.contains( Axis.PROP_AUTOLABEL ) ) axis.setAutoLabel(that.isAutoLabel());
+        if ( !exclude.contains( Axis.PROP_AUTORANGEHINTS ) ) axis.setAutoRangeHints(that.getAutoRangeHints());
         if ( !exclude.contains( Axis.PROP_DRAWTICKLABELS ) ) axis.setDrawTickLabels( that.isDrawTickLabels() );
         if ( !exclude.contains( Axis.PROP_VISIBLE ) ) axis.setVisible( that.isVisible() );
         if ( lock!=null ) lock.unlock();

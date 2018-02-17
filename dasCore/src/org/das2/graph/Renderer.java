@@ -22,6 +22,7 @@
  */
 package org.das2.graph;
 
+import org.das2.util.ColorUtil;
 import java.awt.Color;
 import java.awt.EventQueue;
 import java.awt.Font;
@@ -41,7 +42,6 @@ import org.das2.dataset.VectorDataSet;
 import org.das2.DasApplication;
 import org.das2.DasException;
 import org.das2.graph.DasAxis.Memento;
-import org.das2.util.DasExceptionHandler;
 import java.beans.PropertyChangeListener;
 import org.das2.util.monitor.ProgressMonitor;
 import org.das2.components.propertyeditor.Editable;
@@ -426,7 +426,7 @@ public abstract class Renderer implements DataSetConsumer, Editable, Displayable
         if ( oldValue==s || ( oldValue != null && oldValue.equals(s) ) ) {
 	    return;
 	}
-        controls= parseControl(s);
+        this.controls= parseControl(s);
         update();
         propertyChangeSupport.firePropertyChange(PROP_CONTROL, oldValue, control );
     }
@@ -464,6 +464,9 @@ public abstract class Renderer implements DataSetConsumer, Editable, Displayable
 
     /**
      * convenient and official location for method that parses control string.
+     * This will split on ampersand, and when no ampersands are found then it will
+     * try semicolons.  This is to support embedding the control string in 
+     * other control strings (like Autoplot URIs) which use ampersands.
      * @param c the control string or null.
      * @return the control string, parsed.
      */
@@ -478,6 +481,9 @@ public abstract class Renderer implements DataSetConsumer, Editable, Displayable
         }
         if ( c.trim().length()==0 ) return result;
         String[] ss= c.split(ampstr);
+        if ( ss.length==1 ) {
+            ss= c.split(";");
+        }
         for ( int i=0; i<ss.length; i++ ) {
             if ( ss[i].trim().length()==0 ) continue;
             String[] ss2= ss[i].split("=",2);
@@ -630,7 +636,7 @@ public abstract class Renderer implements DataSetConsumer, Editable, Displayable
      * @see ColorUtil#decodeColor(java.lang.String) 
      */
     public Color getColorControl( String key, Color deft ) {
-        String v= controls.get(key);
+        String v= this.controls.get(key);
         if ( v!=null ) {
             try { 
                 return ColorUtil.decodeColor(v);
@@ -688,6 +694,14 @@ public abstract class Renderer implements DataSetConsumer, Editable, Displayable
                 return DefaultPlotSymbol.DIAMOND;
             case "BOX":
                 return DefaultPlotSymbol.BOX;
+            case "TRIANGLESEAST":
+                return DefaultPlotSymbol.TRIANGLES_EAST;
+            case "TRIANGLESNORTH":
+                return DefaultPlotSymbol.TRIANGLES_NORTH;
+            case "TRIANGLESWEST":
+                return DefaultPlotSymbol.TRIANGLES_WEST;
+            case "TRIANGLESSOUTH":
+                return DefaultPlotSymbol.TRIANGLES_SOUTH;
             default:
                 logger.log(Level.FINE, "unable to parse symbol: {0}", deflt);
                 return deflt;

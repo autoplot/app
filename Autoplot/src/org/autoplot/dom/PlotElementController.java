@@ -1,7 +1,4 @@
-/*
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
- */
+
 package org.autoplot.dom;
 
 import java.awt.Color;
@@ -48,9 +45,7 @@ import org.das2.graph.ContoursRenderer;
 import org.das2.graph.DasCanvas;
 import org.das2.graph.DasCanvasComponent;
 import org.das2.graph.DasColorBar;
-import org.das2.graph.DasColumn;
 import org.das2.graph.DasPlot;
-import org.das2.graph.DasRow;
 import org.das2.graph.DefaultPlotSymbol;
 import org.das2.graph.DigitalRenderer;
 import org.das2.graph.EventsRenderer;
@@ -70,6 +65,7 @@ import org.das2.util.monitor.NullProgressMonitor;
 import org.das2.util.monitor.ProgressMonitor;
 import org.jdesktop.beansbinding.Converter;
 import org.autoplot.ApplicationModel;
+import org.autoplot.AutoRangeUtil;
 import org.autoplot.RenderType;
 import org.autoplot.AutoplotUtil;
 import static org.autoplot.AutoplotUtil.SERIES_SIZE_LIMIT;
@@ -91,8 +87,8 @@ import org.autoplot.datasource.DataSourceRegistry;
 import org.autoplot.datasource.capability.TimeSeriesBrowse;
 import org.das2.qds.ops.Ops;
 import org.autoplot.metatree.MetadataUtil;
-import org.das2.datum.InconvertibleUnitsException;
 import org.das2.graph.BoundsRenderer;
+import org.das2.graph.PolarPlotRenderer;
 
 /**
  * PlotElementController manages the PlotElement, for example resolving the datasource and loading the dataset.
@@ -1058,6 +1054,7 @@ public class PlotElementController extends DomNodeController {
     private boolean axisDimensionsChange( RenderType oldRenderType, RenderType newRenderType ) {
         if ( oldRenderType==newRenderType ) return false;
         if ( newRenderType==RenderType.pitchAngleDistribution ) return true;
+        if ( newRenderType==RenderType.polar ) return true;
         if ( oldRenderType==RenderType.spectrogram && newRenderType==RenderType.nnSpectrogram ) {
             return false;
         } else if ( oldRenderType==RenderType.nnSpectrogram && newRenderType==RenderType.spectrogram ) {
@@ -1783,7 +1780,13 @@ public class PlotElementController extends DomNodeController {
         return renderer;
     }
 
-    private void setRenderer(Renderer renderer) {
+    /**
+     * set the renderer controlled by this PlotElement controller.  
+     * This should be used with caution.
+     * @param renderer 
+     * @see external.PlotCommand
+     */
+    public void setRenderer(Renderer renderer) {
         Renderer oldRenderer= this.renderer;
         ApplicationController ac = this.dom.controller;
         if ( oldRenderer!=null ) {
@@ -1809,6 +1812,8 @@ public class PlotElementController extends DomNodeController {
             bindToEventsRenderer((EventsRenderer)renderer);
         } else if (renderer instanceof DigitalRenderer ) {
             bindToDigitalRenderer((DigitalRenderer)renderer);
+        } else if (renderer instanceof PolarPlotRenderer ) {
+            bindToPolarPlotRenderer((PolarPlotRenderer)renderer);
         } else if (renderer instanceof TickCurveRenderer ) {
             bindToTickCurveRenderer((TickCurveRenderer)renderer);
         } else if (renderer instanceof BoundsRenderer ) {
@@ -2259,15 +2264,15 @@ public class PlotElementController extends DomNodeController {
                 return;
             }
 
-            AutoplotUtil.AutoRangeDescriptor desc;
+            AutoRangeUtil.AutoRangeDescriptor desc;
             
-            desc = AutoplotUtil.autoRange( zds, props, ignoreDsProps );  // do the Z autoranging first for debugging.
+            desc = AutoRangeUtil.autoRange( zds, props, ignoreDsProps );  // do the Z autoranging first for debugging.
             logger.log(Level.FINE, "desc.range={0}", desc.range);
 
-            AutoplotUtil.AutoRangeDescriptor xdesc = AutoplotUtil.autoRange(xds, (Map) props.get(QDataSet.DEPEND_0), ignoreDsProps);
+            AutoRangeUtil.AutoRangeDescriptor xdesc = AutoplotUtil.autoRange(xds, (Map) props.get(QDataSet.DEPEND_0), ignoreDsProps);
             logger.log(Level.FINE, "xdesc.range={0}", xdesc.range);
 
-            AutoplotUtil.AutoRangeDescriptor ydesc = AutoplotUtil.autoRange(yds, yprops, ignoreDsProps );
+            AutoRangeUtil.AutoRangeDescriptor ydesc = AutoplotUtil.autoRange(yds, yprops, ignoreDsProps );
             logger.log(Level.FINE, "ydesc.range={0}", ydesc.range);
 
             peleCopy.getPlotDefaults().getZaxis().setRange(desc.range);
@@ -2296,7 +2301,22 @@ public class PlotElementController extends DomNodeController {
                 peleCopy.getPlotDefaults().getZaxis().setRange( DataSetUtil.asDatumRange( qube.slice(2),true ) );
                 peleCopy.getPlotDefaults().getZaxis().setLog( "log".equals( qube.slice(2).property(QDataSet.SCALE_TYPE) ) );
             }
-
+        } else if ( spec==RenderType.polar ) {
+            QDataSet qube= PolarPlotRenderer.doAutorange( fillDs );
+            if ( qube==null ) {
+                // nothing
+            } else {
+                peleCopy.getPlotDefaults().getXaxis().setRange( DataSetUtil.asDatumRange( qube.slice(0),true ) );
+                String label=  (String) qube.slice(0).property( QDataSet.LABEL );
+                peleCopy.getPlotDefaults().getXaxis().setLabel( label==null ? "" : label );
+                peleCopy.getPlotDefaults().getYaxis().setRange( DataSetUtil.asDatumRange( qube.slice(1),true ) );
+                label=  (String) qube.slice(1).property( QDataSet.LABEL );
+                peleCopy.getPlotDefaults().getYaxis().setLabel( label==null ? "" : label );
+                if ( qube.length()>2 ) {
+                    peleCopy.getPlotDefaults().getZaxis().setRange( DataSetUtil.asDatumRange( qube.slice(2),true ) );
+                    peleCopy.getPlotDefaults().getZaxis().setLog( "log".equals( qube.slice(2).property(QDataSet.SCALE_TYPE) ) );
+                }
+            }
         } else if ( spec==RenderType.digital ) {
             QDataSet qube= DigitalRenderer.doAutorange( fillDs );
             if ( qube==null ) {
@@ -2354,7 +2374,7 @@ public class PlotElementController extends DomNodeController {
             }       
         } else { // spec==RenderType.SERIES and spec==RenderType.HUGE_SCATTER
 
-            AutoplotUtil.AutoRangeDescriptor ydesc; //TODO: QDataSet can model AutoRangeDescriptors, it should be used instead.
+            AutoRangeUtil.AutoRangeDescriptor ydesc; //TODO: QDataSet can model AutoRangeDescriptors, it should be used instead.
             
             QDataSet depend0;
 
@@ -2366,7 +2386,7 @@ public class PlotElementController extends DomNodeController {
                     ydesc= AutoplotUtil.autoRange( DataSetOps.unbundle(fillDs, fillDs.length(0)-1 ), props, ignoreDsProps ); 
                     Units u= ydesc.range.getUnits();
                     for ( int i=fillDs.length(0)-2; i>=0; i-- ) {
-                        AutoplotUtil.AutoRangeDescriptor ydesc1= AutoplotUtil.autoRange( DataSetOps.unbundle(fillDs,i ), props, ignoreDsProps );
+                        AutoRangeUtil.AutoRangeDescriptor ydesc1= AutoRangeUtil.autoRange( DataSetOps.unbundle(fillDs,i ), props, ignoreDsProps );
                         if ( ydesc1.range.getUnits().isConvertibleTo(u) ) {
                             ydesc.range= DatumRangeUtil.union( ydesc.range, ydesc1.range );
                         } else {
@@ -2409,7 +2429,7 @@ public class PlotElementController extends DomNodeController {
                 logger.fine("20121015: I was thinking autorange would always be true");
             }
             
-            AutoplotUtil.AutoRangeDescriptor xdesc = AutoplotUtil.autoRange(xds, (Map) props.get(QDataSet.DEPEND_0), ignoreDsProps);
+            AutoRangeUtil.AutoRangeDescriptor xdesc = AutoRangeUtil.autoRange(xds, (Map) props.get(QDataSet.DEPEND_0), ignoreDsProps);
 
             peleCopy.getPlotDefaults().getXaxis().setLog(xdesc.log);
             if ( UnitsUtil.isOrdinalMeasurement( xdesc.range.getUnits() ) ) {
@@ -2418,15 +2438,15 @@ public class PlotElementController extends DomNodeController {
             peleCopy.getPlotDefaults().getXaxis().setRange(xdesc.range);
 
             if (spec == RenderType.colorScatter) {
-                AutoplotUtil.AutoRangeDescriptor zdesc;
+                AutoRangeUtil.AutoRangeDescriptor zdesc;
                 if ( fillDs.property(QDataSet.BUNDLE_1)!=null ) {
-                    zdesc= AutoplotUtil.autoRange((QDataSet) DataSetOps.unbundle( fillDs, fillDs.length(0)-1 ),null, ignoreDsProps);
+                    zdesc= AutoRangeUtil.autoRange((QDataSet) DataSetOps.unbundle( fillDs, fillDs.length(0)-1 ),null, ignoreDsProps);
                     peleCopy.getPlotDefaults().getZaxis().setLog(zdesc.log);
                     peleCopy.getPlotDefaults().getZaxis().setRange(zdesc.range);
                 } else {
                     QDataSet plane0= (QDataSet) fillDs.property(QDataSet.PLANE_0);
                     if ( plane0!=null ) {
-                        zdesc= AutoplotUtil.autoRange(plane0,
+                        zdesc= AutoRangeUtil.autoRange(plane0,
                             (Map) props.get(QDataSet.PLANE_0), ignoreDsProps);
                         peleCopy.getPlotDefaults().getZaxis().setLog(zdesc.log);
                         peleCopy.getPlotDefaults().getZaxis().setRange(zdesc.range);
@@ -2526,7 +2546,10 @@ public class PlotElementController extends DomNodeController {
 
         } else if ( spec==RenderType.pitchAngleDistribution ) {
             return true;
-
+            
+        } else if ( spec==RenderType.polar ) {
+            return true;
+            
         } else if ( spec==RenderType.eventsBar ) {
             return true;
 
@@ -3016,7 +3039,7 @@ public class PlotElementController extends DomNodeController {
         } finally {
             lock.unlock();
         }
-        Renderer oldRenderer= getRenderer();
+        //Renderer oldRenderer= getRenderer();
         maybeCreateDasPeer();
         //if ( getRenderer()!=null && getRenderer()!=oldRenderer ) {
             //QDataSet oldDs= getDataSet(); // TODO: this needs review.  There was a comment about slices, but this works fine.  Old code 
@@ -3096,6 +3119,12 @@ public class PlotElementController extends DomNodeController {
         ac.bind(plotElement.style, "color", renderer, "color");
     }
 
+    public void bindToPolarPlotRenderer(PolarPlotRenderer renderer) {
+        ApplicationController ac = this.dom.controller;
+        ac.bind(plotElement.style, "color", renderer, "color");
+        ac.bind(plotElement.style, "lineWidth", renderer, "lineWidth");
+    }
+    
     public void bindToTickCurveRenderer( TickCurveRenderer renderer) {
         ApplicationController ac = this.dom.controller;
         ac.bind(plotElement.style, "color", renderer, "color");

@@ -22,6 +22,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import javax.swing.SwingUtilities;
 import org.das2.datum.TimeUtil.TimeStruct;
 
 /**
@@ -37,7 +38,7 @@ import org.das2.datum.TimeUtil.TimeStruct;
  */
 public class Orbits {
 
-    private static final Logger logger= LoggerManager.getLogger("datum.orbits");
+    private static final Logger logger= LoggerManager.getLogger("das2.datum.orbits");
 
     private final String sc;
 
@@ -74,6 +75,9 @@ public class Orbits {
      */
     private static LinkedHashMap<String,DatumRange> readOrbits( String sc, List<URL> source ) throws IOException {
         List<URL> urls= new ArrayList<>();
+        if ( SwingUtilities.isEventDispatchThread() ) {
+            logger.warning("read orbits called on event thread");
+        }
         try {
             if ( sc.contains(":") ) {
                 urls.add( new URL( sc ) );  // orbit:http://das2.org/wiki/index.php/Orbits/crres:6 allowed.
@@ -140,13 +144,14 @@ public class Orbits {
         try (BufferedReader rin = new BufferedReader( new InputStreamReader( in ) )) {
             String s= rin.readLine();
             int col= -1; // the first time column, 0 is the first column.
+            int labelColumn= -1;  // column of the identifiers.
             while ( s!=null ) {
                 String[] ss= s.trim().split("\\s+");
                 if ( ss.length>0 && ss[0].startsWith("#") ) {
                     s= rin.readLine();
                     continue;
                 }
-                if ( ss.length==3 && ( ss[1].startsWith("1") || ss[1].startsWith("2") ) ) { // quick checks
+                if ( ss.length>2 && ( ss[1].startsWith("1") || ss[1].startsWith("2") ) ) { // quick checks
                     Datum d1;
                     Datum d2;
                     String s0;
@@ -155,7 +160,11 @@ public class Orbits {
                             try {
                                 d1= TimeUtil.create(ss[col]);
                                 d2= TimeUtil.create(ss[col+1]);
-                                s0= ss[ col==0 ? 2 : 0 ];
+                                if ( ss.length<=labelColumn ) {
+                                    logger.info("number of columns changes, reverting to old logic");
+                                    labelColumn= 2;
+                                }
+                                s0= ss[ col==0 ? labelColumn : 0 ];
                             } catch ( ParseException ex ) {
                                 s= rin.readLine();
                                 continue;
@@ -169,6 +178,7 @@ public class Orbits {
                             }
                             s0= ss[2];
                             col= 0;
+                            labelColumn= ss.length-1;
                         }
                     } catch ( ParseException ex ) {
                         try {
@@ -176,6 +186,7 @@ public class Orbits {
                             d2= TimeUtil.create(ss[2]);
                             s0= ss[0];
                             col= 1;
+                            labelColumn= 0;
                         } catch ( ParseException ex1 ) {
                             s= rin.readLine();
                             continue;
@@ -448,6 +459,8 @@ public class Orbits {
             startTime.hour= tsmin.hour;
             startTime.minute= tsmin.hour;
             startTime.seconds= tsmin.seconds;
+            startTime.millis= tsmin.millis;
+            startTime.micros= tsmin.micros;
 
             timeWidth.year= tsmax.year-tsmin.year;
             timeWidth.month= tsmax.month-tsmin.month;
@@ -456,6 +469,7 @@ public class Orbits {
             timeWidth.hour= tsmax.hour-tsmin.hour;
             timeWidth.minute= tsmax.hour-tsmin.hour;
             timeWidth.seconds= tsmax.seconds-tsmin.seconds;
+            timeWidth.millis= tsmax.millis-tsmin.millis;
             timeWidth.micros= tsmax.micros-tsmin.micros;
 
             orbitDatumRange= new OrbitDatumRange( o.sc,fieldContent.substring(i).trim() );

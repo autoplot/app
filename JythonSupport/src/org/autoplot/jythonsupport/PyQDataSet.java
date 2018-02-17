@@ -66,7 +66,7 @@ public class PyQDataSet extends PyJavaInstance {
      * Note getDataSet will always provide a writable dataset.
      * @param ds 
      */
-    PyQDataSet(QDataSet ds) {
+    public PyQDataSet(QDataSet ds) {
         super(ds);
         this.serialNumber= _seq.incrementAndGet();
         
@@ -934,56 +934,73 @@ public class PyQDataSet extends PyJavaInstance {
         }
     }
 
+    /**
+     * convert the object into the type needed for the property.
+     * @param context the dataset to which we are assigning the value.
+     * @param name the property name
+     * @param value the value
+     * @return the correct value.
+     * @see org.das2.qds.ops.Ops#convertPropertyValue
+     */
+    private static Object convertPropertyValue( QDataSet context, String name, Object value ) {
+        
+        if ( value==null ) return value;
+        
+        if ( value instanceof PyObject ) {
+            PyObject pyvalue= (PyObject)value;
+            if ( value instanceof PyQDataSet ) {
+                value= pyvalue.__tojava__(QDataSet.class);
+            } else if ( value instanceof PyDatum ) {
+                value= pyvalue.__tojava__(Datum.class);
+            } else if ( value instanceof PyInteger ) {
+                value= pyvalue.__tojava__(Integer.class);
+            } else if ( value instanceof PyFloat ) {
+                value= pyvalue.__tojava__(Float.class);
+            } else if ( value instanceof PyLong ) {
+                value= pyvalue.__tojava__(Long.class);
+            } else if ( value instanceof PyString ) {
+                value= pyvalue.__tojava__(String.class);
+            } else {
+                value= pyvalue.__tojava__(Object.class);
+            }
+        }
+
+        value= Ops.convertPropertyValue( context, name, value );
+        return value;
+        
+    }
+
     /* we need to wrap put methods as well... */
     public void putProperty( PyString prop, Object value ) {
         if ( mpds==null || mpds.isImmutable() ) {
             throw new RuntimeException("putProperty on dataset that could not be made into mutable, use copy.");
         }
-        if ( prop.toString().equals(QDataSet.UNITS) ) {
-            if ( value instanceof PyJavaInstance ) {
-                this.units= (Units) ((PyJavaInstance)value).__tojava__(Units.class);
-            } else if ( value.equals(Py.None) ) {
-                this.units= null;
-            } else if ( value instanceof Units ) {
-                this.units= (Units)value;
-            } else if ( value instanceof String ) {
-                value= Units.lookupUnits((String)value);
-            } else if ( value instanceof PyString ) {
-                value= Units.lookupUnits(((PyString)value).toString());
-            } else {
-                logger.warning("Expected Unit object for units.");
-            }
-        }
-        Class clas= DataSetUtil.getPropertyClass(prop.toString() );
-        if ( value instanceof PyString ) {
-            PyString po= (PyString)value;
-            mpds.putProperty(prop.toString(),po.toString());
-        } else if ( value instanceof PyObject ) {
-            PyObject po= (PyObject)value;
-            mpds.putProperty(prop.toString(),po.__tojava__(clas));
-        } else {
-            mpds.putProperty(prop.toString(),value);
-        }
+        
+        String sprop= prop.toString();
+        
+        if ( value.equals(Py.None) ) {
+            value= null;
+        } 
+        
+        value= convertPropertyValue( rods, prop.toString(), value );
+
+        mpds.putProperty(sprop, value);
+        
     }
+    
     public void putProperty( PyString prop, int index, Object value ) {
         if ( mpds==null || mpds.isImmutable() ) throw new RuntimeException("putProperty on dataset that could not be made into mutable, use copy.");
-        if ( prop.toString().equals(QDataSet.UNITS) ) {
-            if ( value instanceof String ) {
-                value= Units.lookupUnits((String)value);
-            } else if ( value instanceof PyString ) {
-                value= Units.lookupUnits(((PyString)value).toString());
-            }
-        }
-        Class clas= DataSetUtil.getPropertyClass(prop.toString() );
-        if ( value instanceof PyString ) {
-            PyString po= (PyString)value;
-            mpds.putProperty(prop.toString(),index,po.toString());
+        String sprop= prop.toString();
+        
+        if ( value.equals(Py.None) ) {
+            value= null;
         } else if ( value instanceof PyObject ) {
-            PyObject po= (PyObject)value;
-            mpds.putProperty(prop.toString(),index,po.__tojava__(clas));
-        } else {
-            mpds.putProperty(prop.toString(),index,value);
+            Class clas= DataSetUtil.getPropertyClass(prop.toString() );
+            PyObject po = (PyObject)value;
+            value= po.__tojava__(clas);
         }
+        mpds.putProperty(sprop,index,value);
+        
     }
     
     public void putValue( double value ) {

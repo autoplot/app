@@ -10,7 +10,6 @@ import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.channels.Channels;
@@ -28,13 +27,9 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import javax.swing.text.BadLocationException;
-import javax.swing.text.JTextComponent;
 import org.das2.dataset.NoDataInIntervalException;
 import org.das2.datum.TimeParser;
 import org.das2.fsm.FileStorageModel;
-import org.das2.graph.DataLoader;
-import org.das2.jythoncompletion.Utilities;
 import org.das2.system.RequestProcessor;
 import org.das2.util.LoggerManager;
 import org.das2.util.filesystem.FileSystem;
@@ -42,9 +37,6 @@ import org.das2.util.filesystem.Glob;
 import org.das2.util.monitor.NullProgressMonitor;
 import org.das2.util.monitor.ProgressMonitor;
 import org.autoplot.aggregator.AggregatingDataSourceFactory;
-import org.das2.qds.DDataSet;
-import org.das2.qds.DataSetUtil;
-import org.das2.qds.JoinDataSet;
 import org.das2.qds.QDataSet;
 import org.das2.qds.SemanticOps;
 import org.das2.qds.WritableDataSet;
@@ -230,6 +222,8 @@ public class Util {
             rds= result.getDataSet(monitor);  //TODO nasty kludge, just try reading again...
         }
         
+        if ( rds==null ) return null;
+
         if ( tsb!=null ) {
             if ( !Schemes.isTimeSeries(rds) ) {
                 logger.fine("trim data to timerange");
@@ -237,7 +231,6 @@ public class Util {
             }
         }
         
-        if ( rds==null ) return null;
         rds= ensureWritable(rds);
         return rds;
     }
@@ -643,10 +636,16 @@ public class Util {
     /**
      * return true if the file exists.  
      * This is introduced to avoid imports of java.io.File.
-     * @param file
-     * @return 
+     * @param file file or local file Autoplot URI
+     * @return true if the file exists.
+     * //TODO: this could support remote file systems
      */
     public static boolean fileExists( String file ) {
+        if ( file.startsWith("file:") ) {
+            file= file.substring(5);
+        } else {
+            
+        }
         return new File(file).exists();
     }
     
@@ -655,8 +654,14 @@ public class Util {
      * This is introduced to avoid imports of java.io.File.
      * @param file the file or directory.
      * @return true if the file can be read.
+     * //TODO: this could support remote file systems
      */
     public static boolean fileCanRead( String file ) {
+        if ( file.startsWith("file:") ) {
+            file= file.substring(5);
+        } else {
+            
+        }
         return new File(file).canRead();
     }
     

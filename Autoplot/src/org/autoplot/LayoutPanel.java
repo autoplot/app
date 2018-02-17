@@ -338,24 +338,24 @@ public class LayoutPanel extends javax.swing.JPanel {
         contextMenus.put( canvasLayoutPanel1, plotActionsMenu );
         contextMenus.put( dataSourceList, dataSourceActionsMenu );
 
-        JPopupMenu panelContextMenu = new JPopupMenu();
+        JPopupMenu plotElementContextMenu = new JPopupMenu();
 
         item = new JMenuItem(new AbstractAction("Edit Plot Element Properties") {
             @Override
             public void actionPerformed(ActionEvent e) {
                 org.das2.util.LoggerManager.logGuiEvent(e);                
-                Object[] os= plotElementListComponent.getSelectedValues();
+                List<PlotElement> os= plotElementListComponent.getSelectedValuesList();
                 PlotElement p= (PlotElement)plotElementListComponent.getSelectedValue();
                 PropertyEditor edit;
-                switch (os.length) {
+                switch (os.size()) {
                     case 0:
                         return;
                     case 1:
                         edit = new PropertyEditor(p);
                         break;
                     default:
-                        PlotElement[] peers= new PlotElement[os.length];
-                        for ( int i=0; i<os.length; i++ ) peers[i]= (PlotElement)os[i];
+                        PlotElement[] peers= new PlotElement[os.size()];
+                        os.toArray(peers);
                         edit= PropertyEditor.createPeersEditor( p, peers );
                         break;
                 }
@@ -363,23 +363,23 @@ public class LayoutPanel extends javax.swing.JPanel {
             }
         });
         item.setToolTipText("edit the plot element or elements");
-        panelContextMenu.add(item);
+        plotElementContextMenu.add(item);
 
         item = new JMenuItem(new AbstractAction("Edit Plot Element Style Properties") {
             @Override
             public void actionPerformed(ActionEvent e) {
                 org.das2.util.LoggerManager.logGuiEvent(e);                                
-                Object[] os= plotElementListComponent.getSelectedValues();
+                List<PlotElement> os= plotElementListComponent.getSelectedValuesList();
                 PlotElement p= (PlotElement)plotElementListComponent.getSelectedValue();
                 PropertyEditor edit;
-                if ( os.length==1 ) {
+                if ( os.size()==1 ) {
                     org.das2.util.LoggerManager.logGuiEvent(e);
                     PlotStylePanel.StylePanel editorPanel= getStylePanel( p.getRenderType() );
                     editorPanel.doElementBindings(p);
                     AutoplotUtil.showMessageDialog( LayoutPanel.this, editorPanel, p.getRenderType() + " Style", JOptionPane.OK_OPTION );
-                } else if ( os.length>1 ) {
-                    PlotElementStyle[] peers= new PlotElementStyle[os.length];
-                    for ( int i=0; i<os.length; i++ ) peers[i]= ((PlotElement)os[i]).getStyle();
+                } else if ( os.size()>1 ) {
+                    PlotElementStyle[] peers= new PlotElementStyle[os.size()];
+                    for ( int i=0; i<os.size(); i++ ) peers[i]= (os.get(i)).getStyle();
                     edit= PropertyEditor.createPeersEditor( p.getStyle(), peers );
                     edit.showDialog(LayoutPanel.this);
                 }
@@ -387,13 +387,13 @@ public class LayoutPanel extends javax.swing.JPanel {
         });
 
         item.setToolTipText("edit the style of plot element or elements");
-        panelContextMenu.add(item);
+        plotElementContextMenu.add(item);
 
         item = new JMenuItem(new AbstractAction("Delete Plot Element") {
             @Override
             public void actionPerformed(ActionEvent e) {
                 org.das2.util.LoggerManager.logGuiEvent(e);                
-                Object[] os= plotElementListComponent.getSelectedValues();
+                List<PlotElement> os= plotElementListComponent.getSelectedValuesList();
                 for ( Object o : os ) {
                     PlotElement element = (PlotElement) o;
                     dom.getController().deletePlotElement(element);
@@ -401,14 +401,14 @@ public class LayoutPanel extends javax.swing.JPanel {
                 
             }
         });
-        panelContextMenu.add(item);
+        plotElementContextMenu.add(item);
         
         item = new JMenuItem(new AbstractAction("Move Plot Element Above Others") {
             @Override
             public void actionPerformed(ActionEvent e) {
                 org.das2.util.LoggerManager.logGuiEvent(e);     
                 List<PlotElement> pes= new ArrayList<>();
-                Object[] os= plotElementListComponent.getSelectedValues();
+                List<PlotElement> os= plotElementListComponent.getSelectedValuesList();
                 for ( Object o : os ) {
                     PlotElement element = (PlotElement) o;
                     pes.add(element);
@@ -420,10 +420,19 @@ public class LayoutPanel extends javax.swing.JPanel {
                 
             }
         });
-        panelContextMenu.add(item);
+        plotElementContextMenu.add(item);
         
+        item = new JMenuItem(new AbstractAction("Blur Focus") {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                org.das2.util.LoggerManager.logGuiEvent(e);                
+                dom.getController().setPlotElement(null);
+                plotElementListComponent.setSelectedIndices(new int[0]);
+            }
+        });
+        plotElementContextMenu.add(item);
 
-        contextMenus.put( plotElementListComponent, panelContextMenu );
+        contextMenus.put(plotElementListComponent, plotElementContextMenu );
         contextMenus.put( bindingListComponent, bindingActionsMenu );
 
     }
@@ -431,7 +440,7 @@ public class LayoutPanel extends javax.swing.JPanel {
         @Override
         public void valueChanged(ListSelectionEvent e) {
             if ( plotElementListComponent.getValueIsAdjusting() ) return;
-            if (plotElementListComponent.getSelectedValues().length == 1) {
+            if (plotElementListComponent.getSelectedValuesList().size() == 1) {
                 if ( ! dom.getController().isValueAdjusting() ) {
                     Object o= plotElementListComponent.getSelectedValue();
                     if ( !(o instanceof PlotElement ) ) {
@@ -1281,6 +1290,9 @@ public class LayoutPanel extends javax.swing.JPanel {
                     }
                     bottomTopPlots[1].setTitle(t);
                     bottomTopPlots[0].getXaxis().setDrawTickLabels(true);
+                    row.setTop( row.getTop().replaceAll( "(.*)\\+([\\d\\.]+)em(.*)","$1+0.5em" ) );
+                    row.setBottom( row.getBottom().replaceAll( "(.*)\\-([\\d\\.]+)em","$1-0.5em" ) );
+                    
                 }
 
             } finally {
@@ -1328,7 +1340,9 @@ public class LayoutPanel extends javax.swing.JPanel {
                 double[] d2= DasDevicePosition.parseLayoutStr( r.getBottom() );
                 d2[0]= d1[0] + ( d2[0]-d1[0] ) * 1.25;
                 r.setBottom( DasDevicePosition.formatFormatStr(d2) );
-            } catch ( ParseException ex ) {}
+            } catch ( ParseException ex ) {
+                logger.info("ParseException ignored");
+            }
         }
 
         if ( dom.getOptions().isAutolayout() ) org.autoplot.dom.DomOps.newCanvasLayout(dom);
@@ -1359,7 +1373,9 @@ public class LayoutPanel extends javax.swing.JPanel {
                 emMaxBottom= Math.max( emMaxBottom, d2[1] );
                 emMaxTop= Math.max( emMaxTop, d2[1] );
                 n= n+1;
-            } catch ( ParseException ex ) {}
+            } catch ( ParseException ex ) {
+                logger.info("ParseException ignored");
+            }
         }
 
         size= size / n;
@@ -1396,7 +1412,9 @@ public class LayoutPanel extends javax.swing.JPanel {
                 double[] d2= DasDevicePosition.parseLayoutStr( r.getBottom() );
                 d2[0]= d1[0] + ( d2[0]-d1[0] ) * 0.80;
                 r.setBottom( DasDevicePosition.formatFormatStr(d2) );
-            } catch ( ParseException ex ) {}
+            } catch ( ParseException ex ) {
+                logger.info("ParseException ignored");
+            }
         }
 
         if ( dom.getOptions().isAutolayout() ) org.autoplot.dom.DomOps.newCanvasLayout(dom);

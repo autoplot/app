@@ -23,6 +23,7 @@ import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
 import java.awt.Dimension;
+import java.awt.FlowLayout;
 import java.awt.Frame;
 import java.awt.Toolkit;
 import java.awt.Window;
@@ -70,6 +71,7 @@ import javax.swing.ButtonGroup;
 import javax.swing.Icon;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
+import javax.swing.JCheckBox;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
@@ -616,16 +618,34 @@ public final class PngWalkTool extends javax.swing.JPanel {
             JOptionPane.showMessageDialog( parent, "<html>Unexpected error when downloading file<br>" + ssrc+"<br><br>"+ex.toString() );
             return;
         }
-
+        
         JFileChooser chooser= new JFileChooser( srecent );
+        
+        JPanel accessoryPanel= new JPanel();
+        accessoryPanel.setLayout( new BoxLayout(accessoryPanel,BoxLayout.Y_AXIS) );
+        JCheckBox r60= new JCheckBox( "Reduce to 60%" );
+        accessoryPanel.add(r60);
+        
         chooser.setMultiSelectionEnabled(false);
+        chooser.setAccessory(accessoryPanel);
         chooser.setSelectedFile( new File( chooser.getCurrentDirectory(), src.getName() ) );
         int r= chooser.showSaveDialog(parent);
         if ( r==JFileChooser.APPROVE_OPTION ) {
             prefs.put( PngWalkTool.PREF_RECENT, chooser.getSelectedFile().getParent() );
             try {
-                if ( ! org.autoplot.Util.copyFile( src, chooser.getSelectedFile()) ) {
-                    JOptionPane.showMessageDialog( parent, "<html>Unable to save image to: <br>" + chooser.getSelectedFile() );
+                if ( r60.isSelected() ) {
+                    BufferedImage im= ImageIO.read(src);
+                    int size= (int)Math.sqrt( im.getWidth()*im.getWidth() + im.getHeight()*im.getHeight() );
+                    im= ImageResize.getScaledInstance( im, size*60/100 );
+                    String ext= chooser.getSelectedFile().toString();
+                    int i= ext.lastIndexOf(".");
+                    ext= ext.substring(i+1);
+                    ImageIO.write( im, ext, chooser.getSelectedFile() );
+                            
+                } else {
+                    if ( ! org.autoplot.Util.copyFile( src, chooser.getSelectedFile()) ) {
+                        JOptionPane.showMessageDialog( parent, "<html>Unable to save image to: <br>" + chooser.getSelectedFile() );
+                    }
                 }
             } catch (IOException ex) {
                 JOptionPane.showMessageDialog( parent, "<html>Unable to save image to: <br>" + chooser.getSelectedFile()+"<br><br>"+ex.toString() );
@@ -968,7 +988,7 @@ public final class PngWalkTool extends javax.swing.JPanel {
         result.add( optionsMenu );
 
         final JMenu toolsMenu= new JMenu("Tools");
-        final JMenuItem writePdf= new JMenuItem( new AbstractAction( "Write to PDF" ) {
+        final JMenuItem writePdf= new JMenuItem( new AbstractAction( "Write to PDF..." ) {
             @Override
             public void actionPerformed(ActionEvent e) {
                 LoggerManager.logGuiEvent(e);        
@@ -979,7 +999,7 @@ public final class PngWalkTool extends javax.swing.JPanel {
         toolsMenu.add( writePdf );
         result.add( toolsMenu );
 
-        final JMenuItem writeGif= new JMenuItem( new AbstractAction( "Write to Animated GIF" ) {
+        final JMenuItem writeGif= new JMenuItem( new AbstractAction( "Write to Animated GIF..." ) {
             @Override
             public void actionPerformed(ActionEvent e) {
                 LoggerManager.logGuiEvent(e);        
@@ -989,14 +1009,14 @@ public final class PngWalkTool extends javax.swing.JPanel {
         writeGif.setToolTipText("Write the visible images to an animated GIF file.");
         toolsMenu.add( writeGif );
 
-        final JMenuItem writeHtml= new JMenuItem( new AbstractAction( "Write to HTML" ) {
+        final JMenuItem writeHtml= new JMenuItem( new AbstractAction( "Write to HTML..." ) {
             @Override
             public void actionPerformed(ActionEvent e) {
                 LoggerManager.logGuiEvent(e);        
                 tool.writeHtml();
             }
         });
-        writeHtml.setToolTipText("Write the visible images to an animated GIF file.");
+        writeHtml.setToolTipText("Write the visible images to an HTML file.");
         toolsMenu.add( writeHtml );
         
         result.add( toolsMenu );
@@ -1272,7 +1292,6 @@ public final class PngWalkTool extends javax.swing.JPanel {
         try {
             seq= new WalkImageSequence( surl );
             String tr= params.get("timerange");
-            if ( tr==null ) params.get("timeRange");
             
             if ( tr!=null ) {
                 try {
@@ -1691,7 +1710,7 @@ public final class PngWalkTool extends javax.swing.JPanel {
     
     /**
      * add a component that will get property change events and should respond
-     * to property changes.  This gives Ivar a way he can connect actions to
+     * to property changes.  This allows scientists a way to connect actions to
      * the PNGWalk tool.
      * @param c null or a smallish JComponent that should be about the size of a button.
      * @param p null or the listener for the selected file and timerange.
@@ -1779,14 +1798,15 @@ public final class PngWalkTool extends javax.swing.JPanel {
     
     /**
      * provide a method for setting the QCStatus externally.
-     * @param text
-     * @param status 
+     * @param text message annotating the status change or commenting on status.
+     * @param status the status
      */
     public void setQCStatus( String text, QualityControlRecord.Status status ) {
         if ( this.qcPanel==null ) {
             throw new IllegalArgumentException("QC Panel must be started");
         }
         this.qcPanel.setStatus(text, status);
+        this.repaint();
     }
 
     /** This method is called from within the constructor to
@@ -2126,7 +2146,7 @@ public final class PngWalkTool extends javax.swing.JPanel {
 
     /**
      * provide means for scripts to add component to develop new applications.
-     * @return 
+     * @return the TearoffTabbedPane used.
      */
     public TearoffTabbedPane getTabs() {
         return tabs;
@@ -2144,37 +2164,62 @@ public final class PngWalkTool extends javax.swing.JPanel {
     
     private void writeToHtmlImmediately( ProgressMonitor monitor, File f, String summary ) throws FileNotFoundException {
             
-        for ( int i= 0; i<this.seq.size(); i++ ) {
-                
-            BufferedImage im= this.seq.imageAt(i).getImage();
-            while ( im==null ) {
-                try {
-                    Thread.sleep(100);
-                } catch ( InterruptedException ex ) {
-                    throw new RuntimeException(ex);
-                }
-                im = this.seq.imageAt(i).getImage();
-            }
+        monitor.setTaskSize( this.seq.size() );
+        monitor.started();
+        
+        URI base;
+        if ( this.seq.getQCFolder()!=null ) {
+            base= this.seq.getQCFolder();
+        } else {
+            int splitIndex=-1;
+            if ( splitIndex==-1 ) splitIndex= WalkUtil.splitIndex( seq.getTemplate() );
             try {
-                String n= this.seq.getQCFolder().relativize(this.seq.imageAt(i).getUri()).getPath();
-                ImageIO.write( im, "png", new File( f, n ) );
-                File qcFile= new File( this.seq.imageAt(i).getUri().getPath() + ".ok" );
-                if ( qcFile.exists() ) {
-                    FileUtil.fileCopy( qcFile, new File( f, n+".ok" ) );
-                }
-                qcFile= new File( this.seq.imageAt(i).getUri().getPath() + ".problem" );
-                if ( qcFile.exists() ) {
-                    FileUtil.fileCopy( qcFile, new File( f, n+".problem" ) );
-                }
-            } catch (IOException ex) {
-                Logger.getLogger(PngWalkTool.class.getName()).log(Level.SEVERE, null, ex);
+                base= new URI( this.seq.getTemplate().substring(0,splitIndex) );
+            } catch (URISyntaxException ex) {
+                throw new RuntimeException(ex);
             }
+        }
+        
+        try {
+            for ( int i= 0; i<this.seq.size(); i++ ) {
+                monitor.setTaskProgress(i);
+                if ( monitor.isCancelled() ) break;
+
+                BufferedImage im= this.seq.imageAt(i).getImage();
+                while ( im==null ) {
+                    try {
+                        Thread.sleep(100);
+                    } catch ( InterruptedException ex ) {
+                        throw new RuntimeException(ex);
+                    }
+                    im = this.seq.imageAt(i).getImage();
+                }
+                try {
+                    String n;
+                    n= base.relativize( this.seq.imageAt(i).getUri() ).getPath();
+                    ImageIO.write( im, "png", new File( f, n ) );
+                    File qcFile= new File( this.seq.imageAt(i).getUri().getPath() + ".ok" );
+                    if ( qcFile.exists() ) {
+                        FileUtil.fileCopy( qcFile, new File( f, n+".ok" ) );
+                    }
+                    qcFile= new File( this.seq.imageAt(i).getUri().getPath() + ".problem" );
+                    if ( qcFile.exists() ) {
+                        FileUtil.fileCopy( qcFile, new File( f, n+".problem" ) );
+                    }
+                } catch (IOException ex) {
+                    logger.log(Level.SEVERE, null, ex);
+                }
+            }
+        } finally {
+            monitor.finished();
         }
         
         URL url= PngWalkTool.class.getResource("makeTutorialHtml.jy");
         final ProgressMonitor mon= DasProgressPanel.createFramed(SwingUtilities.getWindowAncestor(this),"write HTML");
         Map<String,String> params= new HashMap<>();
-        params.put("dir",f.toString());
+        params.put("dir",base.toString());
+        params.put("qconly","true");
+        params.put("outdir",f.toString());
         params.put("name",""); //TODO: what should this be?
         params.put("summary",summary);
         try {
@@ -2192,28 +2237,25 @@ public final class PngWalkTool extends javax.swing.JPanel {
      */
     public void writeHtml() {
         JFileChooser choose= new JFileChooser();
+        
+        Preferences prefs= Preferences.userNodeForPackage(PngWalkTool.class);
+        String fname= prefs.get( "writeToHtml", "/tmp/pngwalk/" );
+        
         choose.setFileSelectionMode(JFileChooser.DIRECTORIES_ONLY);
-        choose.setSelectedFile( new File("/tmp/pngwalk/") );
+        choose.setSelectedFile( new File(fname) );
         
-        JPanel p= new JPanel();
-        p.setLayout( new BoxLayout(p,BoxLayout.Y_AXIS) );
+        final HtmlOutputOptions hoo= new HtmlOutputOptions();
+
+        choose.setAccessory(hoo);
         
-        final JTextField ta= new JTextField();
-        ta.setMaximumSize( new Dimension( 1000, 30 ) );
-        ta.setMinimumSize( new Dimension( 100, 30 ) );
-        p.add(new JLabel("Title:"));
-        p.add(ta);
-        p.add(Box.createGlue());
-        
-        choose.setAccessory(p);
-        
-        if ( choose.showSaveDialog(navMenu)==JFileChooser.APPROVE_OPTION ) {
+        if ( choose.showSaveDialog(PngWalkTool.this)==JFileChooser.APPROVE_OPTION ) {
             final File f= choose.getSelectedFile();
-            final ProgressMonitor mon= DasProgressPanel.createFramed(SwingUtilities.getWindowAncestor(this),"write pdf");
+            prefs.put( "writeToHtml", f.toString() );
+            final ProgressMonitor mon= DasProgressPanel.createFramed(SwingUtilities.getWindowAncestor(this),"write html");
             Runnable run= new Runnable() {
                 public void run() {
                     try {
-                        writeToHtmlImmediately( mon , f, ta.getText() );
+                        writeToHtmlImmediately( mon , f, hoo.getTitle() );
                     } catch (FileNotFoundException ex) {
                         logger.log(Level.SEVERE, null, ex);
                     }                    
@@ -2309,15 +2351,31 @@ public final class PngWalkTool extends javax.swing.JPanel {
      */
     public void writePdf() {
         JFileChooser choose= new JFileChooser();
-        choose.setSelectedFile( new File("/tmp/pngwalk.pdf") );
-        if ( choose.showSaveDialog(navMenu)==JFileChooser.APPROVE_OPTION ) {
+
+        Preferences prefs= Preferences.userNodeForPackage(PngWalkTool.class);
+        String fname= prefs.get( "writeToPdf", "/tmp/pngwalk.pdf" );
+        
+        choose.setSelectedFile( new File(fname) );
+        if ( choose.showSaveDialog(PngWalkTool.this)==JFileChooser.APPROVE_OPTION ) {
             final File f= choose.getSelectedFile();
+            prefs.put( "writeToPdf", f.toString() );
             final ProgressMonitor mon= DasProgressPanel.createFramed(SwingUtilities.getWindowAncestor(this),"write pdf");
             Runnable run= new Runnable() {
                 public void run() {
                     try {
                         writeToPdfImmediately( mon , f );
-                        JOptionPane.showMessageDialog(parentWindow,"wrote file "+f);
+                        final JPanel panel= new javax.swing.JPanel();
+                        panel.setLayout( new BoxLayout(panel,BoxLayout.Y_AXIS ));
+                        panel.add( new javax.swing.JLabel("wrote file "+f) );
+                        JButton b= new JButton("Open in Browser");
+                        b.addActionListener(new ActionListener() {
+                            @Override
+                            public void actionPerformed(ActionEvent e) {
+                                AutoplotUtil.openBrowser(f.toURI().toString());
+                            }
+                        });  
+                        panel.add( b );
+                        JOptionPane.showMessageDialog( PngWalkTool.this,panel );
                     } catch (FileNotFoundException ex) {
                         logger.log(Level.SEVERE, null, ex);
                     }                    
@@ -2439,9 +2497,16 @@ public final class PngWalkTool extends javax.swing.JPanel {
         }
     }
         
+    /** 
+     * Write the displayed images to an animated gif.
+     */
     public void writeAnimatedGif() {
         JFileChooser choose= new JFileChooser();
-        choose.setSelectedFile( new File("/tmp/pngwalk.gif") );
+        
+        Preferences prefs= Preferences.userNodeForPackage(PngWalkTool.class);
+        String fname= prefs.get( "writeToGif", "/tmp/pngwalk.gif" );
+        
+        choose.setSelectedFile( new File(fname) );
         final String[] opts= new String[] { "10ms", "200ms", "400ms", "800ms", "realTime", "secondPerDay" };
         JPanel p= new JPanel();
         p.setLayout( new BoxLayout(p,BoxLayout.Y_AXIS) );
@@ -2454,15 +2519,27 @@ public final class PngWalkTool extends javax.swing.JPanel {
         p.add(Box.createGlue());
         
         choose.setAccessory(p);
-        if ( choose.showSaveDialog(navMenu)==JFileChooser.APPROVE_OPTION ) {
+        if ( choose.showSaveDialog(PngWalkTool.this)==JFileChooser.APPROVE_OPTION ) {
             final File f= choose.getSelectedFile();
+            prefs.put( "writeToGif", f.toString() );
             final ProgressMonitor mon= DasProgressPanel.createFramed(SwingUtilities.getWindowAncestor(this),"write animated gif");
             final String fdelay= (String)jo.getSelectedItem();
             Runnable run= new Runnable() {
                 public void run() {
                     try {
                         writeToAnimatedGifImmediately( mon , f, fdelay );
-                        JOptionPane.showMessageDialog(parentWindow,"wrote file "+f);
+                        JPanel panel= new javax.swing.JPanel();
+                        panel.setLayout( new BoxLayout(panel,BoxLayout.Y_AXIS ));
+                        panel.add( new javax.swing.JLabel("wrote file "+f) );
+                        JButton b= new JButton("Open in Browser");
+                        b.addActionListener(new ActionListener() {
+                            @Override
+                            public void actionPerformed(ActionEvent e) {
+                                AutoplotUtil.openBrowser(f.toURI().toString());
+                            }
+                        });   
+                        panel.add( b );
+                        JOptionPane.showMessageDialog( PngWalkTool.this,panel );
                     } catch (FileNotFoundException ex) {
                         Logger.getLogger(PngWalkTool.class.getName()).log(Level.SEVERE, null, ex);
                     }                    

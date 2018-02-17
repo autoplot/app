@@ -350,18 +350,24 @@ public class TimeDatumFormatter extends DatumFormatter {
                 case '{': 
                     int i1= ss[i].indexOf('}');
                     String spec= ss[i].substring(1,i1);
-                    if ( spec.equals("milli") ) {
-                       int digitCount = 3;
-                       int fieldIndex = addScaleFactor(digitCount);
-                       appendSubFormat(frmtString, fieldIndex, digitCount);
-                       ss[i]= ss[i].substring(i1);
-                    } else if ( spec.equals("micro") ) {
-                       int digitCount = 3;
-                       int fieldIndex = addScaleFactor(6);
-                       appendSubFormat(frmtString, fieldIndex, digitCount);
-                       ss[i]= ss[i].substring(i1);
-                    } else {
-                        throw new ParseException("bad format code: {"+spec+"}",offset);
+                    switch (spec) {
+                        case "milli": {
+                            int digitCount = 3;
+                            int fieldIndex = addScaleFactor(digitCount);
+                            appendSubFormat(frmtString, fieldIndex, digitCount);
+                            ss[i]= ss[i].substring(i1);
+                            break;
+                        }
+                        case "micro": {
+                            throw new IllegalArgumentException("This is no longer supported, use subsec");
+                            //int digitCount = 3;
+                            //int fieldIndex = addScaleFactor(6);
+                            //appendSubFormat(frmtString, fieldIndex, digitCount);
+                            //ss[i]= ss[i].substring(i1);
+                            //break;
+                        }
+                        default:
+                            throw new ParseException("bad format code: {"+spec+"}",offset);
                     }
                     break;
                 default: throw new ParseException("bad format code: "+c,offset);
@@ -403,7 +409,7 @@ public class TimeDatumFormatter extends DatumFormatter {
      * @return [ year, month, dayOfMonth, dayOfYear, hour, minute, seconds, ... ]
      */
     private Number[] timeStructToArray(TimeUtil.TimeStruct ts) {
-        int secondsFieldCount = scaleSeconds == null ? 0 : scaleSeconds.length;
+        int secondsFieldCount = scaleSeconds == null ? 0 : scaleSeconds.length; 
         int maxScale = scaleSeconds == null ? 10 : (int)Math.pow(10, max(scaleSeconds));
         int fieldCount = TIMESTAMP_FIELD_COUNT + secondsFieldCount;
         Number[] array = new Number[fieldCount];
@@ -412,7 +418,14 @@ public class TimeDatumFormatter extends DatumFormatter {
         ts.seconds= seconds;
         ts.micros= (int)(fracSeconds * 1e6);
 
+        if ( ts.micros<0 ) {
+            ts.seconds--;
+            ts.micros+=1000000;
+        }
         TimeUtil.carry(ts);
+        if ( scaleSeconds!=null && scaleSeconds[0]<7 ) {
+            ts= TimeUtil.roundNDigits(ts,scaleSeconds[0]);
+        }
 
         array[YEAR_FIELD_INDEX] = ts.year;
         array[MONTH_FIELD_INDEX] = ts.month;

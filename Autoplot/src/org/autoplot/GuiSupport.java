@@ -8,16 +8,6 @@
  */
 package org.autoplot;
 
-import org.autoplot.ImportVapDialog;
-import org.autoplot.TcaElementDialog;
-import org.autoplot.PdfOptionsPanel;
-import org.autoplot.ExportDataPanel;
-import org.autoplot.AutoplotUtil;
-import org.autoplot.RenderType;
-import org.autoplot.ImportBookmarksGui;
-import org.autoplot.ApplicationModel;
-import org.autoplot.AddAnnotationDialog;
-import org.autoplot.AddPlotElementDialog;
 import org.autoplot.renderer.ColorScatterStylePanel;
 import org.autoplot.renderer.SpectrogramStylePanel;
 import org.autoplot.renderer.SeriesStylePanel;
@@ -153,6 +143,7 @@ import org.autoplot.datasource.URISplit;
 import org.autoplot.datasource.WindowManager;
 import org.autoplot.datasource.capability.TimeSeriesBrowse;
 import org.autoplot.renderer.BoundsStylePanel;
+import org.autoplot.renderer.InternalStylePanel;
 import org.xml.sax.SAXException;
 
 /**
@@ -257,6 +248,9 @@ public class GuiSupport {
             case pitchAngleDistribution:
                 editorPanel= new PitchAngleDistributionStylePanel( );
                 break;
+            case polar:
+                editorPanel= new ColorScatterStylePanel( );
+                break;
             case hugeScatter:
                 editorPanel= new HugeScatterStylePanel( );
                 break;
@@ -265,6 +259,9 @@ public class GuiSupport {
                 break;
             case contour:
                 editorPanel= new ContourStylePanel( );
+                break;
+            case internal:
+                editorPanel= new InternalStylePanel( );
                 break;
             case bounds:
                 editorPanel= new BoundsStylePanel( );
@@ -1114,7 +1111,7 @@ public class GuiSupport {
                                             go.setOutputStream(out);
                                             if ( pdecor.manualWidthCB.isSelected() ) {
                                                 double mant= Double.parseDouble(pdecor.widthTF.getText()); //TODO>: FormattedTextField
-                                                String units= (String)pdecor.unitsCB.getSelectedItem();
+                                                String units= (String)pdecor.unitsComboBox.getSelectedItem();
                                                 switch (units) {
                                                     case "inches":
                                                         mant= mant * 72;
@@ -1125,9 +1122,15 @@ public class GuiSupport {
                                                     default:
                                                         throw new IllegalArgumentException("implementation error: "+units);
                                                 }
-                                                double aspect= canvas.getHeight() / (double)canvas.getWidth();
+                                                // mant is the number of pixels width.
+                                                
+                                                int ppi= (int)( canvas.getWidth() * 72 / mant );
+                                                go.setPixelsPerInch( ppi );
                                                 go.setSize( canvas.getWidth(), canvas.getHeight() );
-                                                canvas.prepareForOutput( (int)mant, (int)(mant*aspect));
+                                            } else if ( pdecor.getPixelsPerInch().length()>0 ) {
+                                                int ppi= Integer.parseInt(pdecor.getPixelsPerInch());
+                                                go.setPixelsPerInch(ppi);
+                                                go.setSize( canvas.getWidth(), canvas.getHeight() );
                                             } else {
                                                 go.setSize( canvas.getWidth(), canvas.getHeight() );
                                             }
@@ -1402,12 +1405,14 @@ public class GuiSupport {
 
     /**
      * support for binding two plot axes.
+     * Set log first since we might tweak range accordingly.
      * @param dstPlot
      * @param plot
      * @param axis
+     * @param props null is old range and log.  list of properties to bind
      * @throws java.lang.IllegalArgumentException
      */
-    private static void bindToPlotPeer( final ApplicationController controller, Plot dstPlot, Plot plot, Axis axis) throws IllegalArgumentException {
+    private static void bindToPlotPeer( final ApplicationController controller, Plot dstPlot, Plot plot, Axis axis, String[] props) throws IllegalArgumentException {
         Axis targetAxis;
         if (plot.getXaxis() == axis) {
             targetAxis = dstPlot.getXaxis();
@@ -1418,10 +1423,14 @@ public class GuiSupport {
         } else {
             throw new IllegalArgumentException("this axis and plot don't go together");
         }
-        axis.setLog( targetAxis.isLog() );
-        axis.setRange( targetAxis.getRange() );
-        controller.bind(targetAxis, Axis.PROP_LOG, axis, Axis.PROP_LOG); //set log first since we might tweak range accordingly.
-        controller.bind(targetAxis, Axis.PROP_RANGE, axis, Axis.PROP_RANGE);
+        if ( props==null ) {
+            axis.setLog( targetAxis.isLog() );
+            axis.setRange( targetAxis.getRange() );
+            props= new String[] { Axis.PROP_LOG, Axis.PROP_RANGE };
+        }
+        for ( String p : props ) {
+            controller.bind(targetAxis, p, axis, p ); 
+        }
     }
 
 
@@ -1486,7 +1495,7 @@ public class GuiSupport {
             bindingMenu.add(item);
         }
 
-        item = new JMenuItem(new AbstractAction("Add Binding to Plot Above") {
+        item = new JMenuItem(new AbstractAction("Bind Range to Plot Above") {
             @Override
             public void actionPerformed(ActionEvent e) {
                 org.das2.util.LoggerManager.logGuiEvent(e);                
@@ -1494,12 +1503,12 @@ public class GuiSupport {
                 if (dstPlot == null) {
                     controller.setStatus("warning: no plot above");
                 } else {
-                    bindToPlotPeer(controller,dstPlot, plot, axis);
+                    bindToPlotPeer(controller,dstPlot, plot, axis, null );
                 }
             }
         });
         bindingMenu.add(item);
-        item = new JMenuItem(new AbstractAction("Add Binding to Plot Below") {
+        item = new JMenuItem(new AbstractAction("Bind Range to Plot Below") {
             @Override
             public void actionPerformed(ActionEvent e) {
                 org.das2.util.LoggerManager.logGuiEvent(e);                
@@ -1507,12 +1516,12 @@ public class GuiSupport {
                 if (dstPlot == null) {
                     controller.setStatus("warning: no plot below");
                 } else {
-                    bindToPlotPeer(controller,dstPlot, plot, axis);
+                    bindToPlotPeer(controller,dstPlot, plot, axis, null );
                 }
             }
         });
         bindingMenu.add(item);
-        item = new JMenuItem(new AbstractAction("Add Binding to Plot to the Right") {
+        item = new JMenuItem(new AbstractAction("Bind Range to Plot to the Right") {
             @Override
             public void actionPerformed(ActionEvent e) {
                 org.das2.util.LoggerManager.logGuiEvent(e);                
@@ -1520,12 +1529,12 @@ public class GuiSupport {
                 if (dstPlot == null) {
                     controller.setStatus("warning: no plot to the right");
                 } else {
-                    bindToPlotPeer(controller,dstPlot, plot, axis);
+                    bindToPlotPeer(controller,dstPlot, plot, axis, null );
                 }
             }
         });
         bindingMenu.add(item);
-        item = new JMenuItem(new AbstractAction("Add Binding to Plot to the Left") {
+        item = new JMenuItem(new AbstractAction("Bind Range to Plot to the Left") {
             @Override
             public void actionPerformed(ActionEvent e) {
                 org.das2.util.LoggerManager.logGuiEvent(e);                
@@ -1533,12 +1542,39 @@ public class GuiSupport {
                 if (dstPlot == null) {
                     controller.setStatus("warning: no plot to the left");
                 } else {
-                    bindToPlotPeer(controller,dstPlot, plot, axis);
+                    bindToPlotPeer(controller,dstPlot, plot, axis, null );
                 }
             }
         });
         bindingMenu.add(item);
 
+        item = new JMenuItem(new AbstractAction("Bind Scale to Plot Above") {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                org.das2.util.LoggerManager.logGuiEvent(e);                
+                Plot dstPlot = controller.getPlotAbove(plot);
+                if (dstPlot == null) {
+                    controller.setStatus("warning: no plot above");
+                } else {
+                    bindToPlotPeer(controller,dstPlot, plot, axis, new String[] { Axis.PROP_LOG, Axis.PROP_SCALE });
+                }
+            }
+        });
+        bindingMenu.add(item);
+        item = new JMenuItem(new AbstractAction("Bind Scale to Plot Below") {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                org.das2.util.LoggerManager.logGuiEvent(e);                
+                Plot dstPlot = controller.getPlotBelow(plot);
+                if (dstPlot == null) {
+                    controller.setStatus("warning: no plot below");
+                } else {
+                    bindToPlotPeer(controller,dstPlot, plot, axis, new String[] { Axis.PROP_LOG, Axis.PROP_SCALE });
+                }
+            }
+        });
+        bindingMenu.add(item);
+        
         item = new JMenuItem(new AbstractAction("Remove Bindings") {
             @Override            
             public void actionPerformed(ActionEvent e) {
@@ -1644,7 +1680,7 @@ public class GuiSupport {
             public void actionPerformed(ActionEvent e) {
                 org.das2.util.LoggerManager.logGuiEvent(e);                
                 Units u= dasAxis.getUnits();
-                Units[] uu= u.getConvertableUnits();
+                Units[] uu= u.getConvertibleUnits();
 
                 Component p= (JFrame)SwingUtilities.getWindowAncestor( controller.getDasCanvas().getParent());
                 
@@ -1668,9 +1704,7 @@ public class GuiSupport {
                                 p1,
                                 "Reset axis units", JOptionPane.OK_CANCEL_OPTION ) ) {
                         Units nu= (Units)cb.getSelectedItem();
-                        DatumRange oldRange= dasAxis.getDatumRange();
-                        DatumRange newRange= DatumRange.newDatumRange( oldRange.min().doubleValue(nu), oldRange.max().doubleValue(nu), nu );
-                        dasAxis.resetRange(newRange);
+                        axis.getController().resetAxisUnits(nu);
                     }
                 }
             }            
@@ -2186,7 +2220,7 @@ public class GuiSupport {
             public String checkFont(Font c) {
                 Object font= PdfGraphicsOutput.ttfFromNameInteractive(c);
                 if ( font==PdfGraphicsOutput.READING_FONTS ) {
-                    return null;
+                    return "Checking which fonts are embeddable...";
                 } else if ( font!=null ) {
                     return "PDF okay";
                 } else {                    

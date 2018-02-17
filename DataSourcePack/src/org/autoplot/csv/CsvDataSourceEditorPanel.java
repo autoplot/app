@@ -19,7 +19,6 @@ import java.io.InputStreamReader;
 import java.io.Reader;
 import java.net.URISyntaxException;
 import java.net.URL;
-import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -31,7 +30,6 @@ import java.util.logging.Logger;
 import javax.swing.AbstractAction;
 import javax.swing.Action;
 import javax.swing.DefaultComboBoxModel;
-import javax.swing.JList;
 import javax.swing.JPanel;
 import javax.swing.JToggleButton;
 import javax.swing.event.ListSelectionEvent;
@@ -48,6 +46,8 @@ import org.autoplot.datasource.DataSourceEditorPanel;
 import org.autoplot.datasource.URISplit;
 import org.autoplot.datasource.ui.TableRowHeader;
 import org.das2.qds.util.AsciiParser;
+import org.das2.qds.util.AsciiParser.RecordParser;
+import org.das2.qds.util.DataSetBuilder;
 
 /**
  *
@@ -390,8 +390,33 @@ public class CsvDataSourceEditorPanel extends javax.swing.JPanel implements Data
             model.setFile(file);
             jTable1.setDefaultRenderer(Object.class, new ColSpanTableCellRenderer());
             AsciiParser.DelimParser p= parser.guessSkipAndDelimParser( file.getAbsolutePath() );
-            model.setRecParser(p);
-            
+            if ( p==null ) {
+                model.setRecParser( new RecordParser() {
+                    @Override
+                    public boolean tryParseRecord(String line, int irec, DataSetBuilder builder) {
+                        return false;
+                    }
+
+                    @Override
+                    public int fieldCount() {
+                        return 1;
+                    }
+
+                    @Override
+                    public int fieldCount(String line) {
+                        return 1;
+                    }
+
+                    @Override
+                    public boolean splitRecord(String line, String[] fields) {
+                        fields[0]= line;
+                        return true;
+                    }
+                });
+            } else {
+                model.setRecParser(p);
+            }
+                    
         } catch (IOException ex) {
             Logger.getLogger(CsvDataSourceEditorPanel.class.getName()).log(Level.SEVERE, null, ex);
         }
@@ -440,16 +465,16 @@ public class CsvDataSourceEditorPanel extends javax.swing.JPanel implements Data
             char delimiter= sdelimiter.charAt(0);
             if ( delimiter!=',' ) reader.setDelimiter(delimiter);
             
-            reader.readHeaders();
-            int ncol= reader.getHeaderCount();
+            String[] columnHeaders = CsvDataSourceFactory.getColumnHeaders(reader);
+            
+            int ncol= columnHeaders.length;
+            if ( ncol>jTable1.getModel().getColumnCount() ) {
+                ncol= jTable1.getModel().getColumnCount();
+            }
 
             headers= new ArrayList<>();
             
-            headers.addAll( Arrays.asList(reader.getHeaders()) );
-
-            for ( int i=0; i<headers.size(); i++ ) {
-                headers.set( i, "field"+i );
-            }
+            headers.addAll( Arrays.asList(columnHeaders) );
 
             columns= new HashMap<>();
             for ( int i=0; i<ncol; i++ ) {

@@ -147,6 +147,9 @@ public class JythonUtil {
             }
         }
 
+        interp.set( "dataset", new DatasetCommand() );
+        interp.set( "monitor", new NullProgressMonitor() );
+        
 //        try {
 //            System.err.println("java2-> "+interp.eval("java") );
 //        } catch ( Exception ex ) {
@@ -562,6 +565,9 @@ public class JythonUtil {
              String ss= c.func.toString();
              for ( String s: okay ) {
                 if ( ss.contains(s) ) klugdyOkay= true;
+             }
+             if ( ss.startsWith("Attribute[") ) {
+                 klugdyOkay= true; // parms.keys()
              }
              if ( klugdyOkay==false ) {
                  if ( ss.contains("TimeUtil") && ss.contains("now")  ) {
@@ -1455,6 +1461,7 @@ public class JythonUtil {
      * code is run to support completions.
      * @param eval string containing the entire program.
      * @return the script as a string, with side-effects removed.
+     * @deprecated this should not be used, because newer codes use the fully-implemented Jython parser.
      */
     public static String removeSideEffects( String eval ) {
         BufferedReader reader= new BufferedReader( new StringReader( eval ) ) ;

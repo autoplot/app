@@ -28,6 +28,7 @@ import java.awt.Color;
 import java.awt.Dialog;
 import java.awt.Frame;
 import java.awt.Graphics;
+import java.awt.Graphics2D;
 import java.awt.GraphicsDevice;
 import java.awt.GraphicsEnvironment;
 import java.awt.Point;
@@ -63,6 +64,7 @@ import org.das2.graph.DasCanvas;
 import org.das2.graph.DasColumn;
 import org.das2.graph.DasPlot;
 import org.das2.graph.DasRow;
+import org.das2.graph.Painter;
 import org.das2.graph.Renderer;
 import org.das2.graph.SpectrogramRenderer;
 import org.das2.graph.SymbolLineRenderer;
@@ -72,6 +74,7 @@ import org.das2.qds.DataSetOps;
 import org.das2.qds.DataSetUtil;
 import org.das2.qds.QDataSet;
 import org.das2.qds.SemanticOps;
+import org.das2.qds.ops.Ops;
 
 
 public class VerticalSpectrogramSlicer implements DataPointSelectionListener {
@@ -100,16 +103,16 @@ public class VerticalSpectrogramSlicer implements DataPointSelectionListener {
         this.parentPlot= parent;
     }
 
-    private void initPlot() {
+    private void initPlot( DasCanvas canvas ) {
         DasAxis xAxis= sourceXAxis.createAttachedAxis( DasAxis.HORIZONTAL );
         DasAxis yAxis = sourceZAxis.createAttachedAxis(DasAxis.VERTICAL);
         myPlot= new DasPlot( xAxis, yAxis);
         renderer= new SymbolLineRenderer();
         renderer.setAntiAliased(true);
         myPlot.addRenderer(renderer);
-        myPlot.addRenderer( new Renderer() {
+        canvas.addTopDecorator( new Painter() {
             @Override
-            public void render(Graphics g, DasAxis xAxis, DasAxis yAxis, ProgressMonitor mon) {
+            public void paint(Graphics2D g) {
                 int ix= (int)myPlot.getXAxis().transform(yValue);
                 DasRow row= myPlot.getRow();
                 int iy0= (int)row.getDMinimum();
@@ -219,12 +222,12 @@ public class VerticalSpectrogramSlicer implements DataPointSelectionListener {
     
     /** This method should ONLY be called by the AWT event thread */
     private void createPopup() {
-        if ( myPlot==null ) {
-            initPlot();
-        }
         int width = parentPlot.getCanvas().getWidth() / 2;
         int height = parentPlot.getCanvas().getHeight() / 2;
         final DasCanvas canvas = new DasCanvas(width, height);
+        if ( myPlot==null ) {
+            initPlot(canvas);
+        }
         DasRow row = new DasRow(canvas, null, 0, 1.0, 3, -5, 0, 0 );
         DasColumn column = new DasColumn(canvas, null, 0, 1.0, 7, -3, 0, 0 );
         canvas.add( myPlot, row, column);
@@ -391,7 +394,13 @@ public class VerticalSpectrogramSlicer implements DataPointSelectionListener {
         
             QDataSet xds = SemanticOps.xtagsDataSet(tds1);
             ix = org.das2.qds.DataSetUtil.closestIndex(xds, xValue);
-            xx= DataSetUtil.asDatum(xds.slice(ix));
+            xds= xds.slice(ix);
+            if ( xds.rank()==0 ) {
+                xx= DataSetUtil.asDatum(xds);
+            } else {
+                xx= DataSetUtil.asDatum(xds.slice(0));
+                xx= xx.add( DataSetUtil.asDatum( Ops.divide( Ops.subtract( xds.slice(1), xds.slice(0) ), 2 ) ) );
+            }
             sliceDataSet = tds1.slice(ix);
         }
         

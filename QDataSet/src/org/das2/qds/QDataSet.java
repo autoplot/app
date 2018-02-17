@@ -133,6 +133,7 @@ public interface QDataSet {
      * type QDataSet, a correlated plane of data.  An additional dependent DataSet that is correlated by the first index.  
      * Note "0" is just a count, and does not refer to the 0th index.  All correlated datasets must be 
      * correlated by the first index.  TODO: what about two rank 2 datasets?  
+     * Note that if PLANE_i==null then PLANE_(i+1) must also be null.
      */
     public final static String PLANE_0= "PLANE_0";
 
@@ -266,8 +267,8 @@ public interface QDataSet {
     public final static String WEIGHTS="WEIGHTS";
 
     /**
-     * Boolean, Boolean.TRUE if dataset is monotonically increasing.  Data may 
-     * only contain invalid values at the beginning or end, and may contain repeated 
+     * Boolean, Boolean.TRUE if dataset is monotonically increasing, and the data is rank 1.
+     * Data may only contain invalid values at the beginning or end, and may contain repeated 
      * values.  Generally this will be used with tags datasets. 
      */
     public final static String MONOTONIC="MONOTONIC";
@@ -373,8 +374,8 @@ public interface QDataSet {
      * values are an RGB image, a rank 3 dataset [w,h,3] or [w,h,4].  The
      * "3" should be R,G, and B channels, and when "4" is used, ARGB is the
      * default.  There can be a DEPEND_2 that is a QDataSet with ordinal data,
-     * specifying the channels like so Ops.labels("r","b","g","a") or
-     * Ops.labels("a","b","g","r").  Only bgr or rgb models are supported
+     * specifying the channels like so Ops.labelsDataSet("r","b","g","a") or
+     * Ops.labelsDataSet("a","b","g","r").  Only bgr or rgb models are supported
      * in the RGBImageRenderer, but future versions could support other color
      * models.
      */
@@ -416,7 +417,7 @@ public interface QDataSet {
     public final static String METADATA="METADATA";
 
     /**
-     * a scheme for the metadata tree, such as ISTP or SPASE.  This should identify
+     * String, a scheme for the metadata tree, such as ISTP or SPASE.  This should identify
      * a node's type when the node is present, but should not require that the node
      * be present.  When a required node is missing, this should be treated as if
      * none of the metadata is available.  This logic is to support aggregating
@@ -529,7 +530,7 @@ public interface QDataSet {
     /**
      * the minimum length of each of the waveform packets in a rank 2 waveform dataset.
      */
-    public static int MIN_WAVEFORM_LENGTH=64;
+    public static int MIN_WAVEFORM_LENGTH=32;
     
     /**
      * the fill value often used in codes.

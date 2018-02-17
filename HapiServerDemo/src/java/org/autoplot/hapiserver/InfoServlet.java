@@ -67,6 +67,12 @@ public class InfoServlet extends HttpServlet {
             }
         }
         
+        if ( o.has("modificationDate") ) { // allow modification date to be "lasthour"
+            String modificationDate= o.getString("modificationDate");
+            DatumRange tr= DatumRangeUtil.parseTimeRangeValid( modificationDate+"/now" );
+            o.put( "modificationDate", tr.min().toString() );
+        }
+        
         // support local features like "now-P3D", which are not hapi features.
         if ( o.has("startDate") && o.has("stopDate") ) { 
             String startDate= o.getString("startDate");
@@ -96,7 +102,7 @@ public class InfoServlet extends HttpServlet {
         status.put( "message", "OK request successful");
                 
         o.put( "status", status );
-        o.put("__infoVersion__", "1.0" );
+        o.put("__infoVersion__", "20171201.1" );
         return o;
 
     }
@@ -118,9 +124,16 @@ public class InfoServlet extends HttpServlet {
             
         String id= request.getParameter("id");
         
+        logger.log(Level.FINE, "info request for {0}", id);
+        
         if ( id==null ) throw new ServletException("required parameter 'id' is missing from request");
         
         response.setContentType("application/json;charset=UTF-8");        
+        
+        response.setHeader("Access-Control-Allow-Origin", "* " );
+        response.setHeader("Access-Control-Allow-Methods","GET" );
+        response.setHeader("Access-Control-Allow-Headers","Content-Type" );
+        
         try (PrintWriter out = response.getWriter()) {
            try {
                JSONObject jo= getInfo( id );

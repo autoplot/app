@@ -26,6 +26,8 @@ import java.io.OutputStream;
 import java.io.PushbackInputStream;
 import java.lang.reflect.InvocationTargetException;
 import java.text.ParseException;
+import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -141,10 +143,14 @@ public class StatePersistence {
             logger.log(Level.SEVERE, ex.getMessage(), ex);
             throw new RuntimeException(ex);
         }
+        
+        VapScheme currentScheme= new Vap1_09Scheme();
 
         VapScheme scheme;
         if ( sscheme.equals("") ) {
-            scheme= new Vap1_07Scheme();
+            scheme= new Vap1_08Scheme();
+        } else if ( sscheme.equals("1.09") ) {
+            scheme= new Vap1_09Scheme();
         } else if ( sscheme.equals("1.08") ) {
             scheme= new Vap1_08Scheme();
         } else if ( sscheme.equals("1.07") ) {
@@ -154,7 +160,20 @@ public class StatePersistence {
         } else {
             throw new IllegalArgumentException("output scheme not supported: "+sscheme);
         }
-        Element element = SerializeUtil.getDomElement( document, (DomNode)state, scheme );
+        
+        if ( scheme.getId().equals( "1.08" ) && currentScheme.getId().equals("1.09") ) {
+            logger.warning("removing all bindings to scale to support old versions");
+            Application app= (Application)state;
+            List<BindingModel> newbms= new ArrayList( Arrays.asList( app.getBindings() ) );
+            for ( int i=app.getBindings().length-1; i>=0; i-- ) {
+                if ( app.getBindings(i).getSrcProperty().equals("scale") ||app.getBindings(i).getDstProperty().equals("scale") )  {
+                    newbms.remove(i);
+                }
+            }
+            app.setBindings(newbms.toArray( new BindingModel[newbms.size()] ) );
+        }
+        
+        Element element = SerializeUtil.getDomElement( document, (DomNode)state, scheme, true );
 
         Element vap= document.createElement("vap");
         vap.appendChild(element);
@@ -163,15 +182,19 @@ public class StatePersistence {
 
         document.appendChild(vap);
 
-        if ( sscheme.length()>0 ) {
+        if ( !scheme.getId().equals( currentScheme.getId() ) ) {
             try {
-                doConvert( document, scheme.getId(), sscheme );
+                //doConvert( document, scheme.getId(), currentScheme.getId() );
+                logger.log(Level.INFO, "converting from vap version {0} to {1}", new Object[]{currentScheme.getId(), scheme.getId()});
+                doConvert( document, currentScheme.getId(), scheme.getId() );
             } catch ( TransformerException ex ) {
                 logger.log( Level.WARNING, ex.getMessage(), ex );
                 IOException result= new IOException("Unable to export to version "+sscheme,ex );
                 throw result;
             }
         }
+        
+        
 
         writeDocument( out, document);
     }
@@ -395,16 +418,24 @@ public class StatePersistence {
         for ( BindingModel m: state.getBindings() ) {
             Object src= DomUtil.getElementById( state, m.getSrcId() );
             if ( src==null ) {
-                System.err.println("invalid binding:" + m + ", unable to find source node: "+ m.getSrcId() );
+                logger.log(Level.WARNING, "invalid binding:{0}, unable to find source node: {1}", new Object[]{m, m.getSrcId()});
                 continue;
             }
             Object dst= DomUtil.getElementById( state, m.getDstId() );
             if ( dst==null ) {
-                System.err.println("invalid binding:" + m + ", unable to find destination node: "+ m.getDstId() );
+                logger.log(Level.WARNING, "invalid binding:{0}, unable to find destination node: {1}", new Object[]{m, m.getDstId()});
                 continue;
             }
             BeanProperty srcProp= BeanProperty.create(m.getSrcProperty());
             BeanProperty dstProp= BeanProperty.create(m.getDstProperty());
+            if ( !srcProp.isReadable(src) ) {
+                logger.log(Level.WARNING, "invalid binding:{0}, unable to find source property: {1}", new Object[]{m, m.getSrcProperty() });
+                continue;
+            }
+            if ( !dstProp.isReadable(dst) ) {
+                logger.log(Level.WARNING, "invalid binding:{0}, unable to find destination property: {1}", new Object[]{m, m.getSrcProperty() });
+                continue;
+            }            
             Object srcVal= srcProp.getValue(src);
             Object dstVal= dstProp.getValue(dst);
             if ( srcVal==null && dstVal==null ) {
@@ -478,8 +509,7 @@ public class StatePersistence {
                     }
                     Object val;
                     try {
-                        // pop off any single-quotes used to delimit strings in URLs.
-                        if ( c==String.class && sval.length()>1 && sval.startsWith("'") && sval.endsWith("'") ) {
+                        if ( sval.length()>1 && sval.startsWith("'") && sval.endsWith("'") ) {
                             sval= sval.substring(1,sval.length()-1);
                         }
                         val = sd.parse(sd.typeId(c), sval);
@@ -563,7 +593,7 @@ public class StatePersistence {
                         // downgrade future versions.  This is experimental, but slightly
                         // better than not allowing use.  This is intended to smooth
                         // transitions to new autoplot versions.  Future vap files
-                        // that use future features will not load properly.
+                        // that use future features will not load properly, but may still be usable.
                         for ( double s=srcVersion; s>dstVersion; s=s-0.01 ) {
                             Source src = new DOMSource( root );
 
@@ -574,8 +604,9 @@ public class StatePersistence {
                             fname= fname.replaceAll("\\.","_") + ".xsl";
 
                             InputStream xsl = StatePersistence.class.getResourceAsStream(fname);
-                            if ( xsl==null ) {
-                                throw new RuntimeException("Unable to find "+fname+".");
+                            if ( xsl==null ) {                            
+                                // Unable to find the file 'fname'
+                                throw new RuntimeException("Unable to read .vap file version "+String.format("%.2f",srcVersion)+".  Upgrade to a newer version of Autoplot.");
                             }
                             TransformerFactory factory = TransformerFactory.newInstance();
                             Transformer tr = factory.newTransformer(new StreamSource(xsl));
@@ -616,22 +647,27 @@ public class StatePersistence {
             }
 
             if ( domVersion.compareTo("1.00")<0 ) { // make all ranging automatic
-                Plot[] pp= state.getPlots();        // file:///home/jbf/ct/hudson/vap/Cluster1_HEEA_slices.vap motivated
-                for ( int i=0; i<pp.length; i++ ) {
-                    pp[i].getXaxis().setAutoRange(true);
-                    pp[i].getYaxis().setAutoRange(true);
-                    pp[i].getZaxis().setAutoRange(true);
+                // file:///home/jbf/ct/hudson/vap/Cluster1_HEEA_slices.vap motivated
+                for (Plot pp1 : state.getPlots() ) {
+                    pp1.getXaxis().setAutoRange(true);
+                    pp1.getYaxis().setAutoRange(true);
+                    pp1.getZaxis().setAutoRange(true);
                 }
             } else if ( domVersion.compareTo("1.07")<=0 ) {
                 // file:///home/jbf/ct/hudson/vap/ninePanels.vap shows that old vap files often didn't have the autorange cleared
                 // when changes were made.  Now the code properly handles these, so autorange needs to be turned off when loading vaps.
                 // This showed that 1.06 files would have this problem too: file:/home/jbf/ct/hudson/vap/cassini_kp.vap
-                logger.fine("clearing autorange property when loading vap file");
-                Plot[] pp= state.getPlots();        
-                for ( int i=0; i<pp.length; i++ ) {
-                    pp[i].getXaxis().setAutoRange(false);
-                    pp[i].getYaxis().setAutoRange(false);
-                    pp[i].getZaxis().setAutoRange(false);
+                logger.fine("clearing autorange property when loading vap file");   
+                for (Plot pp1 : state.getPlots() ) {
+                    if (!pp1.getXaxis().getAutoRangeHints().trim().isEmpty()) {
+                        pp1.getXaxis().setAutoRange(false);
+                    }
+                    if (!pp1.getYaxis().getAutoRangeHints().trim().isEmpty()) {
+                        pp1.getYaxis().setAutoRange(false);
+                    }
+                    if (!pp1.getZaxis().getAutoRangeHints().trim().isEmpty()) {
+                        pp1.getZaxis().setAutoRange(false);
+                    }
                 }
             }
             

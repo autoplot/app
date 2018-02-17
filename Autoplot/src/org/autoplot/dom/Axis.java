@@ -4,6 +4,7 @@ package org.autoplot.dom;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Level;
+import org.das2.datum.Datum;
 import org.das2.datum.DatumRange;
 //import org.das2.datum.DatumRangeUtil;
 import org.das2.datum.Units;
@@ -61,6 +62,20 @@ public class Axis extends DomNode {
         propertyChangeSupport.firePropertyChange(PROP_RANGE, oldRange, range);
     }
     
+    private Datum scale = Units.dimensionless.createDatum(.1);
+
+    public static final String PROP_SCALE = "scale";
+
+    public Datum getScale() {
+        return scale;
+    }
+
+    public void setScale(Datum scale) {
+        Datum oldScale = this.scale;
+        this.scale = scale;
+        propertyChangeSupport.firePropertyChange(PROP_SCALE, oldScale, scale);
+    }
+
     protected boolean log = false;
     public static final String PROP_LOG = "log";
 
@@ -261,6 +276,7 @@ public class Axis extends DomNode {
     @Override
     public void syncTo(DomNode n) {
         super.syncTo(n);
+        if ( !( n instanceof Axis ) ) throw new IllegalArgumentException("node should be an Axis");                        
         if ( controller!=null ) {
             controller.syncTo(n,new ArrayList<String>());
         } else {
@@ -271,6 +287,7 @@ public class Axis extends DomNode {
     @Override
     public void syncTo(DomNode n, List<String> exclude ) {
         super.syncTo(n,exclude);
+        if ( !( n instanceof Axis ) ) throw new IllegalArgumentException("node should be an Axis");                        
         if ( controller!=null ) {
             controller.syncTo(n,exclude);
         } else {
@@ -279,6 +296,7 @@ public class Axis extends DomNode {
             if ( !exclude.contains( PROP_FLIPPED ) ) this.setFlipped(that.isFlipped());
             if ( !exclude.contains( PROP_OPPOSITE ) ) this.setOpposite(that.isOpposite());
             if ( !exclude.contains( PROP_RANGE ) ) this.setRange(that.getRange());
+            if ( !exclude.contains( PROP_SCALE ) ) this.setScale(that.getScale());
             if ( !exclude.contains( PROP_LABEL ) ) this.setLabel(that.getLabel());
             if ( !exclude.contains( PROP_FONTSIZE ) ) this.setFontSize(that.getFontSize());
             if ( !exclude.contains( PROP_AUTORANGE ) ) this.setAutoRange(that.isAutoRange());
@@ -290,7 +308,7 @@ public class Axis extends DomNode {
     }
 
     @Override
-    public DomNode copy() {
+    public DomNode copy() {        
         Axis result= (Axis) super.copy();
         result.controller= null;
         return result;
@@ -300,6 +318,7 @@ public class Axis extends DomNode {
 
     @Override
     public List<Diff> diffs(DomNode node) {
+        if ( !( node instanceof Axis ) ) throw new IllegalArgumentException("node should be an Axis");                                
         Axis that = (Axis) node;
         List<Diff> result = new ArrayList<>();
         boolean b;
@@ -312,6 +331,8 @@ public class Axis extends DomNode {
         if ( !b ) result.add( new PropertyChangeDiff( PROP_OPPOSITE, that.opposite, this.opposite) );
         b=  that.range.equals(this.range) ;
         if ( !b ) result.add(new PropertyChangeDiff( PROP_RANGE, that.range , this.range ) );
+        b=  that.scale.equals(this.scale) ;
+        if ( !b ) result.add(new PropertyChangeDiff( PROP_SCALE, that.scale , this.scale ) );
         b=  that.label.equals(this.label) ;
         if ( !b ) result.add(new PropertyChangeDiff( PROP_LABEL, that.label , this.label ) );
         b=  that.fontSize.equals(this.fontSize) ;

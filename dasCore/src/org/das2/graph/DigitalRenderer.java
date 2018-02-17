@@ -326,7 +326,7 @@ public class DigitalRenderer extends Renderer {
         } else if ( xMono ) {
             DatumRange visibleRange = xAxis.getDatumRange();
             DasPlot parent= getParent();
-            if (parent.isOverSize()) {
+            if ( parent!=null && parent.isOverSize()) {
                 Rectangle plotBounds = parent.getUpdateImageBounds();
                 if ( plotBounds!=null ) {
                     visibleRange = new DatumRange(xAxis.invTransform(plotBounds.x), xAxis.invTransform(plotBounds.x + plotBounds.width));
@@ -428,7 +428,12 @@ public class DigitalRenderer extends Renderer {
         return form;
     }
     
-    private char typeForFormat(String form) {
+    /**
+     * return the data type needed for the format.  For example, %d needs integers, %f needs floats.
+     * @param form
+     * @return 'x' 'X' 'd' 'o' 'c' 'C' or 'f'
+     */
+    public static char typeForFormat(String form) {
         int i= form.indexOf("%");
         if ( i==-1 ) {
             throw new IllegalArgumentException("format should contain %");
@@ -460,7 +465,7 @@ public class DigitalRenderer extends Renderer {
      * @param type 'x' 'X' 'd' 'o' 'c' 'C' or 'f'
      * @return the string
      */
-    private String formatDatum( String form, Datum d, char type) {
+    public static String formatDatum( String form, Datum d, char type) {
 
         String s;
         boolean isLongs=false;
@@ -706,7 +711,7 @@ public class DigitalRenderer extends Renderer {
                 s= formatDatum(form, d, type );
                 iy = (int) yAxis.transform(y);
                 if ( plotSymbol!=DefaultPlotSymbol.NONE ) {
-                    plotSymbol.draw( g, ix,  yAxis.transform(y), 3, FillStyle.STYLE_FILL );
+                    plotSymbol.draw( g, ix,  yAxis.transform(y), 3, FillStyle.STYLE_SOLID );
                 }
                 iy= iy + ha;
                 
@@ -718,7 +723,7 @@ public class DigitalRenderer extends Renderer {
                 } else {
                     iy = (int) yAxis.transform(y);
                     if ( plotSymbol!=DefaultPlotSymbol.NONE ) {
-                        plotSymbol.draw( g, ix,  yAxis.transform(y), 3, FillStyle.STYLE_FILL );
+                        plotSymbol.draw( g, ix,  yAxis.transform(y), 3, FillStyle.STYLE_SOLID );
                     }
                     iy= iy + ha;
                 }

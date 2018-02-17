@@ -5,22 +5,6 @@
  */
 package org.autoplot;
 
-import org.autoplot.PersistentStateSupport;
-import org.autoplot.GettingStartedPanel;
-import org.autoplot.EventsListToolUtil;
-import org.autoplot.MoveCacheDialog;
-import org.autoplot.AutoplotUtil;
-import org.autoplot.OptionsDialog;
-import org.autoplot.RecentUrisDialog;
-import org.autoplot.UriTimeRangeToggleButton;
-import org.autoplot.BatchMaster;
-import org.autoplot.Util;
-import org.autoplot.DataPanel;
-import org.autoplot.CanvasSizePanel;
-import org.autoplot.ApplicationModel;
-import org.autoplot.AppManager;
-import org.autoplot.AggregateUrisDialog;
-import org.autoplot.APSplash;
 import java.awt.event.MouseEvent;
 import java.net.URISyntaxException;
 import javax.swing.Icon;
@@ -43,6 +27,7 @@ import java.awt.BorderLayout;
 import java.awt.CardLayout;
 import java.awt.Color;
 import java.awt.Component;
+import java.awt.Cursor;
 import java.awt.Dimension;
 import java.awt.Event;
 import java.awt.EventQueue;
@@ -72,12 +57,8 @@ import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.io.StringReader;
-import java.lang.management.ManagementFactory;
 import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-import java.net.InetAddress;
 import java.net.Socket;
 import java.net.URI;
 import java.net.URL;
@@ -183,6 +164,7 @@ import org.das2.qds.DataSetAnnotations;
 import org.das2.qds.QDataSet;
 import org.autoplot.datasource.AutoplotSettings;
 import org.autoplot.datasource.DataSetSelector;
+import org.autoplot.datasource.DataSetSelectorSupport;
 import org.autoplot.datasource.DataSetURI;
 import org.autoplot.datasource.DataSourceFactory;
 import org.autoplot.datasource.HtmlResponseIOException;
@@ -194,6 +176,7 @@ import org.autoplot.datasource.WindowManager;
 import org.das2.qds.filters.AddFilterDialog;
 import org.das2.qds.filters.FiltersChainPanel;
 import org.autoplot.jythonsupport.ui.DataMashUp;
+import org.autoplot.jythonsupport.ui.EditorTextPane;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.xml.sax.SAXException;
@@ -901,6 +884,27 @@ public final class AutoplotUI extends javax.swing.JFrame {
                 }
             }
         });
+        
+        dataSetSelector.registerBrowseTrigger( ".*\\.vap(\\?.*)?", new AbstractAction("vap file" ){
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                String surl= dataSetSelector.getValue();
+                URISplit split= URISplit.parse(surl);
+                if ( split.path.startsWith("file:") ) {
+                    String result= DataSetSelectorSupport.browseLocalVap( dataSetSelector, surl);
+                    if (result != null ) {
+                        dataSetSelector.setValue(result);
+                        dataSetSelector.maybePlot(false);
+                    }
+                    setCursor( Cursor.getDefaultCursor() );
+                    return;
+                } else {
+                    JOptionPane.showMessageDialog( AutoplotUI.this, "Unable to inspect .vap files" );
+                    setCursor( Cursor.getDefaultCursor() );
+                    return;
+                }
+            }
+        });
 
         URISplit.setOtherSchemes( Arrays.asList( "script","pngwalk", "bookmarks","vapfile") );
 
@@ -1272,6 +1276,7 @@ public final class AutoplotUI extends javax.swing.JFrame {
                     write.append("# red green blue colorName\n");
                     write.append("# 255 255 255 white\n");
                     write.append("# 100% 100% 100% white\n");
+                    write.append("# 0x8B0000 DarkRed\n");
                     write.close();
                 }
             }
@@ -1432,6 +1437,21 @@ APSplash.checkTime("init 270");
                 @Override
                 public void run() {
                     initLogConsole();
+//                    logConsole.addPropertyChangeListener( LogConsole.PROP_LOGSTATUS, new PropertyChangeListener() {
+//                        @Override
+//                        public void propertyChange(PropertyChangeEvent evt) {
+//                            if ( evt.getNewValue().equals( Level.WARNING ) ) {
+//                                lbl.setBackground( Color.RED );
+//                                lbl.setIcon(WARNING_ICON);
+//                            } else if ( evt.getNewValue().equals( Level.INFO ) ) {
+//                                lbl.setBackground( Color.DARK_GRAY );
+//                                lbl.setIcon(BUSY_ICON);
+//                            } else {
+//                                lbl.setBackground( lblBackground0 );
+//                                lbl.setIcon(null);
+//                            }
+//                        }
+//                    });
                     logConsolePanel.setViewportView( logConsole );
                 }
             }  );
@@ -1512,6 +1532,18 @@ APSplash.checkTime("init 270");
                 }
             }
         } );
+        
+        applicationModel.dom.getController().addPropertyChangeListener( ApplicationController.PROP_PLOT_ELEMENT, new PropertyChangeListener() {
+            @Override
+            public void propertyChange(PropertyChangeEvent evt) {
+                if ( evt.getNewValue()==null ) {
+                    String current= AutoplotUI.this.stateSupport.getCurrentFile();
+                    if ( current!=null ) {
+                        AutoplotUI.this.dataSetSelector.setValue(current.toString());
+                    }
+                }
+            }
+        });
         
 /*        applicationModel.dom.addPropertyChangeListener(new PropertyChangeListener() {
             public void propertyChange(PropertyChangeEvent evt) {
@@ -2598,7 +2630,6 @@ APSplash.checkTime("init 52.9");
     private void initComponents() {
         bindingGroup = new org.jdesktop.beansbinding.BindingGroup();
 
-        persistentStateSupport1 = new org.das2.dasml.PersistentStateSupport();
         addressBarButtonGroup = new javax.swing.ButtonGroup();
         statusLabel = new javax.swing.JLabel();
         tabbedPanelContainer = new javax.swing.JPanel();
@@ -3524,105 +3555,12 @@ APSplash.checkTime("init 52.9");
     private void aboutAutoplotMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_aboutAutoplotMenuItemActionPerformed
         org.das2.util.LoggerManager.logGuiEvent(evt);
         try {
-            StringBuilder buffy = new StringBuilder();
 
-            buffy.append("<html>\n");
-            URL aboutHtml = AutoplotUI.class.getResource("aboutAutoplot.html");
-
-            if ( aboutHtml!=null ) {
-                try (BufferedReader reader = new BufferedReader(new InputStreamReader(aboutHtml.openStream()))) {
-                    String s = reader.readLine();
-                    while (s != null) {
-                        buffy.append(s);
-                        s = reader.readLine();
-                    }
-                }
-            } 
-
-            buffy.append("<h2>Build Information:</h2>");
-            buffy.append("<ul>");
-            buffy.append("<li>release tag: ").append(AboutUtil.getReleaseTag()).append("</li>");
-            buffy.append("<li>build url: ").append(AboutUtil.getJenkinsURL()).append("</li>");
-            
-            List<String> bi = Util.getBuildInfos();
-            for (String ss : bi) {
-                buffy.append("    <li>").append(ss);
-            }
-            buffy.append("</ul>" );
-
-            buffy.append( "<h2>Open Source Components:</h2>");
-            buffy.append( "Autoplot uses many open-source components, such as: <br>");
-            buffy.append( "jsyntaxpane, Jython, Netbeans (Jython completion), OpenDAP, CDF, FITS, NetCDF, " 
-                    + "POI HSSF (Excel), Batik (SVG), iText (PDF), JSON, JavaCSV, JPG Metadata Extractor, das2, JDiskHog");        
-            
-            buffy.append("<h2>Runtime Information:</h2>");
-
-            String javaVersion = System.getProperty("java.version"); // applet okay
-            String arch = System.getProperty("os.arch"); // applet okay
-            java.text.DecimalFormat nf = new java.text.DecimalFormat("0.0");
-            String mem = nf.format(Runtime.getRuntime().maxMemory()   / 1000000 );
-            String tmem= nf.format(Runtime.getRuntime().totalMemory() / 1000000 );
-            String fmem= nf.format(Runtime.getRuntime().freeMemory()  / 1000000 );
-            String nmem= "???";
-            try {
-                // taken from https://svn.apache.org/repos/asf/flume/trunk/flume-ng-core/src/main/java/org/apache/flume/tools/DirectMemoryUtils.java
-                Class<?> VM = Class.forName("sun.misc.VM");
-                Method maxDirectMemory = VM.getDeclaredMethod("maxDirectMemory", new Class[0] );
-                Object result = maxDirectMemory.invoke(null, (Object[])null);
-                if (result != null && result instanceof Long) {
-                    nmem= nf.format( ((Long)result) / 1000000 );
-                }       
-            } catch ( ClassNotFoundException ex ) {
-                // do nothing, show ??? for native.
-            } catch (NoSuchMethodException | SecurityException | IllegalAccessException | IllegalArgumentException | InvocationTargetException ex) {
-                Logger.getLogger(AutoplotUI.class.getName()).log(Level.SEVERE, null, ex);
-            }
-            String pwd= new File("foo.txt").getAbsoluteFile().getParent();
-            String pid= getProcessId("???");
-            String host= InetAddress.getLocalHost().getHostName();
-            String memWarning="";
-            if ( ( Runtime.getRuntime().maxMemory() / 1000000 )<700 ) {
-                memWarning= "<li> Available RAM is low, severely limiting capabilities (<a href=\"http://autoplot.org/lowMem\">info</a>)";
-            }
-            String bits= is32bit ? "32" : "64";
-            String bitsWarning;
-            bitsWarning= is32bit ? "(<a href=\"http://autoplot.org/32bit\">severely limiting capabilities</a>)" : "(recommended)";
-            
-            String javaVersionWarning= "";
-            Pattern p= Pattern.compile("(\\d+\\.\\d+)\\.\\d+\\_(\\d+)");
-            Matcher m= p.matcher(javaVersion);
-            if ( m.matches() ) {
-                double major= Double.parseDouble( m.group(1) );
-                int minor= Integer.parseInt( m.group(2) );
-                if ( major<1.8 || ( major==1.8 && minor<102 ) ) {
-                    javaVersionWarning= "(<a href=\"http://autoplot.org/javaVersion\">limiting access to CDAWeb</a>)";
-                } else {
-                    javaVersionWarning= "(recommended)";
-                }
-            }
-            
-                
-            String aboutContent = "<ul>" +
-                "<li>Java version: " + javaVersion + " " + javaVersionWarning + 
-                memWarning +    
-                "<li>max memory (MB): " + mem + " (memory available to process)" +
-                "<li>total memory (MB): " + tmem + " (amount allocated to the process)" +
-                "<li>free memory (MB): " + fmem + " (amount available before more must be allocated)" + 
-                "<li>native memory limit (MB): " + nmem + " (amount of native memory available to the process)" +
-                "<li>arch: " + arch +
-                "<li>" + bits + " bit Java " + bitsWarning  +
-                "<li>hostname: "+ host +
-                "<li>pid: " + pid +
-                "<li>pwd: " + pwd +
-                "</ul>";
-            buffy.append( aboutContent );
-            
-            buffy.append("</html>");
-
+            String bufStr= AutoplotUtil.getAboutAutoplotHtml();
 
             JTextPane jtp= new JTextPane();
             jtp.setContentType("text/html");
-            jtp.read(new StringReader(buffy.toString()), null);
+            jtp.read(new StringReader(bufStr), null);
             jtp.setEditable(false);
 
             jtp.addHyperlinkListener( new HyperlinkListener() {
@@ -3791,7 +3729,7 @@ private void jMenuItem5ActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FI
 private void editDomMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_editDomMenuItemActionPerformed
     org.das2.util.LoggerManager.logGuiEvent(evt);
     PropertyEditor edit= new PropertyEditor(applicationModel.dom);
-    edit.showDialog(this,"DOM Properties",new ImageIcon(this.getClass().getResource("logoA16x16.png")).getImage());
+    edit.showDialog(this,"DOM Properties",new ImageIcon(this.getClass().getResource("/resources/logo16.png")).getImage());
 }//GEN-LAST:event_editDomMenuItemActionPerformed
 
 private void statusLabelMouseClicked(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_statusLabelMouseClicked
@@ -3831,11 +3769,13 @@ private void createPngWalkMenuItemActionPerformed(java.awt.event.ActionEvent evt
             try {
                 CreatePngWalk.doIt( applicationModel.dom, null );
             } catch ( IOException ex ) {
+                logger.log( Level.SEVERE, ex.getMessage(), ex );
+                ex.printStackTrace();
                 setStatus( AutoplotUI.ERROR_ICON,"Unable to create PNG Walk: " + ex.getMessage() );
                 applicationModel.showMessage( "<html>Unable to create PNG Walk:<br>"+ex.getMessage(), "PNG Walk Error", JOptionPane.WARNING_MESSAGE );
-                logger.log( Level.SEVERE, ex.getMessage(), ex );
             } catch ( ParseException | InterruptedException ex) {
                 logger.log( Level.SEVERE, ex.getMessage(), ex );
+                ex.printStackTrace();
                 throw new RuntimeException(ex);
                 // this mimics the jython behavior
             }
@@ -3989,9 +3929,6 @@ private void editOptionsActionPerformed(java.awt.event.ActionEvent evt) {//GEN-F
     if ( AutoplotUtil.showConfirmDialog( this, p, "Options", JOptionPane.OK_CANCEL_OPTION )==JOptionPane.OK_OPTION ) {
         p.copyOptions( applicationModel.dom.getOptions() );
     }
-    
-    //PropertyEditor edit= new PropertyEditor(applicationModel.dom.getOptions());
-    //edit.showDialog(this,"DOM User Options",new ImageIcon(this.getClass().getResource("logoA16x16.png")).getImage());
 }//GEN-LAST:event_editOptionsActionPerformed
 
 private void fixLayoutMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_fixLayoutMenuItemActionPerformed
@@ -4290,52 +4227,7 @@ private transient PropertyChangeListener optionsListener= new PropertyChangeList
  * @return the process id or the fallback provided by the caller.
  */
 public static String getProcessId(final String fallback) {
-    // Note: may fail in some JVM implementations
-    // therefore fallback has to be provided
-
-    // something like '<pid>@<hostname>', at least in SUN / Oracle JVMs
-    final String jvmName = ManagementFactory.getRuntimeMXBean().getName();
-    final int index = jvmName.indexOf('@');
-
-    if (index < 1) {
-        // part before '@' empty (index = 0) / '@' not found (index = -1)
-        return fallback;
-    }
-
-    try {
-        return Long.toString(Long.parseLong(jvmName.substring(0, index)));
-    } catch (NumberFormatException e) {
-        // ignore
-    }
-    return fallback;
-}
-
-private static final boolean is32bit;
-private static final String javaVersionWarning;
-
-static {
-    String s= System.getProperty("sun.arch.data.model");
-    if ( s==null ) { // GNU 1.5? 
-        s= System.getProperty("os.arch");
-        is32bit = !s.contains("64");
-    } else {
-        is32bit = s.equals("32");
-    }     
-    String javaVersion=  System.getProperty("java.version"); // applet okay
-    
-    Pattern p= Pattern.compile("(\\d+\\.\\d+)\\.\\d+\\_(\\d+)");
-    Matcher m= p.matcher(javaVersion);
-    if ( m.matches() ) {
-        double major= Double.parseDouble( m.group(1) );
-        int minor= Integer.parseInt( m.group(2) );
-        if ( major<1.8 || ( major==1.8 && minor<102 ) ) {
-            javaVersionWarning= " (oldJRE)";
-        } else {
-            javaVersionWarning= "";
-        }
-    } else {
-        javaVersionWarning= "";
-    }
+    return AutoplotUtil.getProcessId(fallback);
 }
 
 private void updateFrameTitle() {
@@ -4353,14 +4245,14 @@ private void updateFrameTitle() {
 
     final String server= rlistener==null ? "" : ( " (port="+rlistener.getPort()+")" );
     
-    final String s32bit= is32bit ? " (32bit)" : "";
+    final String s32bit= AutoplotUtil.is32bit ? " (32bit)" : "";
     
     final String theTitle;
     
     String apname= this.applicationName.length()==0 ? "" : this.applicationName + " - ";
     
     if ( suri==null ) {
-        theTitle= apname + title0 + isoffline + server + s32bit + javaVersionWarning;
+        theTitle= apname + title0 + isoffline + server + s32bit + AutoplotUtil.javaVersionWarning;
     } else {
         URISplit split= URISplit.parse(suri);
 
@@ -4530,7 +4422,7 @@ private void updateFrameTitle() {
                 }
                 String action = (String) JOptionPane.showInputDialog( ScriptContext.getViewWindow(),
                         msg,
-                        "Incorporate New URI", JOptionPane.QUESTION_MESSAGE, new javax.swing.ImageIcon(getClass().getResource("/logo64x64.png")),
+                        "Incorporate New URI", JOptionPane.QUESTION_MESSAGE, new javax.swing.ImageIcon(getClass().getResource("/resources/logo64.png")),
                         new String[] { "New Window", "Replace", "Add Plot" }, "Add Plot" );
                 if ( action!=null ) {
                     switch (action) {
@@ -5384,7 +5276,6 @@ APSplash.checkTime("init 240");
     private javax.swing.JMenu optionsMenu;
     private javax.swing.JCheckBoxMenuItem overRenderingMenuItem;
     private javax.swing.JMenuItem pasteDataSetURLMenuItem;
-    private org.das2.dasml.PersistentStateSupport persistentStateSupport1;
     private javax.swing.JMenu plotStyleMenu;
     private javax.swing.JMenuItem pngWalkMenuItem;
     private javax.swing.JMenuItem redoMenuItem;
@@ -5948,6 +5839,29 @@ APSplash.checkTime("init 240");
             new Thread( run ).start();
        }
     }
+    
+    /**
+     * access tickle timer, which triggers when things change.  This will go away!
+     * @return 
+     */
+    public TickleTimer getTickleTimer() {
+        return this.tickleTimer;
+    }
+    
+    /**
+     * access the editor for scripts, if available.  This was initially added to provide
+     * a way to experiment with setting editor colors, but might be useful
+     * for other purposes.  
+     * @return null or the editor panel
+     */
+    public EditorTextPane getScriptPanel() {
+        if ( this.scriptPanel!=null ) {
+            return this.scriptPanel.getEditorPanel();
+        } else {
+            return null;
+        }
+    }
+
 //
 //    /**
 //     * temporary to debug https://sourceforge.net/p/autoplot/bugs/1520/

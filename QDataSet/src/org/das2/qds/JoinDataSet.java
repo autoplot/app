@@ -201,13 +201,22 @@ public class JoinDataSet extends AbstractDataSet {
 
     @Override
     public Object property(String name, int i0) {
-        String sname= name + "__" + i0;
-        Object result= properties.get(sname);
+        Object result= super.property(name, i0);
         if ( result==null ) {
             if ( i0>=datasets.size() ) {
                 throw new IndexOutOfBoundsException("no dataset at index: "+i0);
             }
             return datasets.get(i0).property(name);
+        } else {
+            return result;
+        }
+    }
+    
+    @Override
+    public Object property(String name) {
+        Object result= properties.get(name);
+        if ( result==null && name.equals(QDataSet.UNITS) && datasets.size()>0 ) {
+            return datasets.get(0).property(name); // all joined datasets must have the same length.
         } else {
             return result;
         }

@@ -1,7 +1,6 @@
 
 package org.autoplot;
 
-import org.autoplot.APSplash;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -42,6 +41,8 @@ import org.das2.qds.QDataSet;
 import org.das2.qds.SemanticOps;
 import org.autoplot.datasource.DataSetURI;
 import org.autoplot.datasource.DataSource;
+import org.autoplot.datasource.DataSourceFormat;
+import org.autoplot.datasource.DataSourceRegistry;
 import org.autoplot.datasource.DataSourceUtil;
 import org.autoplot.datasource.URISplit;
 import org.autoplot.datasource.capability.TimeSeriesBrowse;
@@ -59,6 +60,9 @@ public class AutoplotDataServer {
     private static final String DEFT_OUTFILE = "-";
     private static final String FORM_D2S = "d2s";
     private static final String FORM_QDS = "qds";
+    private static final String FORM_HAPI_INFO = "hapi-info";
+    private static final String FORM_HAPI_DATA = "hapi-data";
+    private static final String FORM_HAPI_DATA_BINARY = "hapi-data-binary";
 
     private static final Logger logger= LoggerManager.getLogger("autoplot.server");
 
@@ -67,8 +71,8 @@ public class AutoplotDataServer {
      * @param timeRange the time range to send out, such as "May 2003"
      * @param suri the data source to read in.  If this has TimeSeriesBrowse, then we can stream the data.
      * @param step step size, such as "24 hr" or "3600s".  If the URI contains $H, "3600s" is used.
-     * @param stream if true, send data out the as it is read.
-     * @param format FORM_QDS, FORM_D2S
+     * @param stream if true, send data out as it is read.
+     * @param format FORM_QDS, FORM_D2S, FORM_HAPI
      * @param mon progress monitor to monitor the stream.
      * @param out 
      * @param ascii if true, use ascii types for qstreams and das2streams.
@@ -101,7 +105,7 @@ public class AutoplotDataServer {
             Datum next= first.add( Units.seconds.parse(step) );
 
             List<DatumRange> drs;
-            if ( stream && ( format.equals(FORM_D2S) || format.equals(FORM_QDS) ) ) {
+            if ( stream && ( format.equals(FORM_D2S) || format.equals(FORM_QDS) || format.equals(FORM_HAPI_DATA) || format.equals(FORM_HAPI_DATA_BINARY)) ) {
                 drs= DatumRangeUtil.generateList( outer, new DatumRange( first, next ) );
             } else {
                 // dat xls cannot stream...
@@ -243,6 +247,33 @@ public class AutoplotDataServer {
             }
             new SimpleStreamFormatter().format(ds, out, ascii );
             
+        } else if ( format.equals(FORM_HAPI_INFO) ) {
+            final DataSourceFormat dsf = DataSourceRegistry.getInstance().getFormatByExt("hapi");
+            File file= new File("/tmp/ap-hapi/foo.hapi");
+
+            dsf.formatData( file.toString()+"?id=temp", ds, new NullProgressMonitor() );
+            File infoFile= new File( "/tmp/ap-hapi/foo/info/temp.json" );
+            FileInputStream fin= new FileInputStream(infoFile);
+            DataSourceUtil.transfer( fin, out );
+
+        } else if ( format.equals(FORM_HAPI_DATA_BINARY) ) {
+            final DataSourceFormat dsf = DataSourceRegistry.getInstance().getFormatByExt("hapi");
+            File file= new File("/tmp/ap-hapi/foo.hapi");
+            
+            dsf.formatData( file.toString()+"?id=temp&format=binary", ds, new NullProgressMonitor() );
+            File binaryFile= new File( "/tmp/ap-hapi/foo/data/temp.binary" );
+            FileInputStream fin= new FileInputStream(binaryFile);
+            DataSourceUtil.transfer( fin, out );
+
+        } else if ( format.equals(FORM_HAPI_DATA) ) {
+            final DataSourceFormat dsf = DataSourceRegistry.getInstance().getFormatByExt("hapi");
+            File file= new File("/tmp/ap-hapi/foo.hapi");
+            
+            dsf.formatData( file.toString()+"?id=temp", ds, new NullProgressMonitor() );
+            File csvFile= new File( "/tmp/ap-hapi/foo/data/temp.csv" );
+            FileInputStream fin= new FileInputStream(csvFile);
+            DataSourceUtil.transfer( fin, out );
+            
         } else if ( format.equals("dat") || format.equals("xls") || format.equals("bin") ) {
             File file= File.createTempFile("autoplotDataServer", "."+format );
             
@@ -318,7 +349,7 @@ public class AutoplotDataServer {
 
         ArgumentList alm = new ArgumentList("AutoplotDataServer");
         alm.addOptionalSwitchArgument("uri", "u", "uri", "", "URI to plot");
-        alm.addOptionalSwitchArgument("format", "f", "format", "", "output format qds, d2s (default=d2s if no filename) which support streaming, or xls bin dat");
+        alm.addOptionalSwitchArgument("format", "f", "format", "", "output format qds, d2s (default=d2s if no filename) which support streaming, or xls bin dat hapi-info hapi-data hapi-data-binary");
         alm.addOptionalSwitchArgument("outfile", "o", "outfile", DEFT_OUTFILE, "output filename or -, extension implies format.");
         alm.addOptionalSwitchArgument("timeRange", "t", "timeRange", "", "timerange for TimeSeriesBrowse datasources");
         alm.addOptionalSwitchArgument("timeStep", "s", "timeStep", "86400s", "atom step size for loading and sending, default is 86400s");
@@ -386,7 +417,7 @@ public class AutoplotDataServer {
         String format = alm.getValue("format");
         String outfile = alm.getValue("outfile");
 
-        if ( format.length()>0 && !outfile.equals(DEFT_OUTFILE) ) {
+        if ( format.length()>0 && !format.startsWith("hapi") && !outfile.equals(DEFT_OUTFILE) ) {
             if ( !outfile.endsWith(format) ) {
                 System.err.println("format="+format+" doesn't match outfile extension. outfile="+outfile );
                 if ( !alm.getBooleanValue("noexit") ) System.exit(-2); else return;
@@ -398,10 +429,12 @@ public class AutoplotDataServer {
             format = FORM_D2S;
         } else if ( outfile.contains(".") ) {
             URISplit split= URISplit.parse(outfile);
-            format= split.ext;
-            if ( format==null ) {
-                split= URISplit.parse("file:///"+outfile);
+            if ( !format.startsWith("hapi") ) {
                 format= split.ext;
+                if ( format==null ) {
+                    split= URISplit.parse("file:///"+outfile);
+                    format= split.ext;
+                }
             }
         }
         if ( format.length()==0 ) { // implement default.

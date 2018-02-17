@@ -2,6 +2,8 @@
 package org.autoplot;
 
 import java.awt.Component;
+import java.awt.Dimension;
+import java.awt.Window;
 import java.awt.event.ActionEvent;
 import java.io.BufferedReader;
 import java.io.File;
@@ -25,6 +27,7 @@ import javax.swing.AbstractAction;
 import javax.swing.BoxLayout;
 import javax.swing.ComboBoxModel;
 import javax.swing.DefaultComboBoxModel;
+import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
 import javax.swing.JDialog;
@@ -32,9 +35,12 @@ import javax.swing.JFileChooser;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.JScrollPane;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
+import org.autoplot.bookmarks.Bookmark;
+import org.autoplot.datasource.DataSetSelector;
 import org.autoplot.jythonsupport.JythonRefactory;
 import org.das2.components.DasProgressPanel;
 import org.das2.datum.DatumRange;
@@ -49,6 +55,10 @@ import org.autoplot.datasource.URISplit;
 import org.autoplot.jythonsupport.JythonUtil.Param;
 import org.autoplot.jythonsupport.ui.ParametersFormPanel;
 import org.autoplot.jythonsupport.ui.Util;
+import org.das2.datum.Units;
+import org.das2.qds.DataSetUtil;
+import org.das2.qds.QDataSet;
+import org.das2.qds.ops.Ops;
 
 /**
  * Tool for running batches, generating inputs for jython scripts.
@@ -162,11 +172,13 @@ public class BatchMaster extends javax.swing.JPanel {
     @SuppressWarnings("unchecked")
     // <editor-fold defaultstate="collapsed" desc="Generated Code">//GEN-BEGIN:initComponents
     private void initComponents() {
+        bindingGroup = new org.jdesktop.beansbinding.BindingGroup();
 
         jScrollPane2 = new javax.swing.JScrollPane();
         jList2 = new javax.swing.JList<>();
         jPopupMenu1 = new javax.swing.JPopupMenu();
         jMenuItem1 = new javax.swing.JMenuItem();
+        loadUriMenuItem = new javax.swing.JMenuItem();
         timeRangesPanel = new javax.swing.JPanel();
         jLabel2 = new javax.swing.JLabel();
         timeRangeComboBox = new javax.swing.JComboBox<>();
@@ -184,6 +196,11 @@ public class BatchMaster extends javax.swing.JPanel {
         jLabel1 = new javax.swing.JLabel();
         param1NameCB = new javax.swing.JComboBox<>();
         param2NameCB = new javax.swing.JComboBox<>();
+        cancelButton = new javax.swing.JButton();
+        jButton1 = new javax.swing.JButton();
+        generateButton2 = new javax.swing.JButton();
+        writeCheckBox = new javax.swing.JCheckBox();
+        writeFilenameCB = new javax.swing.JComboBox<>();
 
         jList2.setModel(new javax.swing.AbstractListModel<String>() {
             String[] strings = { "Item 1", "Item 2", "Item 3", "Item 4", "Item 5" };
@@ -200,6 +217,15 @@ public class BatchMaster extends javax.swing.JPanel {
             }
         });
         jPopupMenu1.add(jMenuItem1);
+
+        loadUriMenuItem.setText("Load Events File...");
+        loadUriMenuItem.setToolTipText("Load a list of time ranges from an events file.");
+        loadUriMenuItem.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                loadUriMenuItemActionPerformed(evt);
+            }
+        });
+        jPopupMenu1.add(loadUriMenuItem);
 
         jLabel2.setText("Time Range:");
 
@@ -286,12 +312,45 @@ public class BatchMaster extends javax.swing.JPanel {
 
         messageLabel.setText("Load up those parameters and hit Go!");
 
-        jLabel1.setText("<html>This tool generates inputs for scripts, running through a series of inputs.  Specify the parameter name and values to assign, and optionally a second parameter.  Each value of the second parameter is run for each value of the first.  Use the inspect button to set values for any other parameters. ");
+        jLabel1.setText("<html>This tool generates inputs for scripts, running through a series of inputs.  First load the script with the green \"play\" button, then specify the parameter name and values to assign, and optionally a second parameter.  Each value of the second parameter is run for each value of the first.  Use the inspect button to set values for any other parameters. Right-click within the values areas to generate values.");
         jLabel1.setVerticalAlignment(javax.swing.SwingConstants.TOP);
 
         param1NameCB.setModel(new javax.swing.DefaultComboBoxModel<>(new String[] { " " }));
 
         param2NameCB.setModel(new javax.swing.DefaultComboBoxModel<>(new String[] { " " }));
+
+        cancelButton.setText("Cancel");
+        cancelButton.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                cancelButtonActionPerformed(evt);
+            }
+        });
+
+        jButton1.setText("Generate...");
+        jButton1.setToolTipText("Generate items for list");
+        jButton1.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                jButton1ActionPerformed(evt);
+            }
+        });
+
+        generateButton2.setText("Generate...");
+        generateButton2.setToolTipText("Generate items for list");
+        generateButton2.setEnabled(true);
+        generateButton2.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                generateButton2ActionPerformed(evt);
+            }
+        });
+
+        writeCheckBox.setText("Write:");
+        writeCheckBox.setToolTipText("After each iteration, write the file, where $x is replaced");
+
+        writeFilenameCB.setEditable(true);
+        writeFilenameCB.setModel(new javax.swing.DefaultComboBoxModel<>(new String[] { "/tmp/ap/$x.png", "/tmp/ap/$x_$x.png", "/tmp/ap/$x.pdf", "/tmp/ap/$x_$x.pdf", " " }));
+
+        org.jdesktop.beansbinding.Binding binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, writeCheckBox, org.jdesktop.beansbinding.ELProperty.create("${selected}"), writeFilenameCB, org.jdesktop.beansbinding.BeanProperty.create("enabled"));
+        bindingGroup.addBinding(binding);
 
         javax.swing.GroupLayout layout = new javax.swing.GroupLayout(this);
         this.setLayout(layout);
@@ -301,23 +360,36 @@ public class BatchMaster extends javax.swing.JPanel {
                 .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                     .addComponent(jLabel1, javax.swing.GroupLayout.Alignment.TRAILING, javax.swing.GroupLayout.PREFERRED_SIZE, 0, Short.MAX_VALUE)
                     .addGroup(javax.swing.GroupLayout.Alignment.TRAILING, layout.createSequentialGroup()
-                        .addContainerGap()
-                        .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                            .addComponent(messageLabel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                            .addGroup(layout.createSequentialGroup()
-                                .addGap(0, 0, Short.MAX_VALUE)
-                                .addComponent(goButton, javax.swing.GroupLayout.PREFERRED_SIZE, 62, javax.swing.GroupLayout.PREFERRED_SIZE))))
+                        .addContainerGap(544, Short.MAX_VALUE)
+                        .addComponent(cancelButton)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                        .addComponent(goButton, javax.swing.GroupLayout.PREFERRED_SIZE, 62, javax.swing.GroupLayout.PREFERRED_SIZE))
                     .addComponent(dataSetSelector1, javax.swing.GroupLayout.Alignment.TRAILING, javax.swing.GroupLayout.DEFAULT_SIZE, 682, Short.MAX_VALUE)
                     .addGroup(layout.createSequentialGroup()
                         .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                            .addComponent(param1NameCB, 0, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                            .addComponent(jScrollPane3))
+                            .addComponent(jScrollPane3)
+                            .addGroup(layout.createSequentialGroup()
+                                .addComponent(param1NameCB, 0, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                                .addComponent(jButton1)))
                         .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                         .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                             .addComponent(jScrollPane1)
-                            .addComponent(param2NameCB, 0, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))))
+                            .addGroup(layout.createSequentialGroup()
+                                .addComponent(param2NameCB, 0, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                                .addComponent(generateButton2))))
+                    .addGroup(layout.createSequentialGroup()
+                        .addComponent(messageLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 401, javax.swing.GroupLayout.PREFERRED_SIZE)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                        .addComponent(writeCheckBox)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                        .addComponent(writeFilenameCB, 0, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)))
                 .addContainerGap())
         );
+
+        layout.linkSize(javax.swing.SwingConstants.HORIZONTAL, new java.awt.Component[] {generateButton2, jButton1});
+
         layout.setVerticalGroup(
             layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(layout.createSequentialGroup()
@@ -327,17 +399,26 @@ public class BatchMaster extends javax.swing.JPanel {
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                 .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
                     .addComponent(param1NameCB, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
-                    .addComponent(param2NameCB, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
+                    .addComponent(param2NameCB, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE)
+                    .addComponent(jButton1)
+                    .addComponent(generateButton2))
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                 .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-                    .addComponent(jScrollPane3, javax.swing.GroupLayout.DEFAULT_SIZE, 240, Short.MAX_VALUE)
+                    .addComponent(jScrollPane3, javax.swing.GroupLayout.DEFAULT_SIZE, 228, Short.MAX_VALUE)
                     .addComponent(jScrollPane1))
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addComponent(messageLabel)
+                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(messageLabel)
+                    .addComponent(writeCheckBox)
+                    .addComponent(writeFilenameCB, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addComponent(goButton)
+                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(goButton)
+                    .addComponent(cancelButton))
                 .addContainerGap())
         );
+
+        bindingGroup.bind();
     }// </editor-fold>//GEN-END:initComponents
 
     private void goButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_goButtonActionPerformed
@@ -402,6 +483,47 @@ public class BatchMaster extends javax.swing.JPanel {
         }
     }//GEN-LAST:event_param2ValuesMouseReleased
 
+    private void cancelButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_cancelButtonActionPerformed
+        Window w=SwingUtilities.getWindowAncestor(this);
+        if ( ! ( w instanceof JDialog ) ) {
+            logger.warning("untested code might leave hidden windows...");
+        }
+        w.setVisible(false);
+    }//GEN-LAST:event_cancelButtonActionPerformed
+
+    private void loadUriMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_loadUriMenuItemActionPerformed
+        DataSetSelector eventsDataSetSelector= new DataSetSelector();
+        
+        List<Bookmark> deft= new ArrayList<>();
+        deft.add( new Bookmark.Item("http://autoplot.org/autoplot/data/event/simpleEvent.txt") );
+        org.autoplot.bookmarks.Util.loadRecent( "eventsRecent", eventsDataSetSelector, deft );
+        
+        if ( JOptionPane.OK_OPTION==AutoplotUtil.showConfirmDialog(this, eventsDataSetSelector, "Load Events", JOptionPane.OK_CANCEL_OPTION ) ) {
+            try {
+                QDataSet ds= org.autoplot.jythonsupport.Util.getDataSet(eventsDataSetSelector.getValue());
+                ds= Ops.createEvents(ds);
+                Units tu= ((Units)((QDataSet)ds.property(QDataSet.BUNDLE_1)).property(QDataSet.UNITS,0));
+                StringBuilder ss= new StringBuilder();
+                for ( int i=0; i<ds.length(); i++ ) {
+                    QDataSet tr= ds.slice(i).trim(0,2);
+                    tr= Ops.putProperty( tr, QDataSet.UNITS, tu );
+                    ss.append( DataSetUtil.asDatumRange( tr ).toString() ).append("\n");
+                }
+                param1Values.setText(ss.toString());
+            } catch (Exception ex) {
+                Logger.getLogger(BatchMaster.class.getName()).log(Level.SEVERE, null, ex);
+            }
+        }
+    }//GEN-LAST:event_loadUriMenuItemActionPerformed
+
+    private void generateButton2ActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_generateButton2ActionPerformed
+        doGenerate( param2NameCB, param2Values );
+    }//GEN-LAST:event_generateButton2ActionPerformed
+
+    private void jButton1ActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_jButton1ActionPerformed
+        doGenerate( param1NameCB, param1Values );
+    }//GEN-LAST:event_jButton1ActionPerformed
+
     private void doGenerate( JComboBox cb, JTextArea ta ) {
         String p= cb.getSelectedItem().toString();
         p= p.trim();
@@ -412,14 +534,14 @@ public class BatchMaster extends javax.swing.JPanel {
                 String[] ss=null; // will be generated values
                 if ( pd.type=='T' ) {
                     try {
-                        if ( JOptionPane.showConfirmDialog( this, timeRangesPanel, "Generate Time Ranges", JOptionPane.OK_CANCEL_OPTION )==JOptionPane.OK_OPTION ) {
+                        if ( AutoplotUtil.showConfirmDialog( this, timeRangesPanel, "Generate Time Ranges", JOptionPane.OK_CANCEL_OPTION )==JOptionPane.OK_OPTION ) {
                             ss= ScriptContext.generateTimeRanges( timeFormatComboBox.getSelectedItem().toString(), timeRangeComboBox.getSelectedItem().toString() );
                         }
                     } catch (ParseException ex) {
                         Logger.getLogger(BatchMaster.class.getName()).log(Level.SEVERE, null, ex);
                     }
                 } else if ( pd.enums!=null ) {
-                    JPanel panel= new JPanel();
+                    final JPanel panel= new JPanel();
                     panel.setLayout( new BoxLayout( panel, BoxLayout.Y_AXIS ) );
                     String label= pd.label;
                     if ( pd.doc!=null ) label= "<html>"+label+", <i>"+pd.doc+"</i>";
@@ -429,7 +551,23 @@ public class BatchMaster extends javax.swing.JPanel {
                         checkBox.setSelected(true);
                         panel.add( checkBox );
                     }
-                    if ( JOptionPane.showConfirmDialog( this, panel, "Select from Values", JOptionPane.OK_CANCEL_OPTION )==JOptionPane.OK_OPTION ) {
+                    AbstractAction a= new AbstractAction("clear all") {
+                        @Override
+                        public void actionPerformed(ActionEvent e) {
+                            for ( Component c: panel.getComponents() ) {
+                                if ( c instanceof JCheckBox ) {
+                                    ((JCheckBox)c).setSelected(false);
+                                }
+                            }
+                        }   
+                    };
+                    panel.add( new JButton(a) );
+                    JScrollPane scrollPane= new JScrollPane(panel);
+                    scrollPane.setPreferredSize( new Dimension( 300, 400 ) );
+                    scrollPane.setMaximumSize( new Dimension( 300, 400 ) );
+                    scrollPane.getVerticalScrollBar().setUnitIncrement(panel.getFont().getSize());
+                    
+                    if ( AutoplotUtil.showConfirmDialog( this, scrollPane, "Select from Values", JOptionPane.OK_CANCEL_OPTION )==JOptionPane.OK_OPTION ) {
                         List<String> theList= new ArrayList<>();
                         for ( Component c: panel.getComponents() ) {
                             if ( c instanceof JCheckBox ) {
@@ -466,7 +604,7 @@ public class BatchMaster extends javax.swing.JPanel {
                     panel.add( max );
                     panel.add( new JLabel( "Step Size: " ) );
                     panel.add( step );
-                    while ( JOptionPane.showConfirmDialog( this, panel, "Select range", JOptionPane.OK_CANCEL_OPTION )==JOptionPane.OK_OPTION ) {
+                    while ( AutoplotUtil.showConfirmDialog( this, panel, "Select range", JOptionPane.OK_CANCEL_OPTION )==JOptionPane.OK_OPTION ) {
                         List<String> theList= new ArrayList<>();
                         double dmin= Double.parseDouble(min.getText());
                         double dmax= Double.parseDouble(max.getText());
@@ -619,6 +757,29 @@ public class BatchMaster extends javax.swing.JPanel {
         return build.toString();
     }
     
+    private void doWrite( String f1, String f2 ) throws IOException {
+        if ( writeCheckBox.isSelected() ) {
+            String template= writeFilenameCB.getSelectedItem().toString();
+            String[] ss= template.split("\\$x",-2);
+            StringBuilder f= new StringBuilder(ss[0]);
+            if ( ss.length>1 ) {
+                f.append(f1).append(ss[1]);
+            }
+            if ( ss.length>2 ) {
+                f.append(f2.trim()).append(ss[2]);
+            }
+            for ( int i=3; i<ss.length; i++ ) {
+                f.append( ss[i] );
+            }
+            String s= f.toString();
+            if ( s.endsWith(".png") ) {
+                ScriptContext.writeToPng(s);
+            } else if ( s.endsWith(".pdf") ) {
+                ScriptContext.writeToPdf(s);
+            } 
+        }
+    }
+    
     public void doIt() throws IOException {
         ProgressMonitor monitor= DasProgressPanel.createFramed( SwingUtilities.getWindowAncestor(this), "Run Batch");
         try {
@@ -640,7 +801,7 @@ public class BatchMaster extends javax.swing.JPanel {
             Map<String,String> params= URISplit.parseParams(split.params);
             Map<String,Object> env= new HashMap<>();
             env.put("dom",this.dom);
-                    
+
             File scriptFile= DataSetURI.getFile( split.file, monitor.getSubtaskMonitor("download script") );
             String script= readScript( scriptFile );
             
@@ -658,7 +819,16 @@ public class BatchMaster extends javax.swing.JPanel {
                     logger.log(Level.SEVERE, null, ex);
                 }
             }
+
+            if ( writeCheckBox.isSelected() ) {
+                String template= writeFilenameCB.getSelectedItem().toString();
+                if ( !( template.endsWith(".pdf") || template.endsWith(".png") ) ) {
+                    AutoplotUtil.showConfirmDialog( this, "write template must end in .pdf or .png", "Write Template Error", JOptionPane.OK_OPTION );
+                    return;
+                }
+            }
             
+            monitor.setTaskSize( ff1.length );
             int i1=0;
             for ( String f1 : ff1 ) {
                 try {
@@ -666,7 +836,8 @@ public class BatchMaster extends javax.swing.JPanel {
                     if ( monitor.isCancelled() ) break;
                     monitor.setTaskProgress(monitor.getTaskProgress()+1);
                     if ( f1.trim().length()==0 ) continue;
-                    interp.set( "monitor", monitor.getSubtaskMonitor(f1) );
+                    //interp.set( "monitor", monitor.getSubtaskMonitor(f1) );
+                    interp.set( "monitor", new NullProgressMonitor() ); // subtask would reset indeterminate.
                     interp.set( "dom", this.dom );
                     interp.set( "PWD", split.path );
                     String paramName= param1NameCB.getSelectedItem().toString();
@@ -679,6 +850,9 @@ public class BatchMaster extends javax.swing.JPanel {
                     
                     if ( param2NameCB.getSelectedItem().toString().trim().length()==0 ) {
                         interp.execfile( JythonRefactory.fixImports(new FileInputStream(scriptFile)), scriptFile.getName() );
+                        if ( writeCheckBox.isSelected() ) {
+                            doWrite( f1, "" );
+                        }
                     } else {
                         String[] ff2= param2Values.getText().split("\n");
                         int i2=0;
@@ -688,10 +862,15 @@ public class BatchMaster extends javax.swing.JPanel {
                             setParam( interp, parms.get(paramName), paramName, f2 );
                             interp.execfile(  JythonRefactory.fixImports(new FileInputStream(scriptFile)), scriptFile.getName() );
                             i2=i2+f2.length()+1;
+                            if ( writeCheckBox.isSelected() ) {
+                                doWrite( f1,f2 );
+                            }
                         }
                     }
-
+                    
                 } catch (IOException ex) {
+                    Logger.getLogger(BatchMaster.class.getName()).log(Level.SEVERE, null, ex);
+                } catch ( Exception ex ) {
                     Logger.getLogger(BatchMaster.class.getName()).log(Level.SEVERE, null, ex);
                 }
                 i1=i1+f1.length()+1;
@@ -715,8 +894,11 @@ public class BatchMaster extends javax.swing.JPanel {
     }
     
     // Variables declaration - do not modify//GEN-BEGIN:variables
+    private javax.swing.JButton cancelButton;
     private org.autoplot.datasource.DataSetSelector dataSetSelector1;
+    private javax.swing.JButton generateButton2;
     private javax.swing.JButton goButton;
+    private javax.swing.JButton jButton1;
     private javax.swing.JLabel jLabel1;
     private javax.swing.JLabel jLabel2;
     private javax.swing.JLabel jLabel3;
@@ -728,6 +910,7 @@ public class BatchMaster extends javax.swing.JPanel {
     private javax.swing.JScrollPane jScrollPane1;
     private javax.swing.JScrollPane jScrollPane2;
     private javax.swing.JScrollPane jScrollPane3;
+    private javax.swing.JMenuItem loadUriMenuItem;
     private javax.swing.JLabel messageLabel;
     private javax.swing.JComboBox<String> param1NameCB;
     private javax.swing.JTextArea param1Values;
@@ -736,5 +919,8 @@ public class BatchMaster extends javax.swing.JPanel {
     private javax.swing.JComboBox<String> timeFormatComboBox;
     private javax.swing.JComboBox<String> timeRangeComboBox;
     private javax.swing.JPanel timeRangesPanel;
+    private javax.swing.JCheckBox writeCheckBox;
+    private javax.swing.JComboBox<String> writeFilenameCB;
+    private org.jdesktop.beansbinding.BindingGroup bindingGroup;
     // End of variables declaration//GEN-END:variables
 }

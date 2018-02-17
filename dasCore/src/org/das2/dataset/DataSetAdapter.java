@@ -303,6 +303,9 @@ public class DataSetAdapter {
 
             properties.put(QDataSet.TITLE, hack(dasProps, DataSet.PROPERTY_TITLE, sPlaneID));
             properties.put(QDataSet.UNITS, source.getYUnits());
+            //properties.put(QDataSet.FILL_VALUE, source.getYUnits().getFillDouble() );
+            //Object ofill= hack(dasProps, DataSet.PROPERTY_Y_FILL, sPlaneID);
+            //if ( ofill!=null && ( ofill instanceof Number ) ) properties.put(QDataSet.FILL_VALUE, ofill );
             properties.put(QDataSet.LABEL, hack(dasProps, DataSet.PROPERTY_Y_LABEL, sPlaneID));
 				properties.put(QDataSet.FORMAT, hack(dasProps, DataSet.PROPERTY_Y_FORMAT, sPlaneID));
             AbstractDataSet xds= new XTagsDataSet(source);
@@ -523,7 +526,7 @@ public class DataSetAdapter {
                 properties.put(QDataSet.TYPICAL_MAX, zRng.max().value());
             }
             properties.put(QDataSet.RENDER_TYPE, dasProps.get(DataSet.PROPERTY_RENDERER));
-            properties.put(QDataSet.MONOTONIC, dasProps.get(DataSet.PROPERTY_X_MONOTONIC));
+            //properties.put(QDataSet.MONOTONIC, dasProps.get(DataSet.PROPERTY_X_MONOTONIC));
             properties.put(QDataSet.FILL_VALUE, dasProps.get(DataSet.PROPERTY_Z_FILL));
 
             properties.put(QDataSet.VALID_MIN, dasProps.get(DataSet.PROPERTY_Z_VALID_MIN));
@@ -582,7 +585,7 @@ public class DataSetAdapter {
                 properties.put(QDataSet.TYPICAL_MAX, zRng.max().value());
             }
             properties.put(QDataSet.RENDER_TYPE, dasProps.get(DataSet.PROPERTY_RENDERER));
-            properties.put(QDataSet.MONOTONIC, dasProps.get(DataSet.PROPERTY_X_MONOTONIC));
+            //properties.put(QDataSet.MONOTONIC, dasProps.get(DataSet.PROPERTY_X_MONOTONIC));
             properties.put(QDataSet.FILL_VALUE, dasProps.get(DataSet.PROPERTY_Z_FILL));
 
             properties.put(QDataSet.VALID_MIN, dasProps.get(DataSet.PROPERTY_Z_VALID_MIN));

@@ -12,9 +12,14 @@ import java.awt.Color;
 import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
+import java.awt.Image;
 import java.awt.RenderingHints;
+import java.awt.Shape;
+import java.awt.geom.AffineTransform;
+import java.awt.geom.Arc2D;
 import java.awt.geom.GeneralPath;
 import java.awt.geom.Point2D;
+import java.awt.image.BufferedImage;
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
 import org.das2.datum.Units;
@@ -23,10 +28,15 @@ import static java.lang.Math.cos;
 import static java.lang.Math.sin;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.logging.Level;
 import org.das2.datum.Datum;
+import org.das2.datum.DatumRange;
 import org.das2.datum.DatumVector;
+import org.das2.datum.UnitsUtil;
 import org.das2.datum.format.DatumFormatter;
 import org.das2.qds.ArrayDataSet;
+import org.das2.qds.DataSetUtil;
+import org.das2.util.monitor.NullProgressMonitor;
 
 /**
  * Draws a pitch angle distribution, which is a spectrogram wrapped around an origin.  Datasets must
@@ -39,9 +49,90 @@ import org.das2.qds.ArrayDataSet;
 public class PolarPlotRenderer extends Renderer {
 
     public PolarPlotRenderer( DasColorBar cb ) {
-        setColorBar(cb);
+        setColorBar(cb);    
+    }
+    
+    private GeneralPath path;
+    private Shape _shape; //cache, derived from path
+
+    private DasAxis tinyX;
+    private DasAxis tinyY;
+    
+    private Icon icon;
+    
+    /**
+     * experiment with drawing the list icon dynamically.
+     * @return 
+     */
+    @Override
+    public Icon getListIcon() {
+        QDataSet dsl= getDataSet();
+        if ( dsl==null ) {
+            return super.getListIcon();
+            
+        } else {
+            
+            if ( icon!=null ) {
+                return icon; 
+            } else {
+                BufferedImage result= new BufferedImage(64,64,BufferedImage.TYPE_INT_RGB);
+
+                Graphics2D g= (Graphics2D) result.getGraphics();
+                g.setRenderingHint( RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON );
+                g.setColor( Color.WHITE );
+                g.fillRect( 0, 0, 64, 64 );
+
+                QDataSet bounds= doAutorange(dsl);
+
+                DatumRange xrange= DataSetUtil.asDatumRange( bounds.slice(0) );
+                DatumRange yrange= DataSetUtil.asDatumRange( bounds.slice(1) );
+                if ( tinyX==null ) {
+                    tinyX= new DasAxis( xrange, DasAxis.HORIZONTAL );
+                    tinyX.setColumn( new DasColumn( getParent().getCanvas(), null, 0, 0, 0, 0, 0, 64 ) );
+                    tinyY= new DasAxis( yrange, DasAxis.VERTICAL );
+                    tinyY.setRow( new DasRow( getParent().getCanvas(), null, 0, 0, 0, 0, 0, 64 ) );
+                } else {
+                    tinyX.setDatumRange(xrange);
+                    tinyY.setDatumRange(yrange);
+                }
+
+                try {
+                    render( g, tinyX, tinyY, new NullProgressMonitor() );
+                } catch ( NullPointerException ex ) {
+                    ex.printStackTrace();
+                    g.drawLine(0,0,64,64);
+                }
+
+                icon = new ImageIcon( result.getScaledInstance(16,16,Image.SCALE_SMOOTH) );
+                return icon;
+                
+            }
+        }
+
     }
 
+    @Override
+    public boolean acceptContext(int x, int y) {
+        return selectionArea().contains(x,y);
+    }
+
+    public Shape selectionArea() {
+        if ( path==null ) {
+            DasRow row= getParent().getRow();
+            DasColumn column= getParent().getColumn();
+            return DasDevicePosition.toRectangle( row, column );
+        } else {
+            if ( _shape!=null ) {
+                return _shape;
+            } else {
+                Shape s = new BasicStroke( Math.min(14,1.f+8.f), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND ).createStrokedShape(path);
+                _shape= s;
+                return s;
+            }
+        }
+    }    
+
+    
     /**
      * return true if the dataset can be interpreted as radian degrees from 0 to PI or from 0 to 2*PI.
      * @param ds any QDataSet.
@@ -95,11 +186,6 @@ public class PolarPlotRenderer extends Renderer {
         }
     };
 
-    @Override
-    public Icon getListIcon() {
-        return new ImageIcon(SpectrogramRenderer.class.getResource("/images/icons/pitchAngleDistribution.png"));
-    }
-
 
     @Override
     public final void setColorBar(DasColorBar colorBar) {
@@ -122,7 +208,56 @@ public class PolarPlotRenderer extends Renderer {
             }
         propertyChangeSupport.firePropertyChange(PROP_COLORBAR, oldColorBar, colorBar);
     }
-   
+
+    @Override
+    public void update() {
+        super.update(); 
+        this.icon= null;
+    }
+    
+    /**
+     * the color for contour lines
+     */
+    private Color color = Color.BLACK;
+
+    private double lineWidth = 1.0;
+
+    public static final String PROP_LINEWIDTH = "lineWidth";
+
+    /**
+     * get the width, in pixels of the contour lines.
+     * @return width in pixels
+     */
+    public double getLineWidth() {
+        return lineWidth;
+    }
+
+    public void setLineWidth(double lineWidth) {
+        double oldLineWidth = this.lineWidth;
+        this.lineWidth = lineWidth;
+        update();
+        propertyChangeSupport.firePropertyChange(PROP_LINEWIDTH, oldLineWidth, lineWidth);
+    }
+
+    /**
+     * Get the color for contour lines
+     * @return the color for contour lines
+     */
+    public Color getColor() {
+        return this.color;
+    }
+
+    /**
+     * Set the color for contour lines
+     * @param color the color for contour lines
+     */
+    public void setColor(Color color) {
+        Color oldColor = this.color;
+        this.color = color;
+        update();
+        propertyChangeSupport.firePropertyChange("color", oldColor, color);
+    }
+    
     private static QDataSet doAutorangeRank1(QDataSet rds ) {
         
         Units yunits= SemanticOps.getUnits(rds);
@@ -199,35 +334,103 @@ public class PolarPlotRenderer extends Renderer {
 
         Graphics2D g= (Graphics2D)g1;
         
-        QDataSet ads= SemanticOps.xtagsDataSet(ds);
-        QDataSet rds= SemanticOps.ytagsDataSet(ds); // this is why they are semanticOps.  ytagsDataSet is just used for convenience even though this is not the y values.
-
-        Double angleFactor= isAngleRange(ads);
+        QDataSet ads,rds;
+        if ( SemanticOps.isBundle(ds) ) {
+            ads= Ops.slice1( ds, 0 );
+            rds= Ops.slice1( ds, 1 );
+        } else {
+            ads= SemanticOps.xtagsDataSet(ds);
+            rds= SemanticOps.ytagsDataSet(ds); // this is why they are semanticOps.  ytagsDataSet is just used for convenience even though this is not the y values.
+        }
+        QDataSet wds= Ops.copy( SemanticOps.weightsDataSet(rds) );
+           
+        if ( ads.rank()!=1) throw new IllegalArgumentException("ads should be rank 1");
+        if ( rds.rank()!=1) throw new IllegalArgumentException("ads should be rank 1");
         
-        double x= rds.value(0) * cos( ads.value(0) * angleFactor );
-        double y= rds.value(0) * sin( ads.value(0) * angleFactor );
+        Double angleFactor= isAngleRange(ads);
+
+        QDataSet cadence= DataSetUtil.guessCadenceNew( ads, rds );
+        
+        QDataSet tds= SemanticOps.xtagsDataSet(ads);
+        boolean close= ! UnitsUtil.isTimeLocation( SemanticOps.getUnits(tds) ); // if true then return to the first point to make a complete circuit.
+        
+        int i=0; 
+        while( i<ads.length() ) {
+            if ( wds.value(i)>0 ) break;
+        }
+        if ( i==ads.length() ) {
+            getParent().postMessage( this,"no valid data", Level.WARNING, null, null );
+            return;
+        }
+        
+        int i0= i;
+        
+        double x= rds.value(i) * cos( ads.value(i) * angleFactor );
+        double y= rds.value(i) * sin( ads.value(i) * angleFactor );
+        i++;
         
         GeneralPath gp= new GeneralPath();
+        //GraphUtil.DebuggingGeneralPath gp= new GraphUtil.DebuggingGeneralPath();
+        //gp.setArrows(true);
         
         Units xunits= xAxis.getUnits();
         Units yunits= yAxis.getUnits();
         
         gp.moveTo( xAxis.transform( x, xunits ), yAxis.transform( y, yunits ) );
         
-        for ( int i=1; i<ads.length(); i++ ) {
-            x= rds.value(i) * cos( ads.value(i) * angleFactor );
-            y= rds.value(i) * sin( ads.value(i) * angleFactor );
+        boolean penDown= true;
         
-            gp.lineTo( xAxis.transform( x, xunits ), yAxis.transform( y, yunits ) );
+        int lastIndex= -1;
+        
+        for ( ; i<ads.length(); i++ ) {
+            if ( wds.value(i)==0 ) {
+                penDown= false;
+            } else {
+                lastIndex= i;
+                x= rds.value(i) * cos( ads.value(i) * angleFactor );
+                y= rds.value(i) * sin( ads.value(i) * angleFactor );
+                if ( penDown ) {
+                    double dx= xAxis.transform( x, xunits );
+                    double dy= yAxis.transform( y, yunits );
+                    gp.lineTo( dx,dy );
+                } else {
+                    gp.moveTo( xAxis.transform( x, xunits ), yAxis.transform( y, yunits ) );
+                }
+                penDown= true; //TODO: data surrounded by fill.
+            }
+            //gp.transform( AffineTransform.getTranslateInstance(Math.random()-0.5,Math.random()-0.5) );
+            //g.draw(gp);
         }
         
-        g.setColor( getColorControl("color",Color.black) );
-        g.draw(gp);
+        if ( close ) {
+            double da= Math.abs( ( ads.value(i0)- ads.value(lastIndex) ) * angleFactor );
+            if ( da>Math.PI ) da= (2*Math.PI)-da;
+            
+            if ( cadence!=null && cadence.rank()==0 && da<(1.1*cadence.value()*angleFactor) ) {
+                x= rds.value(i0) * cos( ads.value(i0) * angleFactor );
+                y= rds.value(i0) * sin( ads.value(i0) * angleFactor );
+                double dx= xAxis.transform( x, xunits );
+                double dy= yAxis.transform( y, yunits );
+                gp.lineTo( dx,dy );
+            }
+        }
         
+        g.setColor( color );
+        g.setStroke(new BasicStroke((float)lineWidth));
+        g.draw(gp);
+        //g.draw(gp.getGeneralPath());
+        
+        if ( xAxis!=tinyX ) {
+            path= gp;
+            //path= gp.getGeneralPath();
+            _shape= null;
+        }
+
     }
     
     private void renderRank2( Graphics2D g, DasAxis xAxis, DasAxis yAxis, ProgressMonitor monitor ) {
         
+        g.setRenderingHint( RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON );
         QDataSet tds= (QDataSet)ds;
         
         if ( colorBar==null ) return;
@@ -288,6 +491,10 @@ public class PolarPlotRenderer extends Renderer {
             }
         }
         
+        if ( xAxis.getUnits()!=yAxis.getUnits() ) {
+            getParent().postMessage( this, "xaxis and yaxis should have same units", Level.WARNING, null, null );
+            return;
+        }
         double x0= xAxis.transform(0,yunits);
         double y0= yAxis.transform(0,yunits);
 
@@ -358,20 +565,25 @@ public class PolarPlotRenderer extends Renderer {
                     }
 
 
-                    if ( wds.value(i,j)>0 ) {
+                    if ( wds.value(i,j)>0 ) {                    
                         int zz= colorBar.rgbTransform( tds.value(i,j), zunits );
                         g.setColor( new Color(zz) );
                         GeneralPath gp= new GeneralPath( GeneralPath.WIND_NON_ZERO,6);
                         gp.moveTo( xx[i][j], yy[i][j] );
                         gp.lineTo( xx[i][j+1], yy[i][j+1] );
-                        //gp.curveTo( 0,0, 0,0, xx[i+1][j+1], yy[i+1][j+1] );
+                        
+                        Arc2D arc0 = new Arc2D.Double( x0-r0x, y0-r0y, r0x*2, r0y*2, Math.toDegrees(a0), Math.toDegrees(a1-a0), Arc2D.OPEN );
+                        gp.append( arc0.getPathIterator(null), true );
                         gp.lineTo( xx[i+1][j+1], yy[i+1][j+1] );
-                        gp.lineTo( xx[i+1][j], yy[i+1][j] );
+                        
+                        Arc2D arc1 = new Arc2D.Double( x0-r1x, y0-r1y, r1x*2, r1y*2, Math.toDegrees(a1), Math.toDegrees(a0-a1), Arc2D.OPEN );
+                        gp.append( arc1.getPathIterator(null), true );
+                        
                         gp.lineTo( xx[i][j], yy[i][j] );
-
+                        
                         g.fill(gp);
                         g.draw(gp);
-
+                        
                     } else {
                         //g.setColor( Color.lightGray );
                     }
@@ -399,8 +611,13 @@ public class PolarPlotRenderer extends Renderer {
         } else {
         
             if ( !( SemanticOps.isTableDataSet(tds) ) ) {
-                parent.postException( this, new IllegalArgumentException("expected Table: " +tds ) );
-                return;
+                if ( SemanticOps.isBundle( tds ) ) {
+                    renderRank1( g1, xAxis, yAxis, mon );
+                    return;
+                } else {
+                    parent.postException( this, new IllegalArgumentException("expected Table: " +tds ) );
+                    return;
+                }
             }
 
             if ( !xAxis.getUnits().isConvertibleTo( yAxis.getUnits() ) ) {
@@ -535,6 +752,9 @@ public class PolarPlotRenderer extends Renderer {
             controls.remove("originNorth");
         }
         if ( clockwise ) controls.put("clockwise", "T" );
+        controls.put( "color", encodeColorControl(color) );
+        controls.put( "lineWidth", String.valueOf(lineWidth) );
+        
         return Renderer.formatControl(controls);
     }
     
@@ -548,6 +768,8 @@ public class PolarPlotRenderer extends Renderer {
         this.drawPolarAxes= getBooleanControl("drawPolarAxes",false );
         this.origin= getControl("origin","");
         this.clockwise= getBooleanControl("clockwise",false);
+        this.color= getColorControl( "color", color );
+        this.lineWidth= getDoubleControl( "lineWidth", lineWidth );
     }    
 
     /**

@@ -44,7 +44,7 @@ public class CsvDataSource extends AbstractDataSource {
         super(uri);
     }
 
-    QDataSet parseHeader( int icol, String header, String sval ) {
+    private QDataSet parseHeader( int icol, String header, String sval ) {
         header= header.trim();
         DDataSet result= DDataSet.create( new int[0] ); // rank 0 dataset
 
@@ -76,12 +76,14 @@ public class CsvDataSource extends AbstractDataSource {
         try {
             Units.dimensionless.parse(sval);
             return Units.dimensionless;
-        } catch ( Exception ex ) {
+        } catch ( ParseException ex ) {
+            logger.log(Level.FINER, "fails to parse as number: {0}", sval);
         }
         try {
             AsciiParser.UNIT_UTC.parse(sval);
             return AsciiParser.UNIT_UTC;
-        } catch ( Exception ex ) {
+        } catch ( ParseException ex ) {
+            logger.log(Level.FINER, "fails to parse as time: {0}", sval);
         }
         return EnumerationUnits.create("enum");
     }
@@ -113,16 +115,9 @@ public class CsvDataSource extends AbstractDataSource {
         CsvReader reader= new CsvReader( breader );
         if ( delimiter!=',' ) reader.setDelimiter(delimiter);
         
-        String[] headers;
+        String[] columnHeaders;
 
-        if ( reader.readHeaders() ) {
-            headers= reader.getHeaders();
-        } else {
-            headers= new String[reader.getColumnCount()];
-            for ( int i=0; i<headers.length; i++ ) {
-                headers[i]= "field"+i;
-            }
-        }
+        columnHeaders= CsvDataSourceFactory.getColumnHeaders(reader);
 
         String column= getParam( "column", null );
         /**
@@ -132,7 +127,7 @@ public class CsvDataSource extends AbstractDataSource {
         if ( column==null ) {
             icolumn= -1;
         } else {
-            icolumn= TableOps.columnIndex( column, headers );
+            icolumn= TableOps.columnIndex( column, columnHeaders );
             if ( icolumn==-1 ) {
                 throw new IllegalArgumentException("column not found: "+column);
             }
@@ -144,7 +139,7 @@ public class CsvDataSource extends AbstractDataSource {
         if ( bundle==null ) {
             cols= null;
         } else {
-            cols= TableOps.parseRangeStr( bundle, headers );
+            cols= TableOps.parseRangeStr( bundle, columnHeaders );
             icolumn= cols[0]; // get the units from this column
         }
 
@@ -155,7 +150,7 @@ public class CsvDataSource extends AbstractDataSource {
         if ( dep0column==null ) {
             idep0column= -1;
         } else {
-            idep0column= TableOps.columnIndex( dep0column, headers );
+            idep0column= TableOps.columnIndex( dep0column, columnHeaders );
             if ( idep0column==-1 ) {
                 throw new IllegalArgumentException("column not found: "+dep0column);
             }
@@ -165,8 +160,6 @@ public class CsvDataSource extends AbstractDataSource {
         Units dep0u= Units.dimensionless;
         Units u= Units.dimensionless;
         Units[] columnUnits= null;
-
-        int hline=2; // allow top two lines to be header lines.
 
         double tb=0, cb=0;  // temporary holders for data
         double[] bundleb=null; // temporary holders for each column.
@@ -193,12 +186,19 @@ public class CsvDataSource extends AbstractDataSource {
         while ( reader.readRecord() ) {
             line++;
             mon.setProgressMessage("read line "+line);
-            if ( hline>0 ) {
-                if ( columnUnits==null ) {
-                    columnUnits= new Units[reader.getColumnCount()];
-                    for ( int j=0; j<reader.getColumnCount(); j++ ) {
-                        columnUnits[j]= guessUnits(reader.get(j));
+            if ( columnUnits==null ) {
+                boolean foundColumnNumbers= false;
+                columnUnits= new Units[reader.getColumnCount()];
+                for ( int j=0; j<reader.getColumnCount(); j++ ) {
+                    columnUnits[j]= guessUnits(reader.get(j));
+                    reader.get(0);
+                    if ( !( columnUnits[j] instanceof EnumerationUnits ) ) {
+                        foundColumnNumbers= true;
                     }
+                }
+                if ( !foundColumnNumbers ) {
+                    logger.log(Level.FINER, "line appears to be a header: {0}", line);
+                    columnUnits= null;
                 }
                 if ( icolumn==-1 ) {
                     if ( TimeUtil.isValidTime(reader.get(0)) && TimeUtil.isValidTime(reader.get(1) ) && reader.getColumnCount()>=2 && reader.getColumnCount()<=5 ) {
@@ -224,9 +224,8 @@ public class CsvDataSource extends AbstractDataSource {
                     icolumnDs= parseHeader( icolumn, reader.getHeader(icolumn),reader.get(icolumn) );
                     u= SemanticOps.getUnits(icolumnDs);
                 }
-                hline= hline-1;
 
-                if ( hline==0 ) {
+                if ( columnUnits!=null ) {
                     if ( oldDep0u != dep0u || oldU!=u ) {
                         if ( bundleb!=null ) {
                             builder= new DataSetBuilder( 2, 100, bundleb.length );
@@ -239,7 +238,7 @@ public class CsvDataSource extends AbstractDataSource {
             }
 
             String badTimeTag= null;
-            try {
+            if ( columnUnits!=null ) try {
                 if ( idep0column>=0 ) {
                     if ( dep0u instanceof EnumerationUnits ) {
                         tb= ((EnumerationUnits)dep0u).createDatum( reader.get(idep0column) ).doubleValue(dep0u) ;
@@ -295,26 +294,31 @@ public class CsvDataSource extends AbstractDataSource {
                 }
             }
 
-            if ( needToCheckHeader ) {
+            if ( needToCheckHeader && columnUnits!=null ) {
                 boolean yepItsData= true;
                 double[] cbs= new double[columnUnits.length];
                 for ( int icol= 0; icol<columnUnits.length; icol++ ) {
                     try {
                         if ( icol==0 ) { 
-                            if ( headers[icol].length()>1 && ((int)headers[icol].charAt(0))==0xFEFF ) { //Excel UTF non-space
-                                headers[icol]= headers[icol].substring(1);
+                            if ( columnHeaders[icol].length()>1 && ((int)columnHeaders[icol].charAt(0))==0xFEFF ) { //Excel UTF non-space
+                                columnHeaders[icol]= columnHeaders[icol].substring(1);
                             }
                         }
-                        u= columnUnits[icol];
-                        if ( u instanceof EnumerationUnits ) {
-                            cbs[icol]= ((EnumerationUnits)u).createDatum( headers[icol] ).doubleValue(u);
+                        Units u1= columnUnits[icol];
+                        if ( columnHeaders.length<=icol ) {
+                            yepItsData= false;
+                            continue;
+                        }
+                        if ( u1 instanceof EnumerationUnits ) {
+                            cbs[icol]= ((EnumerationUnits)u1).createDatum( columnHeaders[icol] ).doubleValue(u1);
                         } else {
-                            cbs[icol]= u.parse(headers[icol]).doubleValue(u);
+                            cbs[icol]= u1.parse(columnHeaders[icol]).doubleValue(u1);
                         }
                     } catch ( ParseException ex ) {
                         yepItsData= false;
                     }
                 }
+                
                 if ( yepItsData ) {
                     if ( idep0column>=0 ) {
                         tbuilder.putValue( -1, cbs[idep0column] );
@@ -330,27 +334,28 @@ public class CsvDataSource extends AbstractDataSource {
                         builder.nextRecord();
                     }
                     for ( int icol=0; icol<columnUnits.length; icol++ ) { 
-                        headers[icol]= "field"+icol;
+                        columnHeaders[icol]= "field"+icol;
                     }
                 }
                 needToCheckHeader= false;
             }
                 
-                
-            if ( idep0column>=0 ) {
-                tbuilder.putValue( -1, tb );
-                tbuilder.nextRecord();
-            }
-            if ( bundleb!=null ) {
-                for ( int j=0; j<bundleb.length; j++ ) {
-                    builder.putValue(-1,j,bundleb[j]);
+            if ( columnUnits!=null ) {
+                if ( idep0column>=0 ) {
+                    tbuilder.putValue( -1, tb );
+                    tbuilder.nextRecord();
                 }
-                builder.nextRecord();
-            } else {
-                builder.putValue(-1,cb);
-                builder.nextRecord();
+                if ( bundleb!=null ) {
+                    for ( int j=0; j<bundleb.length; j++ ) {
+                        builder.putValue(-1,j,bundleb[j]);
+                    }
+                    builder.nextRecord();
+                } else {
+                    builder.putValue(-1,cb);
+                    builder.nextRecord();
+                }
             }
-            line++;
+
         }
 
         reader.close();
@@ -373,8 +378,8 @@ public class CsvDataSource extends AbstractDataSource {
             SparseDataSet bds= SparseDataSet.createRankLen( 2, bundleb.length );
             for ( int j=0; j<bundleb.length; j++ ) {
                 bds.putProperty(QDataSet.UNITS, j, columnUnits[j+icolumn]);
-                bds.putProperty(QDataSet.LABEL, j, headers[j+icolumn] );
-                bds.putProperty(QDataSet.NAME, j, Ops.safeName(headers[j+icolumn]) );
+                bds.putProperty(QDataSet.LABEL, j, columnHeaders[j+icolumn] );
+                bds.putProperty(QDataSet.NAME, j, Ops.safeName(columnHeaders[j+icolumn]) );
             }
             ds.putProperty( QDataSet.BUNDLE_1, bds );
         } else {

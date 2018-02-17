@@ -42,6 +42,10 @@ import java.awt.image.BufferedImage;
 import java.awt.image.IndexColorModel;
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.PrintWriter;
+import java.text.ParseException;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.logging.Level;
@@ -54,6 +58,7 @@ import org.das2.datum.Datum;
 import org.das2.datum.DatumRange;
 import org.das2.datum.InconvertibleUnitsException;
 import org.das2.datum.Units;
+import org.das2.datum.UnitsConverter;
 import org.das2.datum.UnitsUtil;
 import org.das2.event.CrossHairMouseModule;
 import org.das2.event.DasMouseInputAdapter;
@@ -97,7 +102,7 @@ public class SeriesRenderer extends Renderer {
 
     private boolean histogram = false;
     private PsymConnector psymConnector = PsymConnector.SOLID;
-    private FillStyle fillStyle = FillStyle.STYLE_FILL;
+    private FillStyle fillStyle = FillStyle.STYLE_SOLID;
     //private int renderCount = 0;
     //private int updateImageCount = 0;
     private Color color = Color.BLACK;
@@ -644,6 +649,16 @@ public class SeriesRenderer extends Renderer {
         @Override
         public int render(Graphics2D g, DasAxis xAxis, DasAxis yAxis, QDataSet vds, ProgressMonitor mon) {
             long t0= System.currentTimeMillis();
+            final boolean debug= false;
+            if ( debug ) {
+                Color color0= g.getColor();
+                g.setColor( Color.LIGHT_GRAY );
+                for ( int i=0; i<1000; i+=100 ) { // draw grid
+                    g.drawLine(i, 0, i, 1000);
+                    g.drawLine(0, i, 1000, i );
+                }
+                g.setColor(color0);
+            }
             logger.log(Level.FINE, "enter connector render" );
             if ( vds.rank()!=1 && !SemanticOps.isRank2Waveform(vds) && !SemanticOps.isRank3JoinOfRank2Waveform(vds)) {
                 renderException( g, xAxis, yAxis, new IllegalArgumentException("dataset is not rank 1"));
@@ -676,20 +691,19 @@ public class SeriesRenderer extends Renderer {
 
             Units xUnits = SemanticOps.getUnits(xds);
             Units yUnits = SemanticOps.getUnits(vds);
-            if ( unitsWarning ) yUnits= yAxis.getUnits();
-            if ( xunitsWarning ) xUnits= yAxis.getUnits();
-
-            Rectangle window= DasDevicePosition.toRectangle( yAxis.getRow(), xAxis.getColumn() );
-            int buffer= (int)Math.ceil( Math.max( getLineWidth(),10 ) );
+            Units xaxisUnits= xAxis.getUnits();
+            Units yaxisUnits= yAxis.getUnits();
+            if ( !yUnits.isConvertibleTo(yaxisUnits) ) {
+                yUnits= yAxis.getUnits();
+                unitsWarning= true;
+            }
+            if ( !xUnits.isConvertibleTo(xaxisUnits) ) {
+                xUnits= xAxis.getUnits();
+                unitsWarning= true;
+            }
 
             DasPlot lparent= getParent();
             if ( lparent==null ) return;
-            if ( lparent.isOverSize() ) {
-                window= new Rectangle( window.x- window.width/3, window.y-buffer, 5 * window.width / 3, window.height + 2 * buffer );
-                //TODO: there's a rectangle somewhere that is the preveiw.  Use this instead of assuming 1/3 on either side.
-            } else {
-                window= new Rectangle( window.x- buffer, window.y-buffer, window.width + 2*buffer, window.height + 2 * buffer );
-            }
 
             if ( lastIndex-firstIndex==0 ) {
                 this.path1= null;
@@ -698,12 +712,12 @@ public class SeriesRenderer extends Renderer {
 
             long t0= System.currentTimeMillis();
             
-            int pathLengthApprox= Math.max( 5, 110 * (lastIndex - firstIndex) / 100 );
-            GeneralPath newPath = new GeneralPath(GeneralPath.WIND_NON_ZERO, pathLengthApprox );
-
+            DataGeneralPathBuilder newPath= new DataGeneralPathBuilder(xAxis,yAxis);
+            
             Datum sw = null;
             try {// TODO: this really shouldn't be here, since we calculate it once.
-                sw= SemanticOps.guessXTagWidth( xds.trim(firstIndex,lastIndex), vds.trim(firstIndex,lastIndex) );
+                sw= getCadence( xds, vds, firstIndex, lastIndex );
+                // Note it uses a cached value that runs along with the data.
             } catch ( IllegalArgumentException ex ) {
                 logger.log( Level.WARNING, null, ex );
             }
@@ -717,182 +731,105 @@ public class SeriesRenderer extends Renderer {
                     xSampleWidth = doubleValue( sw, xUnits.getOffsetUnits() );
                     logStep= false;
                 }
+                //double-check cadence
+                int cadenceGapCount= 0;
+                double xSampleWidthFudge= xSampleWidth*1.20;
+                if ( logStep ) {
+                    for ( int i=1; i<xds.length(); i++ ) {
+                        if ( Math.log( xds.value(i) / xds.value(i-1) ) > xSampleWidthFudge ) cadenceGapCount++;
+                    }
+                } else {
+                    for ( int i=1; i<xds.length(); i++ ) {
+                        if ( xds.value(i)-xds.value(i-1) > xSampleWidthFudge ) cadenceGapCount++;
+                    }
+                }
+                
+                if ( cadenceGapCount>(wds.length()/2) ) {
+                    newPath.setCadence( null );
+                } else {
+                    newPath.setCadence( sw );
+                }
             } else {
                 xSampleWidth= 1e37; // something really big
                 logStep= false;
             }
-
-
+          
+                
             /* fuzz the xSampleWidth */
             double xSampleWidthExact= xSampleWidth;
-            xSampleWidth = xSampleWidth * 1.20;
-
+            
             double x;
             double y;
 
-            double x0; /* the last plottable point */
             //double y0; /* the last plottable point */
 
-            double fx;
-            double fy;
-            double fx0;
-            double fy0;
-            boolean visible;  // true if this point can be seen
-            boolean visible0; // true if the last point can be seen
+            UnitsConverter xuc= xUnits.getConverter(xaxisUnits);
+            UnitsConverter yuc= yUnits.getConverter(yaxisUnits);
             
             int index;
 
             index = firstIndex;
-            x = (double) xds.value(index);
-            y = (double) vds.value(index);
+            x = xuc.convert( (double) xds.value(index) );
+            y = yuc.convert( (double) vds.value(index) );
 
-            //System.err.println("vds length "+vds.length());
-            //System.err.println("xds range " + Ops.extent(xds) );
-            //System.err.println("first,last index " +firstIndex + " " + lastIndex );
-            try {
-                fx = xAxis.transform(x, xUnits);
-            } catch ( InconvertibleUnitsException ex ) {
-                xunitsWarning= true;
-                xUnits= xAxis.getUnits();
-                fx = xAxis.transform(x, xUnits);
-            }
-            try {
-                fy = yAxis.transform(y, yUnits);
-            } catch ( InconvertibleUnitsException ex ) {
-                unitsWarning= true;
-                yUnits= yAxis.getUnits();
-                fy = yAxis.transform(y, yUnits);
-                //return;
-            } catch ( IllegalArgumentException ex ) {
-                if ( UnitsUtil.isOrdinalMeasurement( yUnits ) ) {
-                    unitsWarning= true;
-                    return;
-                } else {
-                    logger.severe("Illegal Argument when trying transform.");
-                    unitsWarning= true;
-                    return;                    
-                }
-            }
+            newPath.addDataPoint( true, x, y );
 
-            // first point //
-            logger.log(Level.FINE, "firstPoint moveTo,LineTo (plotCoordinates)= {0}, {1}", new Object[]{fx, fy});
-
-            visible0= window.contains(fx,fy);
             if (histogram) {
-                double fx1 = midPoint( xAxis, x, xUnits, xSampleWidthExact, logStep, -0.5 );
-                newPath.moveTo(fx1, fy);
-                newPath.lineTo(fx, fy);
+                double dx= xSampleWidthExact;
+                double fx1 = midPointData( xAxis, x, xUnits, dx, logStep, -0.5 );
+                newPath.addDataPoint( true, fx1, y );
+                double fx2 = midPointData( xAxis, x, xUnits, dx, logStep, +0.5 );
+                newPath.addDataPoint( true, fx2, y );
             } else {
-                newPath.moveTo(fx, fy);
-                newPath.lineTo(fx, fy);
+                newPath.addDataPoint( true, x, y );
             }
-
-            x0 = x;
-            //y0 = y;
-            fx0 = fx;
-            fy0 = fy;
 
             index++;
 
             // now loop through all of them. //
-            boolean ignoreCadence= ! cadenceCheck;
+            //boolean ignoreCadence= ! cadenceCheck;
             boolean isValid= false;
-
+            
+            //poes_n17_20041228.cdf?P1_90[0:300] contains fill records between 
+            //each measurement. Test for this.
+            int invalidInterleaveCount= 0;
+            for ( int i=1; i<xds.length(); i++ ) {
+                if ( wds.value(i-1)>0 && wds.value(i)==0 ) invalidInterleaveCount++;
+            }
+            boolean notInvalidInterleave= invalidInterleaveCount<(wds.length()/3);
+                        
             for (; index < lastIndex; index++) {
 
-                x = xds.value(index);
-                y = vds.value(index);
+                x = xuc.convert( xds.value(index) );
+                y = yuc.convert( vds.value(index) );
 
-                isValid = wds.value( index )>0 && xUnits.isValid(x);
+                isValid = wds.value( index )>0;
 
-                fx = xAxis.transform(x, xUnits);
-                fy = yAxis.transform(y, yUnits);
-                visible= isValid && window.intersectsLine( fx0,fy0, fx,fy );
-                
-                if (isValid) {
-                    double step= logStep ? Math.log(x/x0) : x-x0;
-                    if ( ignoreCadence || step < xSampleWidth) {
-                        // draw connect-a-dot between last valid and here
-                        if (histogram) {
-                            double fx1 = (fx0 + fx) / 2;
-                            newPath.lineTo(fx1, fy0);
-                            newPath.lineTo(fx1, fy);
-                            newPath.lineTo(fx, fy);
-                        } else {
-                            if ( visible ) {
-                                if ( !visible0 ) {
-                                    if ( ignoreCadence || step<0 ) {
-                                        //!!!! let's kludge this in on a weekend and see what happens...                                          
-                                        // the challenge with all this is that every other point can be invalid, and then these are not interpretted as data breaks.  
-                                        // See file:///home/jbf/ct/hudson/data.backup/cdf/virbo/poes_n17_20041228.cdf?P1_90[0:300]
-                                        newPath.moveTo(fx,fy);
-                                    } else {
-                                        newPath.moveTo(fx0,fy0);
-                                    }
-                                }
-                                newPath.lineTo(fx, fy); // this is the typical path
-                            }
-
-                        }
-
+                if ( isValid || notInvalidInterleave ) {
+                    if ( histogram ) {
+                        double dx= xSampleWidthExact;
+                        double fx1 = midPointData( xAxis, x, xUnits, dx, logStep, -0.5 );
+                        newPath.addDataPoint( true, fx1, y );
+                        double fx2 = midPointData( xAxis, x, xUnits, dx, logStep, +0.5 );
+                        newPath.addDataPoint( true, fx2, y );
                     } else {
-                        // introduce break in line
-                        if (histogram) {
-                            double fx1 = xAxis.transform(x0 + xSampleWidthExact / 2, xUnits);
-                            newPath.lineTo(fx1, fy0);
-                            // there's a bug here if you pan around the dataset shown in SeriesBreakHist.java
-                            fx1 = xAxis.transform(x - xSampleWidthExact / 2, xUnits);
-                            newPath.moveTo(fx1, fy);
-                            newPath.lineTo(fx, fy);
-
-                        } else {
-                            if ( visible ) {
-                                newPath.moveTo(fx, fy);
-                                newPath.lineTo(fx, fy);
-                            }
-                        }
-
-                    } // else introduce break in line
-
-                    x0 = x;
-                    //y0 = y;
-                    fx0 = fx;
-                    fy0 = fy;
-                    visible0 = visible;
-
-                } else {
-                    if (visible0) {
-                        if ( histogram ) {
-                            double fx1 = midPoint( xAxis, x0, xUnits, xSampleWidthExact, logStep, 0.5 );
-                            newPath.lineTo(fx1, fy0);
-                        } else {
-                            newPath.moveTo(fx0, fy0); // place holder
-                        }
-                        visible0 = false; 
+                        newPath.addDataPoint( isValid, x, y );
                     }
-
                 }
-
+                                
             } // for ( ; index < ixmax && lastIndex; index++ )
-
-            if ( histogram ) {
-                if ( isValid ) {
-                    fx = xAxis.transform( x + xSampleWidthExact / 2, xUnits );
-                    newPath.lineTo(fx, fy0);
-                }
-            }
             
             logger.log(Level.FINE, "done create general path ({0}ms)", ( System.currentTimeMillis()-t0  ));
             
-            if (!histogram && simplifyPaths && colorByDataSetId.length()==0 ) {
-                //j   System.err.println( "input: " );
-                //j   System.err.println( GraphUtil.describe( newPath, true) );
+            boolean allowSimplify= (lastIndex-firstIndex)>SIMPLIFY_PATHS_MIN_LIMIT && xSampleWidth<1e37;
+            if (!histogram && simplifyPaths && allowSimplify && colorByDataSetId.length()==0 ) {
+                int pathLengthApprox= Math.max( 5, 110 * (lastIndex - firstIndex) / 100 );
                 this.path1= new GeneralPath(GeneralPath.WIND_NON_ZERO, pathLengthApprox );
-                //int count = GraphUtil.reducePath(newPath.getPathIterator(null), path1 );
-                int count = GraphUtil.reducePath20140622(newPath.getPathIterator(null), path1, 1, 5 );
+                int count = GraphUtil.reducePath20140622(newPath.getPathIterator(), path1, 1, 5 );
                 logger.fine( String.format("reduce path in=%d  out=%d\n", lastIndex-firstIndex, count) );
             } else {
-                this.path1 = newPath;
+                //this.path1 = newPath;
+                this.path1 = newPath.getGeneralPath();
             }
 
             //dumpPath( getParent().getCanvas().getWidth(), getParent().getCanvas().getHeight(), path1 );  // dumps jython script showing problem.
@@ -927,15 +864,17 @@ public class SeriesRenderer extends Renderer {
         }
     }
 
-    private double midPoint(DasAxis axis, double d1, Units units, double delta, boolean ratiometric, double alpha ) {
+    private double midPointData(DasAxis axis, double d1, Units units, double delta, boolean ratiometric, double alpha ) {
         double fx1;
         if (axis.isLog() && ratiometric ) {
-            fx1 = (double) axis.transform( Math.exp( Math.log(d1) + delta * alpha ), units);
+            fx1 = Math.exp( Math.log(d1) + delta * alpha );
         } else {
-            fx1 = (double) axis.transform( d1 + delta * alpha, units);
+            fx1 = d1 + delta * alpha;
         }
         return fx1;
     }
+    
+    
 
 //        /* dumps a jython script which draws the path See https://sourceforge.net/p/autoplot/bugs/1215/ */
 //        private static void dumpPath( int width, int height, GeneralPath path1 ) {
@@ -991,16 +930,16 @@ public class SeriesRenderer extends Renderer {
 //                float[] coords= new float[6];
 //                
 //                int type= it.currentSegment(coords);
-//                write.printf( "%9d ", type );
+//                write.printf( "%10d ", type );
 //                if ( type==PathIterator.SEG_MOVETO) {
 //                    for ( int i=0; i<6; i++ ) {
-//                        write.printf( "%9.1f ", -99999.  );
+//                        write.printf( "%10.2f ", -99999.  );
 //                    }
 //                    write.println();
-//                    write.printf( "%9d ", type );
+//                    write.printf( "%10d ", type );
 //                }
 //                for ( int i=0; i<6; i++ ) {
-//                    write.printf( "%9.1f ", coords[i] );
+//                    write.printf( "%10.2f ", coords[i] );
 //                }
 //                write.println();
 //                it.next();
@@ -1021,6 +960,7 @@ public class SeriesRenderer extends Renderer {
             if ( fillToRefPath1==null ) {
                 return 0;
             }
+            //g.setRenderingHint( RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE );
             //PathIterator it= fillToRefPath1.getPathIterator(null);
             //dumpPath(it);
                     
@@ -1051,7 +991,7 @@ public class SeriesRenderer extends Renderer {
             int pathLengthApprox= Math.max( 5, 110 * (lastIndex - firstIndex) / 100 );
             GeneralPath fillPath = new GeneralPath(GeneralPath.WIND_NON_ZERO, pathLengthApprox );
 
-            Datum sw = SemanticOps.guessXTagWidth( xds.trim(firstIndex,lastIndex) , dataSet.trim(firstIndex,lastIndex) );
+            Datum sw= getCadence( xds, vds, firstIndex, lastIndex );
             double xSampleWidth;
             boolean logStep;
             if ( sw!=null ) {
@@ -1101,7 +1041,7 @@ public class SeriesRenderer extends Renderer {
             fy = yAxis.transform(y, yUnits);
             if (histogram) {
                 double fx1;
-                fx1= midPoint( xAxis, x, xUnits, xSampleWidthExact, logStep, -0.5 );
+                fx1= xAxis.transform( midPointData( xAxis, x, xUnits, xSampleWidthExact, logStep, -0.5 ), xUnits );
                 fillPath.moveTo(fx1-1, fyref); // doesn't line up, -1 is fudge
                 fillPath.lineTo(fx1-1, fy);
                 fillPath.lineTo(fx, fy);
@@ -1135,7 +1075,9 @@ public class SeriesRenderer extends Renderer {
                         if ( ignoreCadence || step < xSampleWidth) {
                             // draw connect-a-dot between last valid and here
                             if (histogram) {
-                                double fx1 = (fx0 + fx) / 2; //sloppy with ratiometric spacing
+                                //System.err.println("fill: "+index);
+                                double fx1= xAxis.transform( midPointData( xAxis, x, xUnits, xSampleWidthExact, logStep, -0.5 ), xUnits );
+                                //double fx1 = (fx0 + fx) / 2; //sloppy with ratiometric spacing
                                 fillPath.lineTo(fx1, fy0);
                                 fillPath.lineTo(fx1, fy);
                                 fillPath.lineTo(fx, fy);
@@ -1146,10 +1088,11 @@ public class SeriesRenderer extends Renderer {
                         } else {
                             // introduce break in line
                             if (histogram) {
-                                double fx1 = midPoint( xAxis, x0, xUnits, xSampleWidthExact, logStep, 0.5 );
+                                //System.err.println("fill: "+index);
+                                double fx1 = xAxis.transform( midPointData( xAxis, x0, xUnits, xSampleWidthExact, logStep, 0.5 ), xUnits );
                                 fillPath.lineTo(fx1, fy0);
                                 fillPath.lineTo(fx1, fyref);
-                                fx1 = midPoint( xAxis, x, xUnits, xSampleWidthExact, logStep, -0.5 );
+                                fx1 = xAxis.transform( midPointData( xAxis, x, xUnits, xSampleWidthExact, logStep, -0.5 ), xUnits );
                                 fillPath.moveTo(fx1, fyref);
                                 fillPath.lineTo(fx1, fy);
                                 fillPath.lineTo(fx, fy);
@@ -1174,7 +1117,8 @@ public class SeriesRenderer extends Renderer {
             }
 
             if ( histogram ) {
-                double fx1 = midPoint( xAxis, x0, xUnits, xSampleWidthExact, logStep, 0.5 );
+                //System.err.println("fill: "+index);
+                double fx1 = xAxis.transform( midPointData( xAxis, x0, xUnits, xSampleWidthExact, logStep, 0.5 ), xUnits );
                 fillPath.lineTo(fx1, fy0);
                 fillPath.lineTo(fx1, fyref);
             } else {
@@ -1182,8 +1126,9 @@ public class SeriesRenderer extends Renderer {
             }
 
             this.fillToRefPath1 = fillPath;
-
-            if (simplifyPaths) {
+            
+            boolean allowSimplify= (lastIndex-firstIndex)>SIMPLIFY_PATHS_MIN_LIMIT && xSampleWidth<1e37;
+            if ( !histogram && simplifyPaths && allowSimplify && colorByDataSetId.length()==0 ) {
                 GeneralPath newPath= new GeneralPath(GeneralPath.WIND_NON_ZERO, pathLengthApprox );
                 int count= GraphUtil.reducePath(fillToRefPath1.getPathIterator(null), newPath );
                 fillToRefPath1= newPath;
@@ -1196,6 +1141,17 @@ public class SeriesRenderer extends Renderer {
         public boolean acceptContext(Point2D.Double dp) {
             return fillToRefPath1 != null && fillToRefPath1.contains(dp);
         }
+    }
+    
+    private static final int SIMPLIFY_PATHS_MIN_LIMIT = 1000;
+
+    /**
+     * get the cadence for the data.  TODO: ideally, we wouldn't do this repeatedly.
+     */
+    private Datum getCadence(QDataSet xds, QDataSet yds, int firstIndex, int lastIndex) {
+        MutablePropertyDataSet xds1= Ops.copy(xds.trim(firstIndex,lastIndex));
+        xds1.putProperty(QDataSet.CADENCE,null);
+        return SemanticOps.guessXTagWidth( xds1, yds.trim(firstIndex,lastIndex) );
     }
 
     /**
@@ -2517,10 +2473,18 @@ public class SeriesRenderer extends Renderer {
         updateCacheImage();
     }
 
+    /**
+     * how each plot symbol is filled.
+     * @return 
+     */
     public FillStyle getFillStyle() {
         return fillStyle;
     }
 
+    /**
+     * how each plot symbol is filled.
+     * @param fillStyle 
+     */
     public void setFillStyle(FillStyle fillStyle) {
         this.fillStyle = fillStyle;
         updatePsym();

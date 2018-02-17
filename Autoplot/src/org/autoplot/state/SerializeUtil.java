@@ -82,19 +82,30 @@ public class SerializeUtil {
      * @param node the dom node (Application, Plot, PlotElement, etc.)
      * @param scheme the version of the vap that we are writing.  This identifies the scheme, but also provides names for nodes.
      * @return the Document (XML) element for the node.
-     */
+     */    
     public static Element getDomElement( Document document, DomNode node, VapScheme scheme ) {
+        return getDomElement( document, node, scheme, true );
+    }
+        
+    /**
+     * Return the XML for the node.
+     * @param document the document to which the node is added.
+     * @param node the dom node (Application, Plot, PlotElement, etc.)
+     * @param scheme the version of the vap that we are writing.  This identifies the scheme, but also provides names for nodes.
+     * @param includeDefaults if true, include nodes which are the default setting
+     * @return the Document (XML) element for the node.
+     */
+    public static Element getDomElement( Document document, DomNode node, VapScheme scheme, boolean includeDefaults ) {
         try {
             String elementName = scheme.getName(node.getClass());
             DomNode defl = node.getClass().newInstance();
-            Element element = null;
+            Element element;
             
             element = document.createElement(elementName);
             
             BeanInfo info = BeansUtil.getBeanInfo(node.getClass());
             PropertyDescriptor[] properties = info.getPropertyDescriptors();
-            for (int i = 0; i < properties.length; i++) {
-                PropertyDescriptor pd = properties[i];
+            for (PropertyDescriptor pd : properties) {
                 String propertyName = pd.getName();
 
                 if ( propertyName.equals("class") ) continue;
@@ -125,16 +136,10 @@ public class SerializeUtil {
                     logger.log(Level.FINE, "skipping property \"{0}\" of {1}, failed to find read and write method.", new Object[]{propertyName, elementName});
                     continue;
                 }
-                Object value = null;
+                Object value;
                 try {
                     value = readMethod.invoke(node, new Object[0]);
-                } catch (IllegalAccessException ex) {
-                    logger.log(Level.SEVERE, ex.getMessage(), ex);
-                    continue;
-                } catch (IllegalArgumentException ex) {
-                    logger.log(Level.SEVERE, ex.getMessage(), ex);
-                    continue;
-                } catch (InvocationTargetException ex) {
+                } catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException ex) {
                     logger.log(Level.SEVERE, ex.getMessage(), ex);
                     continue;
                 }
@@ -155,7 +160,7 @@ public class SerializeUtil {
                     Element propertyElement = document.createElement("property");
                     propertyElement.setAttribute("name", propertyName);
                     propertyElement.setAttribute("type", "DomNode");
-                    Element child = getDomElement(document, (DomNode) value, scheme);
+                    Element child = getDomElement(document, (DomNode) value, scheme, includeDefaults );
                     propertyElement.appendChild(child);
                     element.appendChild(propertyElement);
                 } else if (ipd != null && !connectorKludge107 && (DomNode.class.isAssignableFrom(ipd.getIndexedPropertyType()))) {
@@ -167,7 +172,7 @@ public class SerializeUtil {
                     propertyElement.setAttribute("length", String.valueOf(Array.getLength(value)));
                     for (int j = 0; j < Array.getLength(value); j++) {
                         Object value1 = Array.get(value, j);
-                        Element child = getDomElement(document, (DomNode) value1, scheme);
+                        Element child = getDomElement(document, (DomNode) value1, scheme, includeDefaults );
                         propertyElement.appendChild(child);
                     }
                     element.appendChild(propertyElement);
@@ -185,30 +190,20 @@ public class SerializeUtil {
                     element.appendChild(propertyElement);
                 } else {
                     Object defltValue = DomUtil.getPropertyValue(defl, pd.getName());
-                    Element prop = getElementForLeafNode(document, pd.getPropertyType(), value, defltValue);
-                    if (prop == null) {
-                        logger.log(Level.WARNING, "unable to serialize {0}", propertyName);
-                        prop = getElementForLeafNode(document, pd.getPropertyType(), value, defltValue);
-                        continue;
+                    if ( !value.equals(defltValue) || includeDefaults ) {                        
+                        Element prop = getElementForLeafNode(document, pd.getPropertyType(), value, defltValue);
+                        if (prop == null) {
+                            logger.log(Level.WARNING, "unable to serialize {0}", propertyName);
+                            //prop = getElementForLeafNode(document, pd.getPropertyType(), value, defltValue);
+                            continue;
+                        }
+                        prop.setAttribute("name", pd.getName());
+                        element.appendChild(prop);                        
                     }
-                    prop.setAttribute("name", pd.getName());
-                    element.appendChild(prop);
                 }
             }
             return element;
-        } catch (IntrospectionException ex) {
-            logger.log(Level.SEVERE, ex.getMessage(), ex);
-            throw new RuntimeException(ex);
-        } catch (IllegalArgumentException ex) {
-            logger.log(Level.SEVERE, ex.getMessage(), ex);
-            throw new RuntimeException(ex);
-        } catch (InvocationTargetException ex) {
-            logger.log(Level.SEVERE, ex.getMessage(), ex);
-            throw new RuntimeException(ex);
-        } catch (InstantiationException ex) {
-            logger.log(Level.SEVERE, ex.getMessage(), ex);
-            throw new RuntimeException(ex);
-        } catch (IllegalAccessException ex) {
+        } catch (IntrospectionException | IllegalArgumentException | InvocationTargetException | InstantiationException | IllegalAccessException ex) {
             logger.log(Level.SEVERE, ex.getMessage(), ex);
             throw new RuntimeException(ex);
         }
@@ -218,7 +213,9 @@ public class SerializeUtil {
     /**
      * return the Element, or null if we can't handle it
      * @param document
-     * @param node
+     * @param propClass 
+     * @param value
+     * @param defltValue 
      * @return
      */
     public static Element getElementForLeafNode( Document document, Class propClass, Object value, Object defltValue ) {
@@ -278,14 +275,14 @@ public class SerializeUtil {
 
     /**
      * decode the DomNode from the document element.
-     * @param element
-     * @param packg  the java package containing the default package for nodes.
+     * @param element the DOM element
+     * @param scheme the current version
      * @return
      * @throws ParseException
      */
     public static DomNode getDomNode( Element element, VapScheme scheme ) throws ParseException {
         try {
-            DomNode node = null;
+            DomNode node;
 
             String clasName= element.getNodeName();
 
@@ -302,8 +299,8 @@ public class SerializeUtil {
 
             PropertyDescriptor[] properties = info.getPropertyDescriptors();
             Map<String,PropertyDescriptor> pp= new HashMap();
-            for ( int i=0; i<properties.length; i++ ) {
-                pp.put( properties[i].getName(), properties[i] );
+            for (PropertyDescriptor property : properties) {
+                pp.put(property.getName(), property);
             }
 
             if ( element.hasAttribute("id") ) {
@@ -315,7 +312,7 @@ public class SerializeUtil {
             for ( int i=0; i<kids.getLength(); i++ ) {
                 Node k= kids.item(i);
                 if ( k instanceof Element ) {
-                    logger.log( Level.FINE, "reading node {0}", k.getNodeName() + k.getAttributes().getNamedItem("name") + " " + k.getAttributes().getNamedItem("value") );
+                    logger.log(Level.FINE, "reading node {0}{1} {2}", new Object[]{k.getNodeName(), k.getAttributes().getNamedItem("name"), k.getAttributes().getNamedItem("value")});
                     //Node nameNode= k.getAttributes().getNamedItem("name");
                     //if ( node instanceof Application && nameNode!=null && nameNode.getNodeValue().equals("connectors") ) {
                     //    System.err.println("here connectors");
@@ -397,16 +394,7 @@ public class SerializeUtil {
 
             return node;
 
-        } catch (IntrospectionException ex) {
-            logger.log(Level.SEVERE, ex.getMessage(), ex);
-            throw new RuntimeException(ex);
-        } catch (IllegalArgumentException ex) {
-            logger.log(Level.SEVERE, ex.getMessage(), ex);
-            throw new RuntimeException(ex);
-        } catch (InstantiationException ex) {
-            logger.log(Level.SEVERE, ex.getMessage(), ex);
-            throw new RuntimeException(ex);
-        } catch (IllegalAccessException ex) {
+        } catch (IntrospectionException | IllegalArgumentException | InstantiationException | IllegalAccessException ex) {
             logger.log(Level.SEVERE, ex.getMessage(), ex);
             throw new RuntimeException(ex);
         }

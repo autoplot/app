@@ -10,13 +10,15 @@
 	<homepage href="http://autoplot.org/" />
         <description>plots data from various sources, such as opendap, cdf, and netcdf using das2</description> 
         <description kind="short">data plotter</description> 
-        <icon href="logo16x16.gif" width="16" height="16" />
-        <icon href="logo32x32.gif" width="32" height="32" />
-        <icon href="logo64x64.gif" width="64" height="64" />
-        <icon href="logo128x128.gif" width="128" height="128" />
-        <icon href="splash.gif" kind="splash" />
+        <icon href="resources/logo16.png" width="16" height="16" />
+        <icon href="resources/logo24.png" width="24" height="24" />
+        <icon href="resources/logo32.png" width="32" height="32" />
+        <icon href="resources/logo48.png" width="48" height="48" />
+        <icon href="resources/logo64.png" width="64" height="64" />
+        <icon href="resources/logo128.png" width="128" height="128" />
+        <icon href="splash.png" kind="splash" />
         <offline-allowed/>
-        <shortcut online="false" install="true">
+        <shortcut online="true">
             <desktop />
             <menu submenu="autoplot" />
         </shortcut>
@@ -29,14 +31,17 @@
     </security>
 
     <resources> 
-        <j2se version="*" initial-heap-size="*" max-heap-size="*" 
+        <j2se version="*" initial-heap-size="96m" max-heap-size="*" 
               href="http://java.sun.com/products/autodl/j2se" >
         </j2se>
 
         <jar href="AutoplotVolatile.jar" />
-        <jar href="*" /> <!-- AutoplotStable.jar moves around -->
+        <jar href="*" />
+
+        <extension name="cdf" href="*" />
 
         <property name="jnlp.packEnabled" value="true"/>
+        <!-- this no longer has any effect: <property name="deployment.security.authenticator" value="false"/>-->
 
         <property name="jnlp.autoplot.default.bookmarks" value="http://autoplot.org/data/demos.xml" />
         <property name="sun.java2d.d3d" value="false" />  <!-- bug 953 -->

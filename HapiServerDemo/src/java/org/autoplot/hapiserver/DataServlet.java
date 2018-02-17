@@ -80,7 +80,7 @@ public class DataServlet extends HttpServlet {
      */
     protected void processRequest(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
-        
+                
         String HAPI_SERVER_HOME= getServletContext().getInitParameter("HAPI_SERVER_HOME");
         Util.setHapiHome( new File( HAPI_SERVER_HOME ) );
             
@@ -91,11 +91,13 @@ public class DataServlet extends HttpServlet {
         String parameters= getParam( params, "parameters", "", "The comma separated list of parameters to include in the response ", null );
         String include= getParam( params, "include", "", "include header at the top", Pattern.compile("(|header)") );
         String format= getParam( params, "format", "", "The desired format for the data stream.", Pattern.compile("(|csv|binary)") );
-        String stream= getParam( params, "stream", "true", "allow/disallow streaming.", Pattern.compile("(|true|false)") );
-        
+        String stream= getParam( params, "_stream", "true", "allow/disallow streaming.", Pattern.compile("(|true|false)") );
+        String timer= getParam( params, "_timer", "false", "service request with timing output stream", Pattern.compile("(|true|false)") );
         if ( !params.isEmpty() ) {
             throw new ServletException("unrecognized parameters: "+params);
         }
+        
+        logger.log(Level.FINE, "data request for {0} {1}/{2}", new Object[]{id, timeMin, timeMax});
         
         DataFormatter dataFormatter;
         if ( format.equals("binary") ) {
@@ -107,7 +109,12 @@ public class DataServlet extends HttpServlet {
             dataFormatter= new CsvDataFormatter();
             response.setHeader("Content-disposition", "attachment; filename="+ Ops.safeName(id) + "_"+timeMin+ "_"+timeMax + ".csv" ); 
         }
-
+        
+        
+        response.setHeader("Access-Control-Allow-Origin", "* " );
+        response.setHeader("Access-Control-Allow-Methods","GET" );
+        response.setHeader("Access-Control-Allow-Headers","Content-Type" );
+        
         DatumRange dr;
         try {
             dr = new DatumRange( Units.cdfTT2000.parse(timeMin), Units.cdfTT2000.parse(timeMax) );
@@ -125,6 +132,12 @@ public class DataServlet extends HttpServlet {
         boolean allowStream= !stream.equals("false");
 
         OutputStream out = response.getOutputStream();
+        
+        long t0= System.currentTimeMillis();
+        
+        if ( timer.equals("true") || request.getRemoteAddr().equals("127.0.0.1")  || request.getRemoteAddr().equals("0:0:0:0:0:0:0:1")) {
+            out= new IdleClockOutputStream(out);
+        }
                 
         File[] dataFiles= null;
         dsiter= null;
@@ -156,7 +169,9 @@ public class DataServlet extends HttpServlet {
         
         if ( dataFiles==null ) {
             try {
+                logger.log(Level.FINER, "data files is null at {0} ms.", System.currentTimeMillis()-t0);
                 dsiter= checkAutoplotSource( id, dr, allowStream );
+                logger.log(Level.FINER, "done checkAutoplotSource at {0} ms.", System.currentTimeMillis()-t0);
                 if ( dsiter==null ) {
                     File dataFileHome= new File( Util.getHapiHome(), "data" );
                     File dataFile= new File( dataFileHome, id+".csv" );
@@ -164,6 +179,7 @@ public class DataServlet extends HttpServlet {
                         dataFiles= new File[] { dataFile };
                     } else {
                         if ( id.equals("0B000800408DD710.noStream") ) {
+                            logger.log(Level.FINER, "noStream demo shows without streaming" );
                             dsiter= new RecordIterator( "file:/home/jbf/public_html/1wire/data/$Y/$m/$d/0B000800408DD710.$Y$m$d.d2s", dr, false ); // allow Autoplot to select
                         } else {
                             throw new IllegalArgumentException("bad id: "+id+", does not exist: "+dataFile );
@@ -219,7 +235,14 @@ public class DataServlet extends HttpServlet {
             
             if ( dataFiles!=null ) {
                 for ( File dataFile : dataFiles ) {
-                    cachedDataCsv( dataFormatter, out, dataFile, dr, parameters, indexMap );
+                    cachedDataCsv(out, dataFile, dr, parameters, indexMap );
+                }
+                
+                if ( out instanceof IdleClockOutputStream ) {
+                    logger.log(Level.FINE, "request handled with cache in {0} ms, ", new Object[]{System.currentTimeMillis()-t0, 
+                        ((IdleClockOutputStream)out).getStatsOneLine() });
+                } else {
+                    logger.log(Level.FINE, "request handled with cache in {0} ms.", System.currentTimeMillis()-t0);
                 }
                 return;
             }
@@ -277,6 +300,14 @@ public class DataServlet extends HttpServlet {
             out.close();
             
         }
+        
+        if ( out instanceof IdleClockOutputStream ) {
+            logger.log(Level.FINE, "request handled in {0} ms, {1}",
+                    new Object[]{System.currentTimeMillis()-t0, 
+                        ((IdleClockOutputStream)out).getStatsOneLine() });
+        } else {
+            logger.log(Level.FINE, "request handled in {0} ms.", System.currentTimeMillis()-t0);
+        }
     }
 
     // <editor-fold defaultstate="collapsed" desc="HttpServlet methods. Click on the + sign on the left to edit the code.">
@@ -332,7 +363,8 @@ public class DataServlet extends HttpServlet {
         File dataFileHome= new File( Util.getHapiHome(), "data" );
         File dataFile= new File( dataFileHome, id+".csv" );
         
-        try ( BufferedReader r = new BufferedReader( new InputStreamReader( request.getInputStream() ) ); BufferedWriter fout= new BufferedWriter( new FileWriter(dataFile) ) ) { //TODO: merge
+        try ( BufferedReader r = new BufferedReader( new InputStreamReader( request.getInputStream() ) );
+              BufferedWriter fout= new BufferedWriter( new FileWriter(dataFile) ) ) { //TODO: merge
             String s;
             while ( (s=r.readLine())!=null ) {
                 fout.write(s);
@@ -371,21 +403,26 @@ public class DataServlet extends HttpServlet {
     /**
      * we have the csv pre-calculated, so just read from it.
      * Note the output stream is closed here!
-     * @param out
+     * @param out the output stream accepting data
      * @param dataFile file to send, which if ends in .gz, uncompress it, 
-     * @param dr
-     * @param parameters
+     * @param dr the range to which the data should be trimmed.
+     * @param parameters if non-empty, then return just these parameters of the cached data.
      * @throws FileNotFoundException
      * @throws IOException 
      * 
      */
-    private void cachedDataCsv( DataFormatter dataFormatter, OutputStream out, File dataFile, DatumRange dr, String parameters, int[] indexMap ) throws FileNotFoundException, IOException {
+    private void cachedDataCsv( OutputStream out, File dataFile, DatumRange dr, String parameters, int[] indexMap) throws FileNotFoundException, IOException {
+
+        long t0= System.currentTimeMillis();
+        
         Reader freader;
         if ( dataFile.getName().endsWith(".gz") ) {
             freader= new InputStreamReader( new GZIPInputStream( new FileInputStream(dataFile) ) );
         } else {
             freader= new FileReader(dataFile);
         }
+        
+        logger.fine( "reading cache csv file: "+dataFile+" "  );
         
         //TODO: handle parameters and format=binary, think about JSON
         int[] pmap=null;
@@ -423,6 +460,14 @@ public class DataServlet extends HttpServlet {
             }
         } finally {
             freader.close();
+        }
+        long timer= System.currentTimeMillis()-t0;
+        
+        if ( out instanceof IdleClockOutputStream ) {
+            String s=  ((IdleClockOutputStream)out).getStatsOneLine();
+            logger.fine( "done reading cache csv file ("+timer+"ms, "+s +"): "+dataFile );
+        } else {
+            logger.fine( "done reading cache csv file ("+timer+"ms): "+dataFile );
         }
     }
     

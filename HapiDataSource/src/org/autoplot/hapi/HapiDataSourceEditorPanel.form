@@ -16,7 +16,7 @@
   <Layout>
     <DimensionLayout dim="0">
       <Group type="103" groupAlignment="0" attributes="0">
-          <Component id="jSplitPane1" alignment="0" pref="579" max="32767" attributes="0"/>
+          <Component id="jSplitPane1" alignment="0" pref="707" max="32767" attributes="0"/>
           <Group type="102" attributes="0">
               <EmptySpace min="-2" max="-2" attributes="0"/>
               <Group type="103" groupAlignment="0" attributes="0">
@@ -35,8 +35,10 @@
                       <Component id="exampleTimeRangesCB" min="-2" pref="224" max="-2" attributes="0"/>
                   </Group>
                   <Group type="102" alignment="0" attributes="0">
-                      <Component id="jLabel3" max="32767" attributes="0"/>
-                      <EmptySpace max="-2" attributes="0"/>
+                      <Component id="messagesLabel" max="32767" attributes="0"/>
+                      <EmptySpace min="-2" max="-2" attributes="0"/>
+                      <Component id="disableCacheCheckBox" min="-2" max="-2" attributes="0"/>
+                      <EmptySpace min="-2" max="-2" attributes="0"/>
                       <Component id="binaryCB" min="-2" max="-2" attributes="0"/>
                   </Group>
               </Group>
@@ -56,8 +58,9 @@
               <Component id="jSplitPane1" max="32767" attributes="0"/>
               <EmptySpace min="-2" max="-2" attributes="0"/>
               <Group type="103" groupAlignment="3" attributes="0">
-                  <Component id="jLabel3" alignment="3" min="-2" max="-2" attributes="0"/>
+                  <Component id="messagesLabel" alignment="3" min="-2" max="-2" attributes="0"/>
                   <Component id="binaryCB" alignment="3" pref="25" max="32767" attributes="0"/>
+                  <Component id="disableCacheCheckBox" alignment="3" min="-2" max="-2" attributes="0"/>
               </Group>
               <EmptySpace min="-2" pref="5" max="-2" attributes="0"/>
               <Group type="103" groupAlignment="0" attributes="0">
@@ -129,11 +132,13 @@
           <Layout>
             <DimensionLayout dim="0">
               <Group type="103" groupAlignment="0" attributes="0">
-                  <Component id="jScrollPane4" pref="384" max="32767" attributes="0"/>
+                  <Component id="jScrollPane4" pref="486" max="32767" attributes="0"/>
                   <Group type="102" alignment="0" attributes="0">
                       <Component id="clearAllB" min="-2" max="-2" attributes="0"/>
                       <EmptySpace max="-2" attributes="0"/>
                       <Component id="setAllB" min="-2" max="-2" attributes="0"/>
+                      <EmptySpace max="-2" attributes="0"/>
+                      <Component id="cachedFileButton" min="-2" max="-2" attributes="0"/>
                       <EmptySpace max="32767" attributes="0"/>
                       <Component id="extraInfoButton" min="-2" max="-2" attributes="0"/>
                   </Group>
@@ -151,6 +156,7 @@
                           <Component id="clearAllB" alignment="3" min="-2" max="-2" attributes="0"/>
                           <Component id="setAllB" alignment="3" min="-2" max="-2" attributes="0"/>
                           <Component id="extraInfoButton" alignment="3" min="-2" max="-2" attributes="0"/>
+                          <Component id="cachedFileButton" alignment="3" min="-2" max="-2" attributes="0"/>
                       </Group>
                   </Group>
               </Group>
@@ -211,6 +217,14 @@
               <Properties>
                 <Property name="text" type="java.lang.String" value=" "/>
               </Properties>
+            </Component>
+            <Component class="javax.swing.JButton" name="cachedFileButton">
+              <Properties>
+                <Property name="text" type="java.lang.String" value="Cached Files..."/>
+              </Properties>
+              <Events>
+                <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="cachedFileButtonActionPerformed"/>
+              </Events>
             </Component>
           </SubComponents>
         </Container>
@@ -281,12 +295,16 @@
                 <Property name="icon" type="javax.swing.Icon" editor="org.netbeans.modules.form.editors2.IconEditor">
                   <Image iconType="3" name="/org/autoplot/hapi/clearTextButton.png"/>
                 </Property>
+                <Property name="toolTipText" type="java.lang.String" value="clear search bar"/>
               </Properties>
               <Events>
                 <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="clearButtonActionPerformed"/>
               </Events>
             </Component>
             <Component class="org.autoplot.datasource.RecentComboBox" name="filtersComboBox">
+              <Properties>
+                <Property name="toolTipText" type="java.lang.String" value="search bar"/>
+              </Properties>
               <Events>
                 <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="filtersComboBoxActionPerformed"/>
               </Events>
@@ -295,7 +313,7 @@
         </Container>
       </SubComponents>
     </Container>
-    <Component class="javax.swing.JLabel" name="jLabel3">
+    <Component class="javax.swing.JLabel" name="messagesLabel">
       <Properties>
         <Property name="text" type="java.lang.String" value="(messages here)"/>
       </Properties>
@@ -323,6 +341,11 @@
       <AuxValues>
         <AuxValue name="JavaCodeGenerator_TypeParameters" type="java.lang.String" value="&lt;String&gt;"/>
       </AuxValues>
+    </Component>
+    <Component class="javax.swing.JCheckBox" name="disableCacheCheckBox">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="Disable Cache"/>
+      </Properties>
     </Component>
   </SubComponents>
 </Form>

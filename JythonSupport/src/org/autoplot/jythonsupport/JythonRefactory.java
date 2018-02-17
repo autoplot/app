@@ -129,6 +129,8 @@ public class JythonRefactory {
     
     /**
      * read in the stream, replacing import statements with new packages.
+     * This also fixes the old BoxSelected procedure name, which should have
+     * been boxSelected on day 1.
      * @param in the input stream containing Jython code.
      * @return new stream, approximately the same length and same number of lines.
      * @throws IOException 
@@ -252,6 +254,9 @@ public class JythonRefactory {
                             String skey= e.getKey(); //BUG need to prefix with space or chindex=0.
                             int i= line.indexOf(skey);
                             while ( i>-1 ) {
+                                String s= line.substring(0,i);
+                                int singleQuoteCount= s.split("'",-2).length - 1;
+                                if ( singleQuoteCount % 2 == 1 ) break; // within string
                                 Matcher matcher= identifierP.matcher(line.substring(i));
                                 if ( matcher.find() ) { // should be true
                                     String mehave= matcher.group(1);

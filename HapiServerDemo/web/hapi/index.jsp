@@ -20,16 +20,33 @@
         <title>HAPI Server JSP Demo</title>
     </head>
     <body>
-        <h1>This is a HAPI Server.</h1>  More information about this type of server is found at <a href="https://github.com/hapi-server/data-specification" target="_blank">github</a>.
-        This implementation of the HAPI server uses Autoplot URIs to load data, more information about Autoplot can be found <a href="http://autoplot.org" target="_blank">here</a>
+        <h1>This is a HAPI Server.</h1>  More information about this type of server is found at <a href="https://github.com/hapi-server/data-specification" target="_blank">GitHub</a>.
+        This implementation of the HAPI server uses Autoplot URIs to load data, more information about Autoplot can be found <a href="http://autoplot.org" target="_blank">here</a>.
+
+        <br>Run HAPI server <a href="http://tsds.org/verify-hapi/?url=http://jfaden.net/HapiServerDemo/hapi">verifier</a>.
+        <%
+            String ip = request.getRemoteAddr();
+            if (ip.equals("127.0.0.1")) {
+                Enumeration<String> hh= request.getHeaders("X-Forwarded-For");
+                if ( hh.hasMoreElements() ) {
+                    ip = hh.nextElement();
+                }
+            }
+            if ( ip.equals("127.0.0.1") || ip.equals("0:0:0:0:0:0:0:1") ) {
+                String s= request.getRequestURI();
+                int i= s.indexOf("/",1);
+                s= s.substring(0,i);
+                out.println( String.format( "<br>This is run from localhost, set logging with <a href='%s/SetLogLevel'>SetLogLevel</a>. ", s ));
+                out.println( "Requests from localhost will have performance monitored, which can degrade performance.<br><br>");
+            }
+            %>
         
         <h3>Some example requests:</h3>
         <a href="catalog">Catalog</a> <i>Show the catalog of available data sets.</i><br>
         <a href="capabilities">Capabilities</a> <i>Capabilities of the server. For example, can it use binary streams to transfer data?</i><br>
-        Run HAPI server <a href="http://tsds.org/verify-hapi/?url=http://jfaden.net/HapiServerDemo/hapi">verifier</a>.
         <br>
         <%
-
+            try {
             String HAPI_SERVER_HOME= getServletContext().getInitParameter("HAPI_SERVER_HOME");
             Util.setHapiHome( new File( HAPI_SERVER_HOME ) );
             
@@ -77,6 +94,10 @@
                     }
                 }
                 
+            }
+            } catch ( JSONException ex ) {
+                out.print("<br><br><b>Something has gone wrong, see logs or send an email to faden at cottagesystems.com</b>");
+                out.println("<br>"+out.toString());
             }
         %>
         <br><br>
@@ -134,6 +155,11 @@
             <li>2017-06-28: return 404 when ID is bad, instead of empty response.  Bugfix, where streaming datasources would output an extra record.  Bugfix, subset parameters in info request.  Thanks, Bob!</li>
             <li>2017-08-14: add experimental caching mechanism, where HOME/hapi/cache can contain daily cache files.  Cache is stored in .gzip form.</li>
             <li>2017-08-23: failed release was using old version, where format=binary would return ascii files from the cache.  ascii would not properly subset.</li>
+            <li>2017-11-06: put in new catch-all code on the landing page, to aid in debugging.
+            <li>2017-12-01: allow modification date to be "lastday" meaning the dataset was updated at midnight
+            <li>2017-12-02: various improvements to logging, and new class for monitoring output stream idle added.  More improvements.
+            <li>2017-12-03: correct check for localhost.
+            <li>2018-02-13: add message to error message for info response.  Update version declations to HAPI 2.0.
         </ul>
         </small>
     </body>

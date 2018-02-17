@@ -1,6 +1,7 @@
 
 package org.autoplot;
 
+import external.AnnotationCommand;
 import external.PlotCommand;
 import java.awt.BorderLayout;
 import java.awt.Component;
@@ -42,6 +43,7 @@ import org.autoplot.scriptconsole.MakeToolPanel;
 import org.autoplot.datasource.DataSetURI;
 import org.autoplot.datasource.DataSourceUtil;
 import org.autoplot.datasource.URISplit;
+import org.autoplot.jythonsupport.DatasetCommand;
 import org.autoplot.jythonsupport.ui.EditorTextPane;
 import org.autoplot.jythonsupport.ui.ParametersFormPanel;
 import org.autoplot.jythonsupport.ui.ScriptPanelSupport;
@@ -82,6 +84,9 @@ public class JythonUtil {
         interp.set( "monitor", new NullProgressMonitor() );
         interp.set( "plotx", new PlotCommand() );
         interp.set( "plot", new PlotCommand() );
+        interp.set( "dataset", new DatasetCommand() );
+        interp.set( "annotation", new AnnotationCommand() );
+        
         return interp;
     }
 
@@ -203,15 +208,17 @@ public class JythonUtil {
     
     /**
      * invoke the python script on another thread.
-     * @param uri the address of the script.
+     * @param uri the address of the script, possibly having parameters.
      * @param dom if null, then null is passed into the script and the script must not use dom.
      * @param mon monitor to detect when script is finished.  If null, then a NullProgressMonitor is created.
      * @throws java.io.IOException
      */
     public static void invokeScriptSoon( final URI uri, final Application dom, ProgressMonitor mon ) throws IOException {
-        invokeScriptSoon( uri, dom, new HashMap(), false, false, mon );
+        URISplit split= URISplit.parse(uri);
+        Map<String,String> params= URISplit.parseParams(split.params);
+        invokeScriptSoon( split.resourceUri, dom, params, false, false, mon );
     }
-    
+
     private static final HashMap<String,String> okayed= new HashMap();
     
     private static boolean isScriptOkayed( String filename, String contents ) {

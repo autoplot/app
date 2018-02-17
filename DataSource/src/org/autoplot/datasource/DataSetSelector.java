@@ -505,7 +505,7 @@ public class DataSetSelector extends javax.swing.JPanel {
                                     try {
                                         tsb.setURI(surl);
                                         if ( tsb.getTimeRange()!=null && !timeRange.equals(tsb.getTimeRange() ) ) {
-                                            timeRange= pickTimeRange( this,
+                                            timeRange= pickTimeRange( SwingUtilities.getWindowAncestor(this),
                                                     Arrays.asList( timeRange, tsb.getTimeRange() ),
                                                     Arrays.asList( "Current", "URI" ) );
                                             tsb.setTimeRange(timeRange);
@@ -794,13 +794,13 @@ public class DataSetSelector extends javax.swing.JPanel {
                 }
             } else {
                 URISplit split= URISplit.parse(surl);
-                if ( !".vap".equals(split.ext) ) { //TODO: kludge, .vap should be a browseTrigger
+                if ( !".vap".equals(split.ext) ) { 
                     if ( split.ext!=null ) {
                         //experiment with GUI based on completions.
                         edit= new CompletionsDataSourceEditor();
                     }
                 } else {
-                    if ( split.path.startsWith("file:") ) {
+                    if ( split.path.startsWith("file:") ) { //TODO: I believe this is now dead code which will not be reached because of .vap browse trigger.
                         String result= DataSetSelectorSupport.browseLocalVap(this, surl);
                         if (result != null ) {
                             this.setValue(result);
@@ -985,6 +985,7 @@ public class DataSetSelector extends javax.swing.JPanel {
         final String surl = tf.getText();
         int carotpos = tf.getCaretPosition();
         setMessage("busy: getting completions");
+        setCursor( Cursor.getPredefinedCursor( Cursor.WAIT_CURSOR ) );
         showCompletions(surl, carotpos);
 
     }
@@ -1068,6 +1069,10 @@ public class DataSetSelector extends javax.swing.JPanel {
 
         } else {
             if ( split.scheme!=null && split.scheme.equals("file") ) {
+                if ( ".vap".equals(split.ext) && split.resourceUriCarotPos > split.file.length() ) {
+                    showVapCompletions(URISplit.format(split), split.formatCarotPos);
+                    return;
+                }
                 if ( !surl.startsWith("vap") ) maybeClearVap(split);
                 showFileSystemCompletions(URISplit.format(split), split.formatCarotPos);
                 return;
@@ -1123,6 +1128,7 @@ public class DataSetSelector extends javax.swing.JPanel {
         //completionsPopupMenu.setFocusable(true);
         
         setMessage("done getting completions");
+        setCursor( Cursor.getPredefinedCursor( Cursor.DEFAULT_CURSOR ) );
 
         SwingUtilities.invokeLater(new Runnable() {
             @Override
@@ -1300,11 +1306,26 @@ public class DataSetSelector extends javax.swing.JPanel {
                     sep= true;
                 }
                 remote.add(l);
-                logger.log(Level.FINEST, "appening {0}", l.completion);
+                logger.log(Level.FINEST, "appending {0}", l.completion);
             }
         }
     }
     
+    private void showVapCompletions( final String format, final int formatCarotPos) {
+        //URISplit split= URISplit.parse(format);
+        calcAndShowCompletions( new Runnable() {
+            @Override
+            public void run() {
+                List<CompletionResult> completions= new ArrayList<>();
+                completions.add( new CompletionResult( "timerange", "reset the timerange") );
+                completions.add( new CompletionResult( "plots[0].yaxis.range", "reset the yaxis range") );
+                showCompletionsGui( format.substring(0,formatCarotPos), completions );
+
+            }
+        } );
+   
+    }
+
     private void showFileSystemCompletions(final String surl, final int carotpos) {
 
         logger.log(Level.FINE, "entering showFileSystemCompletions({0},{1})", new Object[]{surl, carotpos});
@@ -1427,6 +1448,7 @@ public class DataSetSelector extends javax.swing.JPanel {
                 try {
                     completions2 = DataSetURI.getFactoryCompletions(surl, carotpos, completionsMonitor);
                     setMessage("done getting completions");
+                    setCursor( Cursor.getPredefinedCursor( Cursor.DEFAULT_CURSOR ) );
                 } catch (Exception ex ) {
                     if ( !maybeHandleException(ex) ) {
                         setMessage("" + ex.getClass().getName() + " " + ex.getMessage());

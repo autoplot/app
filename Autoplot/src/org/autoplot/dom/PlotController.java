@@ -25,7 +25,6 @@ import org.das2.datum.InconvertibleUnitsException;
 import org.das2.datum.Units;
 import org.das2.datum.UnitsUtil;
 import org.das2.datum.format.DateTimeDatumFormatter;
-import org.das2.datum.format.TimeDatumFormatter;
 import org.das2.event.BoxZoomMouseModule;
 import org.das2.event.DasMouseInputAdapter;
 import org.das2.event.MouseModule;
@@ -51,6 +50,7 @@ import org.das2.qds.DataSetUtil;
 import org.das2.qds.QDataSet;
 import org.das2.qds.SemanticOps;
 import org.autoplot.datasource.URISplit;
+import org.autoplot.util.TickleTimer;
 import org.das2.qds.ops.Ops;
 
 /**
@@ -252,12 +252,18 @@ public class PlotController extends DomNodeController {
             DasPlot p= dasPlot;
             MouseModuleType mm= (MouseModuleType) evt.getNewValue();
             MouseModule m= null;
-            if ( mm==MouseModuleType.boxZoom ) {
-                m= p.getDasMouseInputAdapter().getModuleByLabel("Box Zoom");
-            } else if ( mm==MouseModuleType.crosshairDigitizer ) {
-                m= p.getDasMouseInputAdapter().getModuleByLabel("Crosshair Digitizer");
-            } else if ( mm==MouseModuleType.zoomX ) {
-                m= p.getDasMouseInputAdapter().getModuleByLabel("Zoom X");
+            if ( null!=mm ) switch (mm) {
+                case boxZoom:
+                    m= p.getDasMouseInputAdapter().getModuleByLabel("Box Zoom");
+                    break;
+                case crosshairDigitizer:
+                    m= p.getDasMouseInputAdapter().getModuleByLabel("Crosshair Digitizer");
+                    break;
+                case zoomX:
+                    m= p.getDasMouseInputAdapter().getModuleByLabel("Zoom X");
+                    break;
+                default:
+                    break;
             }
             if ( m!=null ) {
                 p.getDasMouseInputAdapter().setPrimaryModule( m );
@@ -278,18 +284,56 @@ public class PlotController extends DomNodeController {
                 logger.fine("autorangeListener cannot work while isValueAdjusting");
                 return;
             }
-            if ( evt.getPropertyName().equals("autoRange") && evt.getNewValue().equals(Boolean.TRUE) ) {
-                resetZoom( getPlot().getXaxis().isAutoRange(),
-                        getPlot().getYaxis().isAutoRange(),
-                        getPlot().getZaxis().isAutoRange() );
-            } else if ( evt.getPropertyName().equals("autoRangeHints") ) {
-                resetZoom( getPlot().getXaxis().isAutoRange(),
-                        getPlot().getYaxis().isAutoRange(),
-                        getPlot().getZaxis().isAutoRange() );
-            }
-            
+            if ( dom.options.autoranging ) {
+                if ( evt.getPropertyName().equals("autoRange") && evt.getNewValue().equals(Boolean.TRUE) ) {
+                    resetZoom( getPlot().getXaxis().isAutoRange(),
+                            getPlot().getYaxis().isAutoRange(),
+                            getPlot().getZaxis().isAutoRange() );
+                } else if ( evt.getPropertyName().equals("autoRangeHints") ) {
+                    resetZoom( getPlot().getXaxis().isAutoRange(),
+                            getPlot().getYaxis().isAutoRange(),
+                            getPlot().getZaxis().isAutoRange() );
+                } else if ( evt.getPropertyName().equals("range") ) {
+                    if ( !evt.getNewValue().equals(evt.getOldValue()) ) {
+                        redoAutoranging();
+                    }
+                }
+            }            
         }
     };
+    
+    /**
+     * experiment with re-autoranging after the xaxis is adjusted.
+     */
+    private void redoAutoranging() {
+        boolean alwaysAutorange = false;
+        if (alwaysAutorange) {
+            System.err.println(String.format("line307 %s %s %s", getPlot().getXaxis().isAutoRange(),
+                getPlot().getYaxis().isAutoRange(),
+                getPlot().getZaxis().isAutoRange()));
+            boolean mustAutoRange = getPlot().getXaxis().isAutoRange()
+                || getPlot().getYaxis().isAutoRange();
+            if (mustAutoRange) {
+                List<PlotElement> pes = getApplication().getController().getPlotElementsFor(plot);
+                for (PlotElement pe : pes) {
+                    try {
+                        QDataSet b = AutoplotUtil.bounds(pe.getController().getDataSet(), pe.getRenderType());
+                        if (getPlot().getYaxis().isAutoRange()) {
+                            pe.getPlotDefaults().getYaxis().setRange(DataSetUtil.asDatumRange(b.slice(1)));
+                        }
+                        if (getPlot().getXaxis().isAutoRange()) {
+                            pe.getPlotDefaults().getXaxis().setRange(DataSetUtil.asDatumRange(b.slice(0)));
+                        }
+                    } catch (Exception ex) {
+                        logger.log(Level.SEVERE, null, ex);
+                    }
+                }
+                resetZoom(getPlot().getXaxis().isAutoRange(),
+                    getPlot().getYaxis().isAutoRange(),
+                    getPlot().getZaxis().isAutoRange());
+            }
+        }
+    }
     
     /**
      * 
@@ -500,21 +544,22 @@ public class PlotController extends DomNodeController {
         yaxis.setEnableHistory(false);
         //yaxis.setUseDomainDivider(true);
         
+        final TickleTimer nextPrevTickleTimer= new TickleTimer( 300, new PropertyChangeListener() {
+            @Override
+            public void propertyChange(PropertyChangeEvent evt) {
+                final DatumRange dr= (DatumRange)xaxis.getDatumRange();
+                List<PlotElement> pele= getApplication().getController().getPlotElementsFor(plot);
+                final QDataSet ds= pele.size()> 0 ? pele.get(0).getController().getDataSet() : null;
+                updateNextPrevious(dr,ds);
+            }
+        });
+        
         xaxis.addPropertyChangeListener( DasAxis.PROPERTY_DATUMRANGE, new PropertyChangeListener() {
             @Override
             public void propertyChange(PropertyChangeEvent evt) {
                 LoggerManager.logPropertyChangeEvent(evt,"xaxis datumrange");  
                 if ( dom.getOptions().isScanEnabled() ) {
-                    List<PlotElement> pele= getApplication().getController().getPlotElementsFor(plot);
-                    final DatumRange dr= (DatumRange)evt.getNewValue();
-                    final QDataSet ds= pele.size()> 0 ? pele.get(0).getController().getDataSet() : null;
-                    Runnable run= new Runnable() {
-                        @Override
-                        public void run() {
-                            updateNextPrevious(dr,ds);
-                        }
-                    };
-                    new Thread( run, "nextprev" ).start();
+                    nextPrevTickleTimer.tickle();
                 }
             }
         });
@@ -608,12 +653,18 @@ public class PlotController extends DomNodeController {
 
         MouseModuleType m= dom.getOptions().getMouseModule();
         MouseModule mm= null;
-        if ( m==MouseModuleType.boxZoom ) {
-            // do nothing
-        } else if ( m==MouseModuleType.crosshairDigitizer ) {
-            mm= dasPlot1.getDasMouseInputAdapter().getModuleByLabel("Crosshair Digitizer");
-        } else if ( m==MouseModuleType.zoomX ) {
-            mm= dasPlot1.getDasMouseInputAdapter().getModuleByLabel("Zoom X");
+        if ( null!=m ) switch (m) {
+            case boxZoom:
+                // do nothing
+                break;
+            case crosshairDigitizer:
+                mm= dasPlot1.getDasMouseInputAdapter().getModuleByLabel("Crosshair Digitizer");
+                break;
+            case zoomX:
+                mm= dasPlot1.getDasMouseInputAdapter().getModuleByLabel("Zoom X");
+                break;
+            default:
+                break;
         }
         if ( mm!=null ) dasPlot1.getDasMouseInputAdapter().setPrimaryModule(mm);
 
@@ -659,6 +710,7 @@ public class PlotController extends DomNodeController {
         ac.bind(application.getOptions(), Options.PROP_DRAWGRID, dasPlot1, "drawGrid");
         ac.bind(application.getOptions(), Options.PROP_DRAWMINORGRID, dasPlot1, "drawMinorGrid");
         ac.bind(application.getOptions(), Options.PROP_FLIPCOLORBARLABEL, this.plot.getZaxis().getController().dasAxis, "flipLabel");
+        ac.bind(application.getOptions(), Options.PROP_FLIPCOLORBARLABEL, this.plot.getYaxis().getController().dasAxis, "flipLabel");
         ac.bind(application.getOptions(), Options.PROP_TICKLEN, dasPlot1.getXAxis(), "tickLength");
         ac.bind(application.getOptions(), Options.PROP_TICKLEN, dasPlot1.getYAxis(), "tickLength");
         ac.bind(application.getOptions(), Options.PROP_TICKLEN, colorbar, "tickLength");
@@ -1533,7 +1585,9 @@ public class PlotController extends DomNodeController {
         //}
 
         if ( dom.getOptions().isAutoranging() ) {
-            resetZoom( plot.getXaxis().isAutoRange() && pele!=null && pele.getPlotDefaults().getXaxis().isAutoRange(), plot.getYaxis().isAutoRange(), plot.getZaxis().isAutoRange() );
+            resetZoom( plot.getXaxis().isAutoRange() && pele!=null && pele.getPlotDefaults().getXaxis().isAutoRange(),
+                plot.getYaxis().isAutoRange(), 
+                plot.getZaxis().isAutoRange() );
         }
     }
 
@@ -1788,6 +1842,7 @@ public class PlotController extends DomNodeController {
         ac.unbind(dom.options, Options.PROP_DRAWGRID, p, "drawGrid");
         ac.unbind(dom.options, Options.PROP_DRAWMINORGRID, p, "drawMinorGrid");
         ac.unbind(dom.options, Options.PROP_FLIPCOLORBARLABEL, this.plot.getZaxis().getController().dasAxis, "flipLabel");
+        ac.unbind(dom.options, Options.PROP_FLIPCOLORBARLABEL, this.plot.getYaxis().getController().dasAxis, "flipLabel");
         ac.unbind(dom.options, Options.PROP_TICKLEN, p.getXAxis(), "tickLength");
         ac.unbind(dom.options, Options.PROP_TICKLEN, p.getYAxis(), "tickLength");
         ac.unbind(dom.options, Options.PROP_TICKLEN, this.dasColorBar, "tickLength");

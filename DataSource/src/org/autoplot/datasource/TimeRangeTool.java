@@ -3,6 +3,7 @@ package org.autoplot.datasource;
 
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
+import java.awt.event.ItemEvent;
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
 import java.io.BufferedReader;
@@ -97,7 +98,17 @@ public class TimeRangeTool extends javax.swing.JPanel {
                 }
             }
         });
-        resetRecent();
+        Runnable resetRecentRunnable= new Runnable() {
+            @Override
+            public void run() {
+                resetRecent();
+            }
+        };
+        new Thread(resetRecentRunnable,"resetRecent").start();
+        DefaultListModel mm= new DefaultListModel();
+        mm.add(0,"Loading recent time ranges...");
+        recentTimesList.setModel( mm );
+        
     }
     
     public void setSelectedRange( String s ) {
@@ -212,6 +223,22 @@ public class TimeRangeTool extends javax.swing.JPanel {
             }
             case 3:  {
                 String s= (String)recentTimesList.getSelectedValue();
+                if ( s.startsWith("Loading")) {
+                    try {
+                        if ( timeRangeFocus ) {
+                            String txt= timeRangeTextField.getText();
+                            return DatumRangeUtil.parseTimeRange(txt).toString();
+                        } else {
+                            String min= startTextField.getText();
+                            String max= stopTextField.getText();
+                            Datum tmin= TimeUtil.create(min);
+                            Datum tmax= TimeUtil.create(max);
+                            return new DatumRange( tmin, tmax ).toString();
+                        }
+                    } catch ( ParseException ex ) {
+                        s= timeRangeTextField.getText();
+                    }
+                }
                 return s;
             }
             default:
@@ -325,6 +352,9 @@ public class TimeRangeTool extends javax.swing.JPanel {
         
     }
     
+    /**
+     * Read in the recent entries from recent.timerange.txt.  This should not be called on the event thread.
+     */
     private void resetRecent() {
         int RECENT_SIZE=20;
         
@@ -362,11 +392,17 @@ public class TimeRangeTool extends javax.swing.JPanel {
             int n= items.size();
             if ( n>RECENT_SIZE ) items= items.subList(0,RECENT_SIZE);
 
-            DefaultListModel dlm= new DefaultListModel();
+            final DefaultListModel dlm= new DefaultListModel();
             for ( int i=0; i<items.size(); i++ ) {
                 dlm.add( i, items.get(i) );
             }
-            recentTimesList.setModel( dlm );
+            
+            SwingUtilities.invokeLater( new Runnable() {
+                public void run() {
+                    recentTimesList.setModel( dlm );
+                }
+            });
+            
 
         } catch (IOException ex) {
             logger.log(Level.SEVERE, ex.getMessage(), ex);
@@ -712,6 +748,9 @@ public class TimeRangeTool extends javax.swing.JPanel {
     }// </editor-fold>//GEN-END:initComponents
 
     private void scComboBoxItemStateChanged(java.awt.event.ItemEvent evt) {//GEN-FIRST:event_scComboBoxItemStateChanged
+        if ( evt.getStateChange()==java.awt.event.ItemEvent.DESELECTED ) {
+            return;
+        }
         final String sc= (String) scComboBox.getSelectedItem();
         Runnable run= new Runnable() {
             @Override
@@ -719,7 +758,7 @@ public class TimeRangeTool extends javax.swing.JPanel {
                 resetSpacecraft( sc, pendingTimeRange );
             }
         };
-        new Thread( run,"loadOrbits" ).start();
+        new Thread( run, String.format( "loadOrbits-%010d",System.currentTimeMillis() ) ).start();
 
         if ( sc.contains(":") ) {
             feedbackLabel.setText("loading orbits from "+sc );

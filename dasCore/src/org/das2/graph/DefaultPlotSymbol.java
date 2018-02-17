@@ -45,7 +45,7 @@ public class DefaultPlotSymbol implements Enumeration, Displayable, PlotSymbol, 
     public void draw(Graphics2D g, double x, double y, float size, FillStyle style) {
         AffineTransform at = AffineTransform.getScaleInstance(size, size);
         at.translate(x / size, y / size);
-        if (style == FillStyle.STYLE_FILL) {
+        if (style == FillStyle.STYLE_FILL || style==FillStyle.STYLE_SOLID ) {
             g.fill(path.createTransformedShape(at));
             if (empty) {
                 g.draw(path.createTransformedShape(at)); // for crosses and symbols with no volume
@@ -57,7 +57,7 @@ public class DefaultPlotSymbol implements Enumeration, Displayable, PlotSymbol, 
             g.fill(path.createTransformedShape(at));
             g.setColor(fore);
             g.draw(path.createTransformedShape(at));
-        } else if (style == FillStyle.STYLE_DRAW) {
+        } else if (style == FillStyle.STYLE_DRAW || style==FillStyle.STYLE_NONE ) {
             g.draw(path.createTransformedShape(at));
         }
     }
@@ -94,10 +94,10 @@ public class DefaultPlotSymbol implements Enumeration, Displayable, PlotSymbol, 
     public String toString() {
         return label;
     }
+    
     public static final DefaultPlotSymbol CIRCLES = new DefaultPlotSymbol(new Ellipse2D.Double(-0.5, -0.5, 1., 1.), "circles");
+    
     public static final DefaultPlotSymbol TRIANGLES;
-
-
     static {
         GeneralPath triangle = new GeneralPath();
         float size = 0.7f;
@@ -107,9 +107,55 @@ public class DefaultPlotSymbol implements Enumeration, Displayable, PlotSymbol, 
         triangle.lineTo(0f, -size);
         TRIANGLES = new DefaultPlotSymbol(triangle, "triangles");
     }
+    
+    public static final DefaultPlotSymbol TRIANGLES_NORTH;
+    static {
+        GeneralPath triangle = new GeneralPath();
+        float size = 0.7f;
+        triangle.moveTo(0f, -size);
+        triangle.lineTo(size, size);
+        triangle.lineTo(-size, size);
+        triangle.lineTo(0f, -size);
+        TRIANGLES_NORTH = new DefaultPlotSymbol(triangle, "trianglesNorth");
+    }    
+
+    public static final DefaultPlotSymbol TRIANGLES_SOUTH;
+    static {
+        GeneralPath triangle = new GeneralPath();
+        float size = 0.7f;
+        triangle.moveTo(0f, -size);
+        triangle.lineTo(size, size);
+        triangle.lineTo(-size, size);
+        triangle.lineTo(0f, -size);
+        triangle.transform( AffineTransform.getRotateInstance(Math.PI) );
+        TRIANGLES_SOUTH = new DefaultPlotSymbol(triangle, "trianglesSouth");
+    }
+    
+    public static final DefaultPlotSymbol TRIANGLES_WEST;
+    static {
+        GeneralPath triangle = new GeneralPath();
+        float size = 0.7f;
+        triangle.moveTo(0f, -size);
+        triangle.lineTo(size, size);
+        triangle.lineTo(-size, size);
+        triangle.lineTo(0f, -size);
+        triangle.transform( AffineTransform.getRotateInstance(-Math.PI/2) );
+        TRIANGLES_WEST = new DefaultPlotSymbol(triangle, "trianglesWest");
+    }
+
+    public static final DefaultPlotSymbol TRIANGLES_EAST;
+    static {
+        GeneralPath triangle = new GeneralPath();
+        float size = 0.7f;
+        triangle.moveTo(0f, -size);
+        triangle.lineTo(size, size);
+        triangle.lineTo(-size, size);
+        triangle.lineTo(0f, -size);
+        triangle.transform( AffineTransform.getRotateInstance(Math.PI/2) );
+        TRIANGLES_EAST = new DefaultPlotSymbol(triangle, "trianglesEast");
+    }
+    
     public static final DefaultPlotSymbol CROSS;
-
-
     static {
         GeneralPath path = new GeneralPath();
         float size = 0.6f;
@@ -119,9 +165,8 @@ public class DefaultPlotSymbol implements Enumeration, Displayable, PlotSymbol, 
         path.lineTo(size, 0);
         CROSS = new DefaultPlotSymbol(path, "crosses");
     }
+    
     public static final DefaultPlotSymbol EX;
-
-
     static {
         GeneralPath path = new GeneralPath();
         float size = 0.4f;
@@ -131,9 +176,8 @@ public class DefaultPlotSymbol implements Enumeration, Displayable, PlotSymbol, 
         path.lineTo(size, -size);
         EX = new DefaultPlotSymbol(path, "exes");
     }
+    
     public static final DefaultPlotSymbol STAR;
-
-
     static {
         GeneralPath path = new GeneralPath();
         for (int i = 0; i < 11; i++) {
@@ -148,9 +192,8 @@ public class DefaultPlotSymbol implements Enumeration, Displayable, PlotSymbol, 
         }
         STAR = new DefaultPlotSymbol(path, "stars");
     }
+    
     public static final DefaultPlotSymbol DIAMOND;
-
-
     static {
         GeneralPath path = new GeneralPath();
         float radius = 0.6f;
@@ -168,6 +211,7 @@ public class DefaultPlotSymbol implements Enumeration, Displayable, PlotSymbol, 
     }
     
     public static final DefaultPlotSymbol BOX = new DefaultPlotSymbol(new Rectangle.Double(-0.5, -0.5, 1, 1), "boxes");
-    // temporary //
+    
+   // temporary //
     public static final DefaultPlotSymbol NONE = new DefaultPlotSymbol(new GeneralPath(), "none");
 }

@@ -117,7 +117,7 @@ public class LookupAxis extends DasCanvasComponent {
         QDataSet div= Ops.subtract( DataSetOps.applyIndex( yy, Ops.add(r,1) ), DataSetOps.applyIndex( yy,r ) );
         QDataSet ff= Ops.divide( Ops.subtract( Ops.dataset(y),                            DataSetOps.applyIndex( yy,r ) ) , 
                                  div );
-        QDataSet rzero= Ops.where( Ops.magnitude(div).equals(0) );
+        QDataSet rzero= Ops.where( Ops.eq( Ops.abs(div), 0 ) );
         if ( rzero.length()>0 ) throw new IllegalArgumentException("yy cannot have repeating values");
 
         if ( UnitsUtil.isIntervalMeasurement( SemanticOps.getUnits(xx) ) ) {            
@@ -205,7 +205,7 @@ public class LookupAxis extends DasCanvasComponent {
                 if ( axis.isHorizontal() ) {
                     gtr.draw( g, ix - myX - (int)gtr.getWidth()/2, height-5-3 );
                     int height0= (int)gtr.getHeight()+8;
-                    if ( height0>maxWidth ) maxHeight=height0;              
+                    if ( height0>maxHeight ) maxHeight=height0;              
                 } else {
                     gtr.draw( g, 5+3, ix+ascent/2-myY );
                     int width0= (int)gtr.getWidth();

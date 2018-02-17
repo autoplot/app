@@ -102,11 +102,13 @@
                                   <Component id="updateCB" min="-2" max="-2" attributes="0"/>
                                   <Component id="jLabel5" alignment="0" min="-2" max="-2" attributes="0"/>
                                   <Component id="jLabel6" min="-2" max="-2" attributes="0"/>
+                                  <Component id="runOnCopyCB" min="-2" max="-2" attributes="0"/>
                                   <Group type="102" attributes="0">
                                       <EmptySpace min="12" pref="12" max="-2" attributes="0"/>
                                       <Group type="103" groupAlignment="0" attributes="0">
                                           <Component id="rescaleComboBox" min="-2" pref="174" max="-2" attributes="0"/>
                                           <Component id="versionTextField" min="-2" pref="74" max="-2" attributes="0"/>
+                                          <Component id="autorangeFlagsCB" min="-2" max="-2" attributes="0"/>
                                       </Group>
                                   </Group>
                               </Group>
@@ -153,11 +155,13 @@
               <EmptySpace max="-2" attributes="0"/>
               <Component id="autorangeCB" min="-2" max="-2" attributes="0"/>
               <EmptySpace max="-2" attributes="0"/>
+              <Group type="103" groupAlignment="3" attributes="0">
+                  <Component id="timeRangeRadioButton" alignment="3" min="-2" max="-2" attributes="0"/>
+                  <Component id="autorangeFlagsCB" alignment="3" min="-2" max="-2" attributes="0"/>
+              </Group>
+              <EmptySpace max="-2" attributes="0"/>
               <Group type="103" groupAlignment="0" attributes="0">
-                  <Component id="updateCB" min="-2" max="-2" attributes="0"/>
                   <Group type="102" attributes="0">
-                      <Component id="timeRangeRadioButton" min="-2" max="-2" attributes="0"/>
-                      <EmptySpace max="-2" attributes="0"/>
                       <Group type="103" groupAlignment="1" attributes="0">
                           <Component id="timeRangeToolButton" min="-2" max="-2" attributes="0"/>
                           <Component id="timeRangeTf" min="-2" max="-2" attributes="0"/>
@@ -177,6 +181,11 @@
                           </Group>
                           <Component id="createThumbsCb" min="-2" max="-2" attributes="0"/>
                       </Group>
+                  </Group>
+                  <Group type="102" attributes="0">
+                      <Component id="updateCB" min="-2" max="-2" attributes="0"/>
+                      <EmptySpace max="-2" attributes="0"/>
+                      <Component id="runOnCopyCB" min="-2" max="-2" attributes="0"/>
                   </Group>
               </Group>
               <EmptySpace pref="53" max="32767" attributes="0"/>
@@ -291,7 +300,7 @@
       <Properties>
         <Property name="editable" type="boolean" value="true"/>
         <Property name="model" type="javax.swing.ComboBoxModel" editor="org.netbeans.modules.form.editors2.ComboBoxModelEditor">
-          <StringArray count="10">
+          <StringArray count="13">
             <StringItem index="0" value="$Y$m$d"/>
             <StringItem index="1" value="$Y"/>
             <StringItem index="2" value="$Y$(m,span=3)"/>
@@ -300,8 +309,11 @@
             <StringItem index="5" value="$Y$m$d_$H"/>
             <StringItem index="6" value="$Y$m$d_$H$M"/>
             <StringItem index="7" value="$Y$m$d_$H$M$S"/>
-            <StringItem index="8" value="$(o,id=rbspa-pp)"/>
-            <StringItem index="9" value="$(o,id=http://das2.org/wiki/index.php/Orbits/crres)"/>
+            <StringItem index="8" value="$Y$m$d_$H$M$S.$(subsec,places=3)"/>
+            <StringItem index="9" value="$(o,id=rbspa-pp)"/>
+            <StringItem index="10" value="$(o,id=http://das2.org/Orbits/marsx.dat)"/>
+            <StringItem index="11" value=" "/>
+            <StringItem index="12" value=" "/>
           </StringArray>
         </Property>
       </Properties>
@@ -386,6 +398,20 @@
       <Events>
         <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="batchUriNameCBActionPerformed"/>
       </Events>
+    </Component>
+    <Component class="javax.swing.JCheckBox" name="runOnCopyCB">
+      <Properties>
+        <Property name="selected" type="boolean" value="true"/>
+        <Property name="text" type="java.lang.String" value="Run in background"/>
+        <Property name="toolTipText" type="java.lang.String" value="Run the PNG Walk on a copy in the background.  Note only properties conveyed by a .vap file will appear on the produced images."/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JCheckBox" name="autorangeFlagsCB">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="Check Autorange flag"/>
+        <Property name="toolTipText" type="java.lang.String" value="A future version will allow each axis&apos; autorange property to control this."/>
+        <Property name="enabled" type="boolean" value="false"/>
+      </Properties>
     </Component>
   </SubComponents>
 </Form>

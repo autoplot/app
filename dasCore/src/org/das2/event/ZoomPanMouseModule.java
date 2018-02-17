@@ -65,15 +65,22 @@ public class ZoomPanMouseModule extends MouseModule {
         
         double xshift = 0., yshift = 0.;
 
-        if ((e.isControlDown() || e.isShiftDown())) {
-            if (xAxis != null && yAxis != null) return; // this happens when mouse drifts onto plot during xaxis pan.
-            if (e.getWheelRotation() < 0) {
-                nmin = -0.20; // pan left on xaxis
-                nmax = +0.80;
-            } else {
-                nmin = +0.20; // pan right on xaxis
-                nmax = +1.20;
-            }
+        if ((e.isShiftDown()) ) {
+            logger.fine("shift is down but no longer has any effect.  Use control to pan.");
+            parent.getDasMouseInputAdapter().getFeedback().setMessage("shift has no effect, press control to pan");
+            return;
+        }
+        if ((e.isControlDown() )) {  // shift no longer triggers because Mac Mouse pad.
+            if (xAxis != null && yAxis != null) {
+                parent.getDasMouseInputAdapter().getFeedback().setMessage("pan is disabled when there are two axes");
+                return;
+            } // this happens when mouse drifts onto plot during xaxis pan.
+            double rot = e.getPreciseWheelRotation();
+            if ( rot<-2.0 ) rot=-2.0;
+            if ( rot>+2.0 ) rot=+2.0;
+            nmin = 0.20*rot; // pan left on xaxis
+            nmax = nmin + 1.0;
+
         } else {
             Point ep= SwingUtilities.convertPoint( e.getComponent(), e.getPoint(), parent.getCanvas() );
             
@@ -82,12 +89,15 @@ public class ZoomPanMouseModule extends MouseModule {
             Pos ypos = yAxis == null ? Pos._null : position(yAxis.getRow(), ep.y, 20);
 
             //mac trackpads coast a while after release, so let's govern the speed a little more
-            if (e.getWheelRotation() < 0) {
-                nmin = 0.10; // zoom in
-                nmax = 0.90;
+            double rot = e.getPreciseWheelRotation();
+            if ( rot<-2.0 ) rot=-2.0;
+            if ( rot>+2.0 ) rot=+2.0;
+            if ( rot < 0) {
+                nmin = 0.10 * (-1*rot); // zoom in
+                nmax = 1.0 - nmin;
             } else {
-                nmin = -0.125; // zoom out
-                nmax = 1.125;
+                nmin = -0.125 * rot; // zoom out
+                nmax = 1.0 - nmin;
             }
             switch (xpos) {
                 case min:
@@ -106,7 +116,7 @@ public class ZoomPanMouseModule extends MouseModule {
                     break;
             }
         }
-
+        
         //int clickMag= Math.abs(e.getWheelRotation());
         int clickMag = 1;
         final long t1 = System.nanoTime();

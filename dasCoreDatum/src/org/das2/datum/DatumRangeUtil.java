@@ -19,7 +19,7 @@ import org.das2.datum.format.TimeDatumFormatter;
  */
 public class DatumRangeUtil {
 
-    private static final Logger logger= LoggerManager.getLogger("datum");
+    private static final Logger logger= LoggerManager.getLogger("das2.datum");
 
     private static final boolean DEBUG=false;
 
@@ -214,7 +214,7 @@ public class DatumRangeUtil {
      * @return the lsd least significant digit
      */
     public static int parseISO8601Datum( String str, int[] result, int lsd ) {
-        StringTokenizer st= new StringTokenizer( str, "-T:.Z+", true );
+        StringTokenizer st= new StringTokenizer( str, "-T:.Z+ ", true );
         Object dir= null;
         final Object DIR_FORWARD = "f";
         final Object DIR_REVERSE = "r";
@@ -226,12 +226,12 @@ public class DatumRangeUtil {
             if ( haveDelim ) {
                 delim= st.nextToken().charAt(0);
                 if ( delim=='T' ) afterT= true;
-                if ( afterT && ( delim=='-' || delim=='+' ) ) { // Time offset
+                if ( afterT && ( delim=='-' || delim=='+' || delim==' ' ) ) { // Time offset.  Space is because elsewhere
                     StringBuilder toff= new StringBuilder( String.valueOf(delim) );
                     while ( st.hasMoreElements() ) {
                         toff.append(st.nextToken());
                     }
-                    int deltaHours= Integer.parseInt(toff.substring(0,3));
+                    int deltaHours= delim==' ' ? Integer.parseInt(toff.substring(1,3)) : Integer.parseInt(toff.substring(0,3));
                     switch ( toff.length() ) {
                         case 6: 
                             result[3]-= deltaHours;
@@ -589,6 +589,7 @@ public class DatumRangeUtil {
      *   <li>P1Y2M10DT2H30M/2008-05-11T15:30:00Z
      *   <li>2007-03-01T00:00Z/P1D
      *   <li>2012-100T02:00/03:45
+     *   <li>2001-01-01T06:08-0600/P1D Time zones (-0600) are supported though discouraged.
      * </ul>
      * http://en.wikipedia.org/wiki/ISO_8601#Time_intervals
      * @param stringIn
@@ -631,10 +632,18 @@ public class DatumRangeUtil {
         
         if ( d1 ) {
             for ( int i=0; i<7; i++ ) digits0[i] = digits1[i] - digits0[i];
+            if ( digits0[1]<1 ) {
+                digits0[1]+=12;
+                digits0[0]-=1;
+            }
         }
 
         if ( d2 ) {
             for ( int i=0; i<7; i++ ) digits1[i] = digits0[i] + digits1[i];
+            if ( digits1[1]>12 ) {
+                digits1[1]-=12;
+                digits1[0]+=1;
+            }
         }
 
         Datum t1= TimeUtil.toDatum(digits0);
@@ -848,7 +857,7 @@ public class DatumRangeUtil {
         }
         
         /* identify and make the "to" delimiter unambiguous */
-        public String normalizeTo( String s ) throws ParseException {
+        private String normalizeTo( String s ) throws ParseException {
             
             int minusCount= 0;
             for ( int i=0; i<s.length(); i++ ) if ( s.charAt(i)=='-' ) minusCount++;
@@ -876,6 +885,7 @@ public class DatumRangeUtil {
             String result= newString.toString();
             
             String[] ss= result.split("to"); //findbugs SBSC_USE_STRINGBUFFER_CONCATENATION okay
+            
             if ( ss.length>2 ) {
                 result= ss[0];
                 for ( int i=1; i<ss.length; i++ ) {
@@ -947,7 +957,7 @@ public class DatumRangeUtil {
             
             DateDescriptor dateDescriptor= new DateDescriptor();
             
-            String newString= normalizeTo(string);
+            String newString= normalizeTo(string);  // TODO: normalizeTo needs to be studied for "2001-01-01T06:08+to+10:08"
             
             if ( newString.endsWith("UTC") ) { // 2006-01-05T07:16:45 to 2006-01-05T07:17:15 UTC
                 newString= newString.substring(0,newString.length()-3);
@@ -986,7 +996,7 @@ public class DatumRangeUtil {
                     ts2[HOUR]= tt.hour;
                     ts2[MINUTE]= tt.minute;
                     ts2[SECOND]= (int)tt.seconds;
-                    ts2[NANO]= (int)(( tt.seconds - ts2[SECOND] ) * 1e9);
+                    ts2[NANO]= (int)(( tt.seconds - ts2[SECOND] ) * 1e9) + tt.millis*1000000 + tt.micros*1000;
                     ipos= newString.length();
                 }
                 
@@ -1165,6 +1175,9 @@ public class DatumRangeUtil {
                             while( idx<7 && ts1[idx]!=-1 ) idx++;
                             if ( idx==7 ) throw new ParseException( "can't resolve token in \""+stringIn+"\": "+beforeToUnresolved.get(i)+ " ("+format+")", 0 );
                             ts1[idx]= parseInt((String)beforeToUnresolved.get(i));
+                            if ( idx==0 && ts[idx]<1000 ) {
+                                throw new ParseException("Years must be four digit years: "+(String)beforeToUnresolved.get(i),0);
+                            }
                             String[] s= format.split("UNRSV1"+(i+1));
                             format= s[0]+formatCodes[idx]+s[1];
                         }
@@ -1446,7 +1459,7 @@ public class DatumRangeUtil {
                 }
                 string= snew.toString();
             }
-            string= string.replaceAll("\\+"," "); // Allow Jan+2014
+            string= string.replaceAll("\\+"," "); // Allow Jan+2014.  Note this may mess up ISO8601 time zone.
             return new TimeRangeParser().parse(string);
         }
     }

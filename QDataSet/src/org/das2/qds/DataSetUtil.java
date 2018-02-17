@@ -22,6 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Random;
 import java.util.logging.Logger;
 import org.das2.datum.CacheTag;
 import org.das2.datum.Datum;
@@ -120,6 +121,7 @@ public class DataSetUtil {
      * @return true when the dataset is monotonically increasing.
      * @see org.das2.qds.QDataSet#MONOTONIC
      * @see org.das2.qds.ArrayDataSet#monotonicSubset(org.das2.qds.ArrayDataSet) 
+     * @see #isMonotonicAndIncreasing(org.das2.qds.QDataSet) 
      */
     public static boolean isMonotonic(QDataSet ds) {
         if (ds.rank() != 1) { // TODO: support bins dataset rank 2 with BINS_1="min,max"
@@ -162,15 +164,16 @@ public class DataSetUtil {
     /**
      * returns true if the dataset is monotonically increasing 
      * and does not contain repeat values.
-     * If the dataset has the MONOTONIC property set to Boolean.TRUE, believe it.
      * An empty dataset is not monotonic.
      * The dataset may contain fill data, only the non-fill portions are considered.
      * @param ds the rank 1 dataset with physical units.
      * @return true when the dataset is monotonically increasing.
      * @see org.das2.qds.QDataSet#MONOTONIC
      * @see org.das2.qds.ArrayDataSet#monotonicSubset(org.das2.qds.ArrayDataSet) 
+     * @see #isMonotonic(org.das2.qds.QDataSet) 
      */
     public static boolean isMonotonicAndIncreasing(QDataSet ds) {
+        logger.finest("enter isMonotonicAndIncreasing test for "+QDataSet.MONOTONIC);
         if (ds.rank() != 1) { // TODO: support bins dataset rank 2 with BINS_1="min,max"
             return false;
         }
@@ -178,6 +181,7 @@ public class DataSetUtil {
         if (ds.length() == 0) {
             return false;
         }
+        if (ds instanceof IndexGenDataSet ) return true;
         
         QDataSet wds= DataSetUtil.weightsDataSet(ds);
         int i;
@@ -204,7 +208,95 @@ public class DataSetUtil {
         return true;
     }
     
+    /**
+     * quickly determine, with high accuracy, if data is monotonic (repeated values
+     * allowed).  This should
+     * be a constant-time operation, and be extremely unlikely to fail.
+     * @param ds
+     * @return true if the data does pass quick tests for monotonic.
+     * @see #isMonotonicAndIncreasing(org.das2.qds.QDataSet) 
+     * @see QDataSet#MONOTONIC
+     */
+    public static boolean isMonotonicQuick(QDataSet ds) {
+        logger.finest("enter isMonotonicQuick test for "+QDataSet.MONOTONIC);
+        if (ds instanceof IndexGenDataSet ) return true;
+        if (ds.rank() == 1) {
+            if (ds.length() < 100) {
+                return DataSetUtil.isMonotonic(ds);
+            } else {
+                QDataSet wds = DataSetUtil.weightsDataSet(ds);
+                Random r = new Random(0);
+                int i = 0;
+                double last = -1.0 * Double.MAX_VALUE;
+                int n = ds.length();
+                int jump = n / 20;
+                for (; i < n; i += (1 + (int) (jump * r.nextDouble()))) {
+                    double d = ds.value(i);
+                    double w = wds.value(i);
+                    while (w == 0 && i < n) {
+                        d = ds.value(i);
+                        w = wds.value(i);
+                        i++;
+                    }
+                    if (i == n) {
+                        break;
+                    }
+                    if (d < last) {
+                        return false;
+                    }
+                    last = d;
+                }
+                return true;
+            }
+        } else {
+            return false;
+        }
+    }
     
+    /**
+     * quickly determine, with high accuracy, if data is monotonic.  This should
+     * be a constant-time operation, and be extremely unlikely to fail.
+     * @param ds
+     * @return true if the data does pass quick tests for monotonic increasing.
+     * @see #isMonotonicAndIncreasing(org.das2.qds.QDataSet) 
+     * @see QDataSet#MONOTONIC
+     */
+    public static boolean isMonotonicAndIncreasingQuick(QDataSet ds) {
+        logger.finest("enter isMonotonicAndIncreasingQuick test for "+QDataSet.MONOTONIC);
+        if (ds instanceof IndexGenDataSet ) return true;
+        if (ds.rank() == 1) {
+            if (ds.length() < 100) {
+                return DataSetUtil.isMonotonicAndIncreasing(ds);
+            } else {
+                QDataSet wds = DataSetUtil.weightsDataSet(ds);
+                Random r = new Random(0);
+                int i = 0;
+                double last = -1.0 * Double.MAX_VALUE;
+                int n = ds.length();
+                int jump = n / 20;
+                for (; i < n; i += (1 + (int) (jump * r.nextDouble()))) {
+                    double d = ds.value(i);
+                    double w = wds.value(i);
+                    while (w == 0 && i < n) {
+                        d = ds.value(i);
+                        w = wds.value(i);
+                        i++;
+                    }
+                    if (i == n) {
+                        break;
+                    }
+                    if (d <= last) {
+                        return false;
+                    }
+                    last = d;
+                }
+                return true;
+            }
+        } else {
+            return false;
+        }
+    }
+
     /**
      * perform a binary search for key within ds, constraining the search to between low and high.
      * @param ds a rank 1 monotonic dataset.
@@ -436,31 +528,51 @@ public class DataSetUtil {
     /**
      * return the type of the property, as a string to support use in Jython:
      * String,Number,Boolean,Map,QDataSet,CacheTag,Units
-     * //TODO: review this for completeness!
      * @param name the property name
      * @return the property type or null if the name is not recognized
      * @see #getPropertyClass(java.lang.String) 
+     * @see org.das2.qds.QDataSet
      */
     public static String getPropertyType( String name ) {
-        if ( name.equals(QDataSet.TITLE) || name.equals(QDataSet.LABEL) ) {
-            return PROPERTY_TYPE_STRING;
-        } else if (  name.equals(QDataSet.UNITS) ) {
-            return PROPERTY_TYPE_UNITS;
-        } else if (  name.equals(QDataSet.NAME) || name.equals(QDataSet.FORMAT) || name.equals(QDataSet.RENDER_TYPE) || name.equals(QDataSet.SCALE_TYPE) ) {
-            return PROPERTY_TYPE_STRING;
-        } else if ( name.equals(QDataSet.TYPICAL_MIN) || name.equals(QDataSet.TYPICAL_MAX) 
-                || name.startsWith(QDataSet.VALID_MIN) || name.startsWith(QDataSet.VALID_MAX) 
-                || name.equals(QDataSet.FILL_VALUE) ) {
-            return PROPERTY_TYPE_NUMBER;
-        } else if ( name.equals(QDataSet.MONOTONIC) || name.equals(QDataSet.QUBE) ) {
-            return PROPERTY_TYPE_BOOLEAN;
-        } else if ( name.equals(QDataSet.CACHE_TAG) ) {
-            return PROPERTY_TYPE_CACHETAG;
-        } else if ( name.equals(QDataSet.USER_PROPERTIES) || name.equals(QDataSet.METADATA) ) {
-            return PROPERTY_TYPE_MAP;
-        } else if ( name.startsWith("JOIN_") || name.startsWith("BINS_") || name.equals(QDataSet.METADATA_MODEL) ) {
-            return PROPERTY_TYPE_STRING;
-        } else if ( name.startsWith(QDataSet.SOURCE) || name.startsWith(QDataSet.VERSION) || name.equals(QDataSet.METADATA_MODEL) ) {
+        switch (name) {
+            case QDataSet.LABEL:
+            case QDataSet.TITLE:
+            case QDataSet.DESCRIPTION:
+                return PROPERTY_TYPE_STRING;
+            case QDataSet.UNITS:
+                return PROPERTY_TYPE_UNITS;
+            case QDataSet.NAME:
+            case QDataSet.FORMAT:
+            case QDataSet.RENDER_TYPE:
+            case QDataSet.SCALE_TYPE:
+                return PROPERTY_TYPE_STRING;
+            case QDataSet.TYPICAL_MIN:
+            case QDataSet.TYPICAL_MAX:
+            case QDataSet.VALID_MIN:
+            case QDataSet.VALID_MAX:
+            case QDataSet.FILL_VALUE:
+                return PROPERTY_TYPE_NUMBER;
+            case QDataSet.MONOTONIC:
+            case QDataSet.QUBE:
+                return PROPERTY_TYPE_BOOLEAN;
+            case QDataSet.CACHE_TAG:
+                return PROPERTY_TYPE_CACHETAG;
+            case QDataSet.USER_PROPERTIES:
+            case QDataSet.METADATA:
+                return PROPERTY_TYPE_MAP;
+            case QDataSet.CADENCE:
+            case QDataSet.WEIGHTS:
+                return PROPERTY_TYPE_QDATASET;
+            case QDataSet.SOURCE:
+            case QDataSet.VERSION:
+            case QDataSet.METADATA_MODEL:
+            case QDataSet.COORDINATE_FRAME:
+                return PROPERTY_TYPE_STRING;
+            default:
+                break;
+        }
+               
+        if ( name.startsWith("JOIN_") || name.startsWith("BINS_") ) {
             return PROPERTY_TYPE_STRING;
         } else if ( name.startsWith("DEPEND_") || name.startsWith("BUNDLE_") || name.startsWith("DELTA_") || name.startsWith("BIN_") || name.startsWith("CONTEXT_")) {
             return PROPERTY_TYPE_QDATASET;
@@ -516,14 +628,33 @@ public class DataSetUtil {
      * @return true if the property is inherited
      */
     public static boolean isInheritedProperty( String prop ) {
-        boolean indexProp= prop.startsWith("DEPEND_")
-                || prop.startsWith("BUNDLE_")
-                || prop.startsWith("BINS_")
-                || prop.startsWith("JOIN_")
-                || prop.startsWith("PLANE_")
-                || prop.equals( QDataSet.START_INDEX )
-                || prop.equals( QDataSet.RENDER_TYPE );
+        // QDataSet.MAX_RANK is equal to 4.
+        switch (prop) {
+            case QDataSet.DEPEND_0:
+            case QDataSet.DEPEND_1:
+            case QDataSet.DEPEND_2:
+            case QDataSet.DEPEND_3:
+                return false;
+            case QDataSet.BUNDLE_0:
+            case QDataSet.BUNDLE_1:
+            case QDataSet.BUNDLE_2:
+            case QDataSet.BUNDLE_3:
+                return false;
+            case QDataSet.BINS_0:
+            case QDataSet.BINS_1:
+                return false;
+            case QDataSet.JOIN_0:
+            case "JOIN_1":
+                return false;
+            case QDataSet.START_INDEX:
+            case QDataSet.RENDER_TYPE:
+                return false;
+            default:
+                break;
+        }
+        boolean indexProp= prop.startsWith("PLANE_");
         // note CONTEXT* is inherited.
+        //TODO: shouldn't DELTA_PLUS and DELTA_MINUS be on this list?
         return !indexProp;
     }
 
@@ -563,11 +694,12 @@ public class DataSetUtil {
 
     /**
      * help out implementations of the QDataSet.trim() command.  This does the dimension properties
-     * and geometric properties like DEPEND_0  and DELTA_PLUS.
+     * and geometric properties like DEPEND_0  and DELTA_PLUS.  This also
+     * checks for indexed properties, which are NAME__i.
      * @param ds the dataset with properties to trim.
      * @param start start index of trim operation
      * @param stop exclusive stop index of the trim operation.
-     * @return the properties of ds, trimmed to the indeces.
+     * @return the properties of ds, trimmed to the indices.  
      */
     public static Map<String,Object> trimProperties( QDataSet ds, int start, int stop ) {
 
@@ -610,14 +742,17 @@ public class DataSetUtil {
             }
         }
 
-        //kludge for indexed properties.
-        for ( int i=0; i<stop-start; i++ ) {
-            Object o= ds.property( "NAME__" + ( i+start ) );
-            if ( o!=null ) result.put( "NAME__"+i, o );
-            o= ds.property( "UNITS__" + ( i+start ) );
-            if ( o!=null ) result.put( "UNITS__"+i, o );            
-            o= ds.property( "FORMAT__" + ( i+start ) );
-            if ( o!=null ) result.put( "FORMAT__"+i, o );            
+        if ( ds.length()<QDataSet.MAX_PLANE_COUNT ) { 
+            //kludge for indexed properties.
+            for ( int i=0; i<stop-start; i++ ) {
+                int ips= i+start;
+                Object o= ds.property( QDataSet.NAME, ( ips ) );
+                if ( o!=null ) result.put( "NAME__"+i, o );
+                o= ds.property( QDataSet.UNITS, ( ips ) );
+                if ( o!=null ) result.put( "UNITS__"+i, o );            
+                o= ds.property( QDataSet.FORMAT, ( ips ) );
+                if ( o!=null ) result.put( "FORMAT__"+i, o );            
+            }
         }
         return result;
         
@@ -831,8 +966,13 @@ public class DataSetUtil {
         
         if ( ds.rank()==1 && QDataSet.VALUE_BINS_MIN_MAX.equals(ds.property(QDataSet.BINS_0)) ) {
             if (  ds.value(0) <= ds.value(1) ) {
-                DatumRange dr= new DatumRange( ds.value(0), ds.value(1), u );
-                return dr.toString();
+                if ( u!=Units.dimensionless ) {
+                    DatumRange dr= new DatumRange( ds.value(0), ds.value(1), u );
+                    return dr.toString();
+                } else {
+                    DatumRange dr= new DatumRange( Ops.datum(ds.slice(0)), Ops.datum(ds.slice(1)) );
+                    return dr.toString();
+                }
             } else {
                 return String.format( "%s %s (invalid because BINS_0=min,max)", ds.slice(0), ds.slice(1) );
             }
@@ -1296,6 +1436,35 @@ public class DataSetUtil {
         return mpds;
     }
     
+    /**
+     * return the cadence between measurements of a waveform dataset.  This is
+     * different than the cadence typically quoted, which is the cadence between
+     * waveform records.
+     * @param ds
+     * @return the cadence
+     */
+    public static RankZeroDataSet getCadenceWaveform( QDataSet ds ) {
+        RankZeroDataSet xlimit;
+        if ( Schemes.isRank2Waveform(ds) ) {
+            QDataSet offsets= (QDataSet)ds.property(QDataSet.DEPEND_1);
+            if ( offsets.rank()==1 ) {
+                xlimit= DataSetUtil.guessCadenceNew( offsets, null );
+            } else {
+                xlimit= DataSetUtil.guessCadenceNew( offsets.slice(0), null );
+            }
+        } else if ( Schemes.isRank3Waveform(ds) ) {
+            xlimit= getCadenceWaveform(ds.slice(0));
+            for ( int i=1; i<ds.length(); i++ ) {
+                RankZeroDataSet xlimit1= getCadenceWaveform(ds.slice(i));
+                if ( Ops.gt( xlimit1, xlimit ).value()==1. ) {
+                    xlimit= xlimit1;
+                }
+            }
+        } else {
+            throw new IllegalArgumentException("data is not waveform");
+        }
+        return xlimit;
+    }
     
     /**
      * returns a rank 0 dataset indicating the cadence of the dataset.  Using a
@@ -1321,6 +1490,53 @@ public class DataSetUtil {
         logger.entering(LOGGING_SOURCE_CLASS,"guessCadenceNew");
         
         Object o= xds.property( QDataSet.CADENCE );
+//        
+//        if ( o==null ) {
+//            o= DataSetAnnotations.getInstance().getAnnotation( xds, DataSetAnnotations.ANNOTATION_CADENCE );
+//        }
+//        
+        if ( yds!=null && yds.rank()>1 ) {
+            if ( Schemes.isRank2Waveform(yds)) {// leverage that we have the timetag offsets, and we can look at the first waveform to guess the cadence.
+                RankZeroDataSet r1= guessCadenceNew(xds,null);
+                QDataSet dd= (QDataSet)yds.property(QDataSet.DEPEND_1);
+                Datum rw= null;
+                if ( dd.rank()==1 ) {
+                    QDataSet ee= Ops.extent(dd);
+                    rw= DataSetUtil.asDatum( Ops.subtract( ee.slice(1), ee.slice(0) ) );
+                    
+                } else {
+                    for ( int i=0; i<dd.length(); i++ ) {
+                        QDataSet ee= Ops.extent(dd);
+                        Datum t1= DataSetUtil.asDatum( Ops.subtract( ee.slice(1), ee.slice(0) ) );
+                        rw= rw==null ? t1 : ( rw.lt(t1) ? t1 : rw );
+                    }
+                }
+                if ( rw==null ) { // rank 2 offsets.
+                    return r1;
+                } else {
+                    if ( r1==null ) {
+                        return DataSetUtil.asDataSet(rw);
+                    } else {
+                        Datum rt=  DataSetUtil.asDatum(r1);
+                        if ( rw.getUnits().isConvertibleTo(rt.getUnits()) && rw.multiply(2.0).gt( rt ) ) {
+                            return r1;
+                        } else {
+                            return DataSetUtil.asDataSet(rw);
+                        }
+                    }
+                }
+            } else if ( Schemes.isRank3Waveform(yds) ) {
+                Datum dresult=null;
+                for ( int i=0; i<yds.length(); i++ ) {
+                    QDataSet yds1= yds.slice(i);
+                    QDataSet xds1= (QDataSet)yds1.property(QDataSet.DEPEND_0);
+                    Datum t1= DataSetUtil.asDatum( guessCadenceNew(xds1,yds1) );
+                    dresult= dresult==null ? t1 : ( dresult.lt(t1) ? t1 : dresult );
+                }
+                return DataSetUtil.asDataSet(dresult);
+            }
+        }
+
         Units u= SemanticOps.getUnits(xds);
 
         if ( UnitsUtil.isNominalMeasurement(u) ) return null;
@@ -1658,50 +1874,54 @@ public class DataSetUtil {
         double ss=0;
         double nn=0;
 
-        if ( true || peakv>3 || log ) {
-            QDataSet sss= (QDataSet) hist.property( QDataSet.PLANE_0 ); // DANGER--don't change PLANE_0!
+        RankZeroDataSet theResult=null;
+        boolean haveResult= false;
+        
+        QDataSet sss= (QDataSet) hist.property( QDataSet.PLANE_0 ); // DANGER--don't change PLANE_0!
 
-            for ( int i=ipeak; i>=0; i-- ) {
-                if ( hist.value(i)>(peakv/4) ) {
-                    ss+= sss.value(i) * hist.value(i);
-                    nn+= hist.value(i);
-                } else {
-                    break;
-                }
+        for ( int i=ipeak; i>=0; i-- ) {
+            if ( hist.value(i)>(peakv/4) ) {
+                ss+= sss.value(i) * hist.value(i);
+                nn+= hist.value(i);
+            } else {
+                break;
             }
+        }
 
-            for ( int i=ipeak+1; i<hist.length(); i++ ) {
-                if ( hist.value(i)>(peakv/4) ) {
-                    ss+= sss.value(i) * hist.value(i);
-                    nn+= hist.value(i);
-                } else {
-                    break;
-                }
+        for ( int i=ipeak+1; i<hist.length(); i++ ) {
+            if ( hist.value(i)>(peakv/4) ) {
+                ss+= sss.value(i) * hist.value(i);
+                nn+= hist.value(i);
+            } else {
+                break;
             }
+        }
 
-            // one last sanity check, for the PlasmaWaveGroup file:///home/jbf/project/autoplot/data/qds/gapBug/gapBug.qds?Frequency
-            if ( t<65 && log ) {
-                double s= Math.abs( ss/nn );
-                int skip=0;
-                int bigSkip=0;
-                for ( int i=0; i<t-1; i++ ) {
-                    double d= Math.abs( Math.log( xds.value(i+1) / xds.value(i) ) );
-                    if ( d > s*1.5 ) {
-                        skip++;
-                        if ( d > s*7 ) {
-                            bigSkip++;
-                        }
+        // one last sanity check, for the PlasmaWaveGroup file:///home/jbf/project/autoplot/data/qds/gapBug/gapBug.qds?Frequency
+        if ( t<65 && log ) {
+            double s= Math.abs( ss/nn );
+            int skip=0;
+            int bigSkip=0;
+            for ( int i=0; i<t-1; i++ ) {
+                double d= Math.abs( Math.log( xds.value(i+1) / xds.value(i) ) );
+                if ( d > s*1.5 ) {
+                    skip++;
+                    if ( d > s*7 ) {
+                        bigSkip++;
                     }
                 }
-                logger.log(Level.FINE, "guessCadence({0})->null because of log,skip,not bigSkip", new Object[]{xds});
-                if ( bigSkip==0 && skip>0 ) {
-                    logger.exiting(LOGGING_SOURCE_CLASS,"guessCadenceNew"); 
-                    return null;
-                }
             }
+            logger.log(Level.FINE, "guessCadence({0})->null because of log,skip,not bigSkip", new Object[]{xds});
+            if ( bigSkip==0 && skip>0 ) {
+                logger.exiting(LOGGING_SOURCE_CLASS,"guessCadenceNew"); 
+                theResult= null;
+                haveResult= true;
+            }
+        }
 
+        if ( !haveResult ) {
             MutablePropertyDataSet result= DRank0DataSet.create(ss/nn);
-            
+
             // 1582: one last check, because the gaps in the spectrogram come up way too often! 
             if ( t<65 ) {
                 QDataSet r;
@@ -1712,28 +1932,30 @@ public class DataSetUtil {
                     r= Ops.where( Ops.gt( diffs,tresult ) );
                 }
                 if ( r.length()>t/4 ) {
-                    return null;
+                    theResult= null;
+                    haveResult= true;
                 }
             }
-            
-            if ( log ) {
-                result.putProperty( QDataSet.UNITS, Units.logERatio );
-                result.putProperty( QDataSet.SCALE_TYPE, "log" );
-                logger.log(Level.FINE, "guessCadence({0})->{1} (log)", new Object[]{xds, result});
-                logger.exiting(LOGGING_SOURCE_CLASS,"guessCadenceNew");
-                return (RankZeroDataSet)result;
-            } else {
-                result.putProperty( QDataSet.UNITS, xunits.getOffsetUnits() );
-                logger.log(Level.FINE, "guessCadence({0})->{1} (linear)", new Object[]{xds, result});
-                logger.exiting(LOGGING_SOURCE_CLASS,"guessCadenceNew");                    
-                return (RankZeroDataSet)result;
+
+            if ( !haveResult ) {
+                if ( log ) {
+                    result.putProperty( QDataSet.UNITS, Units.logERatio );
+                    result.putProperty( QDataSet.SCALE_TYPE, "log" );
+                    logger.log(Level.FINE, "guessCadence({0})->{1} (log)", new Object[]{xds, result});
+                    logger.exiting(LOGGING_SOURCE_CLASS,"guessCadenceNew");
+                    theResult= (RankZeroDataSet)result;
+                } else {
+                    result.putProperty( QDataSet.UNITS, xunits.getOffsetUnits() );
+                    logger.log(Level.FINE, "guessCadence({0})->{1} (linear)", new Object[]{xds, result});
+                    logger.exiting(LOGGING_SOURCE_CLASS,"guessCadenceNew");                    
+                    theResult= (RankZeroDataSet)result;
+                }
             }
-        } else { 
-            QDataSet sss= (QDataSet) hist.property( QDataSet.PLANE_0 ); 
-            sss= Ops.putProperty( sss, QDataSet.UNITS, xunits );
-            //TODO: sss has the wrong units.
-            return DataSetUtil.asDataSet( DataSetUtil.asDatum(sss.slice(ipeak) ) );
-        }
+        }  
+        
+        //DataSetAnnotations.getInstance().putAnnotation( xds, DataSetAnnotations.ANNOTATION_CADENCE, theResult );
+        
+        return theResult;
     }
 
     /**
@@ -2542,11 +2764,15 @@ public class DataSetUtil {
      * @return a dataset with the same geometry with zero or positive weights.
      */
     public static QDataSet weightsDataSet(final QDataSet ds) {
-        Object o= ds.property(QDataSet.WEIGHTS);
+        Object o= ds.property(QDataSet.WEIGHTS); // See Ivar's script /home/jbf/project/rbsp/users/ivar/20180129/process-chorus3.jyds
         if ( o!=null ) {
             if ( !(o instanceof QDataSet) ) {
                 logger.log(Level.WARNING, "WEIGHTS_PLANE contained something that was not a qdataset: {0}", o);
-                o=null;
+                o= null;
+            } else if ( ds.rank()==0 ) {
+                if ( ((QDataSet)o).rank()!=0 ) {
+                    o= null;
+                }
             } else if ( ((QDataSet)o).length()!=ds.length() ) {
                 //logger.log(Level.WARNING, "WEIGHTS_PLANE was dataset with the wrong length: {0}", o);
                 //TODO: this was coming up in  script:sftp://jbf@klunk:/home/jbf/project/rbsp/study/bill/digitizing/newDigitizer/newdigitizer2.jy
@@ -2588,7 +2814,7 @@ public class DataSetUtil {
             Number validMin,validMax;
             Units u;
             QDataSet bds= (QDataSet)ds.property(QDataSet.BUNDLE_1);
-            if ( bds!=null && ds.rank()>1 && ds.length()>0 && ds.length(0)>0 ) {   
+            if ( bds!=null && ds.rank()==2 && ds.length()>0 && ds.length(0)>0 ) {   
                 return bundleWeightsDataSet(ds);
             } else {
                 validMin = (Number) ds.property(QDataSet.VALID_MIN);
@@ -3228,20 +3454,25 @@ public class DataSetUtil {
             if ( DataSetAnnotations.VALUE_0.equals(DataSetAnnotations.getInstance().getAnnotation(ds,DataSetAnnotations.ANNOTATION_INVALID_COUNT)) ) { 
                 r= null;
             } else {
-                r= Ops.where( wds );
-                if ( r.length()<ds.length() ) {
-                    if ( r.length()==0 ) throw new IllegalArgumentException("dataset is all fill");
-                    handleFill= true;
-                    ds= DataSetOps.applyIndex( ds, 0, r, false );
-                } else {
+                if ( ds instanceof IndexGenDataSet && wds instanceof org.das2.qds.WeightsDataSet.Finite ) { // this happens a lot.
                     DataSetAnnotations.getInstance().putAnnotation(ds,DataSetAnnotations.ANNOTATION_INVALID_COUNT, DataSetAnnotations.VALUE_0 );
+                    r= null;
+                } else {
+                    r= Ops.where( wds );
+                    if ( r.length()<ds.length() ) {
+                        if ( r.length()==0 ) throw new IllegalArgumentException("dataset is all fill");
+                        handleFill= true;
+                        ds= DataSetOps.applyIndex( ds, 0, r, false );
+                    } else {
+                        DataSetAnnotations.getInstance().putAnnotation(ds,DataSetAnnotations.ANNOTATION_INVALID_COUNT, DataSetAnnotations.VALUE_0 );
+                    }
                 }
             }
         }
         
         double ddatum= datum.doubleValue( SemanticOps.getUnits(ds) );
 
-        if ( !isMonotonic(ds) ) {
+        if ( !mono ) {
             int closest= 0;
             double v= Math.abs( ds.value(closest)-ddatum );
             for ( int i=1; i<ds.length(); i++ ) {
@@ -3289,9 +3520,52 @@ public class DataSetUtil {
         return closestIndex( table, units.createDatum(x) );
     }
 
+    /**
+     * Returns the index of the value which is less than the
+     * value less of the datum.  Note for rank 2 bins, the first bin which
+     * has an end less than the datum.
+     * @param ds rank 1 monotonic tags, or rank 2 bins.
+     * @param datum a datum of the same or convertible units.
+     * @return the index, or null (None).
+     */
+    public static Integer getPreviousIndexStrict( QDataSet ds, Datum datum ) {
+        if ( ds.length()==0 ) return null;
+        if ( SemanticOps.isBins(ds) && ds.rank()==2 ) { // BINS SCHEME
+            ds= Ops.slice1( ds, 1 );
+        }
+        int i= getPreviousIndex( ds, datum );
+        if ( Ops.gt( ds.slice(i), datum ).value()>0. ) {
+            return null;
+        }  else {
+            return i;
+        }
+    }
 
     /**
-     * returns the first column that is before the given datum.  Note the
+     * Returns the index of the value which is greater than the
+     * value less of the datum.  Note for rank 2 bins, the first bin which
+     * has an beginning less than the datum.
+     * @param ds rank 1 monotonic tags, or rank 2 bins.
+     * @param datum a datum of the same or convertible units.
+     * @return the index, or null (None).
+     */
+    public static Integer getNextIndexStrict( QDataSet ds, Datum datum ) {
+        if ( ds.length()==0 ) return null;
+        if ( SemanticOps.isBins(ds) && ds.rank()==2 ) { // BINS SCHEME
+            ds= Ops.slice1( ds, 0 );
+        }
+        int i= getNextIndex( ds, datum );
+        if ( Ops.le( ds.slice(i), datum ).value()>0. ) {
+            return null;
+        }  else {
+            return i;
+        }
+    }
+    
+    /**
+     * returns the first index that is before the given datum, or zero
+     * if no data is found before the datum.
+     * PARV!
      * if the datum identifies (==) an xtag, then the previous column is
      * returned.
      * @param ds the dataset
@@ -3474,7 +3748,18 @@ public class DataSetUtil {
                 if ( "log".equals( yds.property(QDataSet.SCALE_TYPE) ) ) {
                     s = String.format( Locale.US, "%9.3e", value ).trim();
                 } else {
-                    s = String.format( Locale.US, "%9.3f", value ).trim();
+                    QDataSet bounds=null;
+                    if ( yds.rank()>0 ) bounds= SemanticOps.bounds(yds);
+                    if ( bounds!=null && bounds.rank()==2 ) {
+                        if ( Math.abs(bounds.value(1,0))<0.0001 || Math.abs(bounds.value(1,1))<0.0001 ) {
+                            s = String.format( Locale.US, "%9.3e", value ).trim();
+                        } else {
+                            s = String.format( Locale.US, "%9.3f", value ).trim();
+                        }
+                    } else {
+                        s = String.format( Locale.US, "%9.3f", value ).trim();
+                    }
+                    
                 }
             } else {
                 try {
@@ -3553,18 +3838,18 @@ public class DataSetUtil {
      * looking at the MAX_VALUE property of the indeces.
      * 
      * @param ds the dataset. 
-     * @param indeces the indeces which refer to a subset of dataset.
+     * @param indices the indeces which refer to a subset of dataset.
      */
-    public static void checkListOfIndeces(QDataSet ds, QDataSet indeces) {
-        Units u= (Units) indeces.property(QDataSet.UNITS);
-        if ( u!=null && u.isConvertibleTo(Units.dimensionless ) ) {
-            throw new IllegalArgumentException("indeces must not contain units");
+    public static void checkListOfIndeces(QDataSet ds, QDataSet indices) {
+        Units u= (Units) indices.property(QDataSet.UNITS);
+        if ( u!=null && !u.isConvertibleTo(Units.dimensionless ) ) {
+            throw new IllegalArgumentException("indices must not contain units");
         }
         if ( ds.rank()==1 ) {
-            Number len= (Number) indeces.property(QDataSet.VALID_MAX);
+            Number len= (Number) indices.property(QDataSet.VALID_MAX);
             if ( len!=null ) {
                 if ( len.intValue()!=ds.length() ) {
-                    logger.warning("indeces appear to be from a dataset with different length");
+                    logger.warning("indices appear to be from a dataset with different length");
                 }
             }
         }

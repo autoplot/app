@@ -113,6 +113,9 @@ public class URISplit {
                 params.put( k, paramsLoose.get(k) );
             }
             split.params= URISplit.formatParams(params);
+            if ( split.params.length()==0 ) {
+                split.params=null;
+            }
         }
         suri= URISplit.format(split); // make canonical
         if ( !suri.startsWith("vap+") && split.ext!=null && split.ext.length()>1 ) {
@@ -733,6 +736,9 @@ public class URISplit {
                 fileEnd = rsurl.length();
             }
         }
+        //if ( params!=null && params.length()==0 ) {  https://sourceforge.net/p/autoplot/bugs/1913/
+        //    params=null;
+        //}
         
         if ( ihash<rsurl.length() ) {
             result.filters= "|" + rsurl.substring(ihash+1).replaceAll("#","|");

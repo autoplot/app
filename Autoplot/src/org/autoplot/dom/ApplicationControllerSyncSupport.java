@@ -1,7 +1,3 @@
-/*
- * 
- * 
- */
 
 package org.autoplot.dom;
 
@@ -70,8 +66,8 @@ public class ApplicationControllerSyncSupport {
             application.plotElements.get(i).getController().maybeCreateDasPeer();
             application.plotElements.get(i).getController().setResetRanges(false);
             application.plotElements.get(i).getController().setDsfReset(false);
+            application.plotElements.get(i).setRenderControl( elements[i].getRenderControl() ); // OrbitPlot relies completely on control.
             application.plotElements.get(i).getStyle().syncTo(elements[i].getStyle());
-			application.plotElements.get(i).setRenderControl( elements[i].getRenderControl() ); // OrbitPlot relies completely on control.
             //application.plotElements.get(i).getController().resetRenderType( plotElements[i].getRenderType() );
             application.plotElements.get(i).setDataSourceFilterId(nameMap.get(elements[i].getDataSourceFilterId()));
             application.plotElements.get(i).getController().setResetPlotElement(false);
@@ -143,8 +139,8 @@ public class ApplicationControllerSyncSupport {
     }
 
     protected void syncConnectors( Connector[] connectors ) {
-        List<Connector> addConnectors= new ArrayList<Connector>();
-        List<Connector> deleteConnectors= new ArrayList<Connector>();
+        List<Connector> addConnectors= new ArrayList<>();
+        List<Connector> deleteConnectors= new ArrayList<>();
 
         List<Connector> thisConnectors= Arrays.asList(application.getConnectors());
         List<Connector> thatConnectors= Arrays.asList(connectors);
@@ -202,9 +198,13 @@ public class ApplicationControllerSyncSupport {
                     DomNode src= DomUtil.getElementById(application,idMap.get(c.srcId));
                     DomNode dst= DomUtil.getElementById(application,idMap.get(c.dstId));
                     if ( src==null || dst==null ) {
-                        logger.finer("node was null");
+                        logger.info("src or dst was null");
                     } else {
-                        controller.bind( src, c.srcProperty, dst, c.dstProperty  );
+                        try {
+                            controller.bind( src, c.srcProperty, dst, c.dstProperty  );
+                        } catch ( IllegalArgumentException ex ) {
+                            logger.log(Level.INFO, "unable to bind property: {0}", ex);
+                        }
                     }
                 }
             } else {

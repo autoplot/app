@@ -2,11 +2,18 @@
 package org.autoplot.hapi;
 
 import java.io.BufferedReader;
+import java.io.BufferedWriter;
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.FileReader;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.InterruptedIOException;
+import java.io.OutputStreamWriter;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.URI;
@@ -15,12 +22,18 @@ import java.net.URLDecoder;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.text.ParseException;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.zip.GZIPInputStream;
+import java.util.zip.GZIPOutputStream;
 import org.das2.qds.buffer.BufferDataSet;
 import org.das2.dataset.NoDataInIntervalException;
 import org.das2.datum.CacheTag;
@@ -48,21 +61,32 @@ import org.das2.qds.SemanticOps;
 import org.das2.qds.SparseDataSetBuilder;
 import org.das2.qds.WritableDataSet;
 import org.autoplot.datasource.AbstractDataSource;
+import org.autoplot.datasource.AutoplotSettings;
 import org.autoplot.datasource.DefaultTimeSeriesBrowse;
 import org.autoplot.datasource.URISplit;
+import org.autoplot.datasource.capability.Caching;
 import org.autoplot.datasource.capability.TimeSeriesBrowse;
+import org.das2.datum.TimeParser;
 import org.das2.datum.TimeUtil;
+import org.das2.fsm.FileStorageModel;
 import org.das2.qds.ops.Ops;
 import org.das2.qds.util.DataSetBuilder;
 import org.das2.qstream.TransferType;
+import org.das2.util.filesystem.FileSystem;
+import org.das2.util.monitor.CancelledOperationException;
 
 /**
  * HAPI data source uses transactions with HAPI servers to collect data.
  * @author jbf
  */
-public class HapiDataSource extends AbstractDataSource {
+public final class HapiDataSource extends AbstractDataSource {
 
     protected final static Logger logger= LoggerManager.getLogger("apdss.hapi");
+    
+    /**
+     * this logger is for opening connections to remote sites.
+     */
+    protected static final Logger loggerUrl= org.das2.util.LoggerManager.getLogger( "das2.url" );
     
     TimeSeriesBrowse tsb;
     
@@ -78,6 +102,22 @@ public class HapiDataSource extends AbstractDataSource {
             }
         }
         addCapability( TimeSeriesBrowse.class, tsb );
+        addCapability( Caching.class, new Caching() {
+            @Override
+            public boolean satisfies(String surl) {
+                return false;
+            }
+
+            @Override
+            public void resetURI(String surl) {
+            }
+
+            @Override
+            public void reset() {
+                HapiDataSource.cache.clear();
+            }
+            
+        });
     }
 
     private static QDataSet getJSONBins( JSONObject binsObject ) throws JSONException {
@@ -143,13 +183,16 @@ public class HapiDataSource extends AbstractDataSource {
             }
         }
 
-        String sunits= binsObject.getString("units");
-        if ( sunits!=null ) {
-            Units u= Units.lookupUnits(sunits);
-            result.putProperty( QDataSet.UNITS, u );
-            if ( hasMin && hasMax ) {
-                min.putProperty( QDataSet.UNITS, u );
-                max.putProperty( QDataSet.UNITS, u );
+        if ( binsObject.has("units") ) {
+            Object uo= binsObject.get("units");
+            if ( uo instanceof String ) {
+                String sunits= (String)uo;
+                Units u= Units.lookupUnits(sunits);
+                result.putProperty( QDataSet.UNITS, u );
+                if ( hasMin && hasMax ) {
+                    min.putProperty( QDataSet.UNITS, u );
+                    max.putProperty( QDataSet.UNITS, u );
+                }
             }
         }
         
@@ -171,6 +214,7 @@ public class HapiDataSource extends AbstractDataSource {
         
         if ( binsObject.has("description") ) {
             result.putProperty( QDataSet.TITLE, binsObject.getString("description") );
+            result.putProperty( QDataSet.LABEL, binsObject.getString("description") );
         }
         
         return result;
@@ -182,23 +226,8 @@ public class HapiDataSource extends AbstractDataSource {
         URI server = this.resourceURI;
         String id= getParam("id","" );
         if ( id.equals("") ) throw new IllegalArgumentException("missing id");
-        id= URLDecoder.decode(id,"UTF-8");
-        URL url= HapiServer.getInfoURL(server.toURL(), id);
-        StringBuilder builder= new StringBuilder();
-        logger.log(Level.FINE, "getDocument {0}", url.toString());
-        try ( BufferedReader in= new BufferedReader( new InputStreamReader( url.openStream() ) ) ) {
-            String line= in.readLine();
-            while ( line!=null ) {                
-                builder.append(line);
-                line= in.readLine();
-            }
-        }
-        String s= builder.toString();
-        if ( s.length()==0 ) {
-            throw new JSONException("JSON response from info request is empty: "+url);
-        }
-        JSONObject o= new JSONObject(s);
-        return o;
+        id = URLDecoder.decode(id,"UTF-8");
+        return HapiServer.getInfo(server.toURL(), id);
     }
     
     private static class ParamDescription {
@@ -207,12 +236,36 @@ public class HapiDataSource extends AbstractDataSource {
         Units units= Units.dimensionless;
         String name= "";
         String description= "";
+        String label="";
         String type= "";
-        int[] size= new int[0]; // array of scalars
-        int length= 0; // length in bytes when transferring with binary.
+        /**
+         * number of indeces in each index.
+         */
+        int[] size= new int[0]; 
+        /**
+         * total number of fields
+         */
+        int nFields= 1;
+        
+        /**
+         * length in bytes when transferring with binary.
+         */
+        int length= 0; 
         QDataSet[] depend= null;
-        String[] dependName= null; // for time-varying depend1 (not in HAPI1.1)
-        String renderType=null; // may contain hint for renderer, such as nnspectrogram
+        /**
+         *  for time-varying depend1 (not in HAPI1.1)
+         */
+        String[] dependName= null; 
+        
+        /**
+         * date the parameter was last modified, or 0 if not known.
+         */
+        long modifiedDateMillis= 0;
+        
+        /**
+         * may contain hint for renderer, such as nnspectrogram
+         */
+        String renderType=null; 
         private ParamDescription( String name ) {
             this.name= name;
         }
@@ -220,6 +273,173 @@ public class HapiDataSource extends AbstractDataSource {
         public String toString() {
             return this.name;
         }
+    }
+    
+    private static final Map<String,Datum> lastRecordFound= new HashMap<>();
+          
+    private static String[] cacheFilesFor( URL url, ParamDescription[] pp, Datum xx ) {
+        String s= AutoplotSettings.settings().resolveProperty(AutoplotSettings.PROP_FSCACHE);
+        if ( s.endsWith("/") ) s= s.substring(0,s.length()-1);
+        StringBuilder ub= new StringBuilder( url.getProtocol() + "/" + url.getHost() + "/" + url.getPath() );
+        if ( url.getQuery()!=null ) {
+            String[] querys= url.getQuery().split("\\&");
+            Pattern p= Pattern.compile("id=(.+)");
+            for ( String q : querys ) {
+                Matcher m= p.matcher(q);
+                if ( m.matches() ) {
+                    ub.append("/").append(m.group(1));
+                    break;
+                }
+            }
+        } else {
+            throw new IllegalArgumentException("query must be specified, implementation error");
+        }
+        
+        TimeParser tp= TimeParser.create( "$Y/$m/$Y$m$d" );
+        String sxx= tp.format(xx);
+        
+        String u= ub.toString();
+        String[] result= new String[pp.length];
+        for ( int i=0; i<pp.length; i++ ){
+            result[i]= s + "/" + u + "/" + sxx + "." + pp[0].name + ".csv";
+        }
+        
+        return result;
+    }
+    
+    private static final Map<String,ArrayList<String>> cache= new HashMap<>();
+    
+    private static void writeToCachedData(URL url, ParamDescription[] pp, Datum xx, String[] ss) throws IOException {
+        
+        String s= AutoplotSettings.settings().resolveProperty(AutoplotSettings.PROP_FSCACHE);
+        if ( s.endsWith("/") ) s= s.substring(0,s.length()-1);
+        StringBuilder ub= new StringBuilder( url.getProtocol() + "/" + url.getHost() + url.getPath() );
+        if ( url.getQuery()!=null ) {
+            String[] querys= url.getQuery().split("\\&");
+            Pattern p= Pattern.compile("id=(.+)");
+            for ( String q : querys ) {
+                Matcher m= p.matcher(q);
+                if ( m.matches() ) {
+                    ub.append("/").append(m.group(1));
+                    break;
+                }
+            }
+        } else {
+            throw new IllegalArgumentException("query must be specified, implementation error");
+        }
+        
+        TimeParser tp= TimeParser.create( "$Y/$m/$Y$m$d" );
+        
+        String sxx= tp.format(xx);
+                
+        String u= ub.toString();
+        Datum t0= lastRecordFound.get( u + "/" + sxx );
+        if ( t0==null ) {
+            String f= s + "/" + u + "/" + sxx + "." + pp[0].name + ".csv";
+            File ff= new File(f);
+            if ( ff.exists() ) {
+                BufferedReader read= new BufferedReader(new FileReader(ff));
+                String line= read.readLine();
+                String lastLine= null;
+                while ( line!=null ) {
+                    lastLine= line;
+                    line= read.readLine();
+                }
+                if ( lastLine!=null ) {
+                    try {
+                        t0= Units.us2000.parse(lastLine);
+                        lastRecordFound.put( u + "/" + sxx,t0);
+                    } catch (ParseException ex) {
+                        t0= null;
+                    }
+                } else {
+                    t0= null;
+                }
+            }
+        }
+        if ( t0!=null && t0.ge(xx) ) {
+            logger.fine("clear all cached files");
+            for (ParamDescription pp1 : pp) {
+                String f = s + "/hapi/" + u + "/" + sxx + "." + pp1.name + ".csv";
+                File ff= new File(f);
+                if ( ff.exists() ) {
+                    if ( !ff.delete() ) logger.log(Level.INFO, "unable to delete file: {0}", ff);
+                }
+            }
+        }
+        
+        int ifield=0;
+        for (ParamDescription pp1 : pp) {
+            String f = u + "/" + sxx + "." + pp1.name + ".csv" + "." + Thread.currentThread().getId();
+            
+            ArrayList<String> sparam= cache.get(f);
+            if ( sparam==null ) {
+                sparam= new ArrayList<>();
+                cache.put(f,sparam);
+            }
+            
+            StringBuilder build= new StringBuilder();
+            
+            int length = pp1.nFields;
+            for ( int k=0; k<length; k++ ) {
+                if ( k>0 ) build.append(",");
+                build.append( ss[ifield++] );
+            }
+            
+            sparam.add(build.toString());
+            
+        }
+        
+        lastRecordFound.put( u + "/" + sxx,xx);
+        
+    }
+    
+    private static void writeToCachedDataFinish(URL url, ParamDescription[] pp, Datum xx ) throws IOException {
+        String s= AutoplotSettings.settings().resolveProperty(AutoplotSettings.PROP_FSCACHE);
+        if ( s.endsWith("/") ) s= s.substring(0,s.length()-1);
+        StringBuilder ub= new StringBuilder( url.getProtocol() + "/" + url.getHost() + url.getPath() );
+        if ( url.getQuery()!=null ) {
+            String[] querys= url.getQuery().split("\\&");
+            Pattern p= Pattern.compile("id=(.+)");
+            for ( String q : querys ) {
+                Matcher m= p.matcher(q);
+                if ( m.matches() ) {
+                    ub.append("/").append(m.group(1));
+                    break;
+                }
+            }
+        } else {
+            throw new IllegalArgumentException("query must be specified, implementation error");
+        }
+        TimeParser tp= TimeParser.create( "$Y/$m/$Y$m$d" );
+        String sxx= tp.format(xx);
+        String u= ub.toString();
+        for (ParamDescription pp1 : pp) {
+            String f = u + "/" + sxx + "." + pp1.name + ".csv" + "."+ Thread.currentThread().getId();
+            ArrayList<String> sparam= cache.remove(f);
+            File ff= new File(s + "/hapi/" + u + "/" + sxx + "." + pp1.name + ".csv" +".gz");
+            if ( !ff.getParentFile().exists() ) {
+                if ( !ff.getParentFile().mkdirs() ) {
+                    throw new IOException("unable to mkdirs "+ff.getParent() );
+                }
+            }
+            File ffTemp= new File(s + "/hapi/" + u + "/" + sxx + "." + pp1.name + ".csv"+".gz."+Thread.currentThread().getId() );
+            //int line=0;
+            try (final BufferedWriter w = new BufferedWriter( new OutputStreamWriter( new GZIPOutputStream( new FileOutputStream(ff) ) ) ) ) {
+                if ( sparam!=null ) {
+                    for ( String s123: sparam ) {
+                        //line++;
+                        w.write(s123);
+                        w.newLine();
+                    }
+                }
+            }
+            
+            synchronized ( HapiDataSource.class ) {
+                ffTemp.renameTo(ff);
+            }
+        }
+        
     }
     
     /**
@@ -261,7 +481,10 @@ public class HapiDataSource extends AbstractDataSource {
         
         StringBuilder builder= new StringBuilder();
         logger.log(Level.FINE, "getDocument {0}", url.toString());
+        loggerUrl.log(Level.FINE, "GET {0}", new Object[] { url } );
         HttpURLConnection httpConnect=  ((HttpURLConnection)url.openConnection());
+        httpConnect.setConnectTimeout(FileSystem.settings().getConnectTimeoutMs());
+        httpConnect.setReadTimeout(FileSystem.settings().getReadTimeoutMs());
         httpConnect= (HttpURLConnection) HtmlUtil.checkRedirect( httpConnect );
         try ( BufferedReader in= new BufferedReader( new InputStreamReader( httpConnect.getInputStream() ) ) ) {
             String line= in.readLine();
@@ -380,7 +603,7 @@ public class HapiDataSource extends AbstractDataSource {
     }
     
     @Override
-    public QDataSet getDataSet(ProgressMonitor monitor) throws Exception {
+    public synchronized QDataSet getDataSet(ProgressMonitor monitor) throws Exception {
         URI server = this.resourceURI;
         
         String format= getParam("format","csv");
@@ -413,14 +636,22 @@ public class HapiDataSource extends AbstractDataSource {
         DatumRange tr; // TSB = DatumRangeUtil.parseTimeRange(timeRange);
         tr= tsb.getTimeRange();
         
-        if ( info.has("cadence") ) {
+        Datum cadence= null;
+        
+        if ( info.has("cadence") ) { // add one cadence length to beginning and end.
             try {
                 int[] ii= DatumRangeUtil.parseISO8601Duration(info.getString("cadence"));
                 Datum t= TimeUtil.toDatumDuration(ii);
                 tr= new DatumRange( tr.min().subtract(t), tr.max().add(t) );
+                cadence= t;
             } catch ( ParseException ex ) {
                 logger.log(Level.WARNING, "unable to parse cadence as ISO8601 duration: {0}", info.getString("cadence"));
             }
+        }
+        
+        String timeStampLocation= "CENTER";
+        if ( info.has("timeStampLocation" ) ) {
+            timeStampLocation= info.getString("timeStampLocation");
         }
         
         JSONArray parametersArray= info.getJSONArray("parameters");
@@ -487,6 +718,22 @@ public class HapiDataSource extends AbstractDataSource {
         if ( xds==null && ( UnitsUtil.isTimeLocation( SemanticOps.getUnits(ds) ) ) ) {
             xds= ds;
         }
+        
+        if ( timeStampLocation.equals("BEGIN") || timeStampLocation.equals("END" ) ) {
+            if ( cadence==null ) {
+                cadence= DataSetUtil.asDatum( DataSetUtil.guessCadenceNew( xds, null ) );
+            }
+            if ( cadence!=null ) {
+                if ( timeStampLocation.equals("BEGIN") ) {
+                    xds= Ops.add( xds, cadence.divide(2) );
+                } else if ( timeStampLocation.equals("END") ) {
+                    xds= Ops.subtract( xds, cadence.divide(2) );
+                } 
+            } else {
+                logger.info("timetags are identified as BEGIN, but cadence was not available to center the data");
+            }
+        }
+        
         if ( xds!=null ) {
             ((MutablePropertyDataSet)xds).putProperty(QDataSet.CACHE_TAG, new CacheTag(tr,null) );
         }
@@ -504,11 +751,13 @@ public class HapiDataSource extends AbstractDataSource {
         monitor.setProgressMessage("reading data");
         monitor.setTaskProgress(20);
         long t0 = System.currentTimeMillis() - 100; // -100 so it updates after receiving first record.
-        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-        
-        connection.setRequestProperty("Accept-Encoding", "gzip");
-        connection.connect();
-        boolean gzip = "gzip".equals(connection.getContentEncoding());
+        loggerUrl.log(Level.FINE, "GET {0}", new Object[] { url } );
+        HttpURLConnection httpConnect = (HttpURLConnection) url.openConnection();
+        httpConnect.setConnectTimeout(FileSystem.settings().getConnectTimeoutMs());
+        httpConnect.setReadTimeout(FileSystem.settings().getReadTimeoutMs());
+        httpConnect.setRequestProperty("Accept-Encoding", "gzip");
+        httpConnect.connect();
+        boolean gzip = "gzip".equals(httpConnect.getContentEncoding());
 
         int recordLengthBytes = 0;
         TransferType[] tts = new TransferType[pds.length];
@@ -567,7 +816,7 @@ public class HapiDataSource extends AbstractDataSource {
         totalFields= DataSetUtil.sum(nfields);
         double[] result = new double[totalFields];
 
-        try (InputStream in = gzip ? new GZIPInputStream(connection.getInputStream()) : connection.getInputStream()) {
+        try (InputStream in = gzip ? new GZIPInputStream(httpConnect.getInputStream()) : httpConnect.getInputStream()) {
             ByteBuffer buf = TransferType.allocate( recordLengthBytes,ByteOrder.LITTLE_ENDIAN );
             byte[] bytes = buf.array();
             int bytesRead = in.read(bytes);
@@ -616,14 +865,14 @@ public class HapiDataSource extends AbstractDataSource {
         } catch (IOException e) {
             logger.log( Level.WARNING, e.getMessage(), e );
             monitor.finished();
-            throw new IOException(String.valueOf(connection.getResponseCode()) + ":" + connection.getResponseMessage());
+            throw new IOException(String.valueOf(httpConnect.getResponseCode()) + ":" + httpConnect.getResponseMessage());
 
         } catch (Exception e) {
             logger.log( Level.WARNING, e.getMessage(), e );
             monitor.finished();
             throw e;
         } finally {
-            connection.disconnect();
+            httpConnect.disconnect();
         }
         monitor.setTaskProgress(95);
         QDataSet ds = builder.getDataSet();
@@ -648,7 +897,10 @@ public class HapiDataSource extends AbstractDataSource {
         
         StringBuilder builder= new StringBuilder();
         logger.log(Level.FINE, "getDocument {0}", url.toString());
+        loggerUrl.log(Level.FINE, "GET {0}", new Object[] { url } );
         HttpURLConnection httpConnect=  ((HttpURLConnection)url.openConnection());
+        httpConnect.setConnectTimeout(FileSystem.settings().getConnectTimeoutMs());
+        httpConnect.setReadTimeout(FileSystem.settings().getReadTimeoutMs());
         httpConnect= (HttpURLConnection) HttpUtil.checkRedirect(httpConnect);
         try ( BufferedReader in= new BufferedReader( new InputStreamReader( httpConnect.getInputStream() ) ) ) {
             String line= in.readLine();
@@ -726,7 +978,7 @@ public class HapiDataSource extends AbstractDataSource {
      * @return 
      */
     private String[] lineSplit( String line ) {
-        String[] ss= line.split(",");
+        String[] ss= line.split(",",-2);
         for ( int i=0; i<ss.length; i++ ) {
             String s= ss[i].trim();
             if ( s.startsWith("\"") && s.endsWith("\"") ) {
@@ -737,23 +989,265 @@ public class HapiDataSource extends AbstractDataSource {
         return ss;
     }
     
+    public static File cacheFolder( URL url, String id ) {
+        String cache= AutoplotSettings.settings().resolveProperty(AutoplotSettings.PROP_FSCACHE);
+        if ( cache.endsWith("/") ) cache= cache.substring(0,cache.length()-1);
+        
+        String dsroot= cache + "/hapi/" + url.getProtocol() + "/" + url.getHost() + "/" + url.getPath() + "/" + id; 
+        return new File( dsroot );
+    }
+    
+    public static LinkedHashMap<String,DatumRange> getCacheFiles( URL url, String id, String[] parameters, DatumRange timeRange ) {
+        String s= AutoplotSettings.settings().resolveProperty(AutoplotSettings.PROP_FSCACHE);
+        if ( s.endsWith("/") ) s= s.substring(0,s.length()-1);
+        String u= url.getProtocol() + "/" + url.getHost() + "/" + url.getPath();
+        u= u + "/data/" + id;        
+                
+        LinkedHashMap<String,DatumRange> result= new LinkedHashMap<>();
+         
+        try {
+            for (String parameter : parameters) {
+                String theFile= s + "/hapi/"+ u ;
+                FileStorageModel fsm = FileStorageModel.create(FileSystem.create( "file:" +theFile ), "$Y/$m/$Y$m$d." + parameter + ".csv.gz");
+                String[] ff= fsm.getNamesFor(null);
+                for (String ff1 : ff) {
+                    DatumRange tr1= fsm.getRangeFor(ff1);
+                    if ( timeRange==null || timeRange.intersects(tr1)) {
+                        result.put(ff1,tr1);
+                    }
+                }
+            }
+        } catch ( IOException | IllegalArgumentException ex) {
+            logger.log(Level.FINE, "exception in cache", ex );
+            return null;
+        }
+                        
+        return result;
+  
+    }
+    
+    /**
+     * See if it's possible to create a Reader based on the contents of the HAPI
+     * cache.  null is returned when cached files cannot be used.
+     * @param url URL data request URL, where the time range parameters are ignored.
+     * @param parameters the parameters to load, from ParameterDescription.name
+     * @param timeRange the span to cover.  This should be from midnight-to-midnight.
+     * @param offline if true, we are offline and anything available should be used.
+     * @return null or the reader to use.
+     * @see HapiServer#cacheAgeLimitMillis()
+     * @see #getCacheFiles which has copied code.  TODO: fix this.
+     */
+    public static AbstractLineReader getCacheReader( URL url, String[] parameters, DatumRange timeRange, boolean offline, long lastModified) {
+        String s= AutoplotSettings.settings().resolveProperty(AutoplotSettings.PROP_FSCACHE);
+        if ( s.endsWith("/") ) s= s.substring(0,s.length()-1);
+        StringBuilder ub= new StringBuilder( url.getProtocol() + "/" + url.getHost() + "/" + url.getPath() );
+        if ( url.getQuery()!=null ) {
+            String[] querys= url.getQuery().split("\\&");
+            Pattern p= Pattern.compile("id=(.+)");
+            for ( String q : querys ) {
+                Matcher m= p.matcher(q);
+                if ( m.matches() ) {
+                    ub.append("/").append(m.group(1));
+                    break;
+                }
+            }
+        } else {
+            throw new IllegalArgumentException("query must be specified, implementation error");
+        }
+        
+        
+        DatumRange aday= TimeUtil.dayContaining(timeRange.min());
+        List<DatumRange> trs= DatumRangeUtil.generateList( timeRange, aday );
+        
+        long timeNow= System.currentTimeMillis();
+        
+        // which granules are available for all parameters?
+        boolean[][] hits= new boolean[trs.size()][parameters.length];
+        File[][] files= new File[trs.size()][parameters.length];
+        
+        boolean staleCacheFiles= false;
+        
+        String u= ub.toString();
+        
+        if ( ! new File( s + "/hapi/"+ u  ).exists() ) {
+            return null;
+        }
+        
+        try {
+            for ( int i=0; i<trs.size(); i++ ) {
+                DatumRange tr= trs.get(i);
+                for ( int j=0; j<parameters.length; j++ ) {
+                    String parameter= parameters[j];
+                    FileStorageModel fsm = FileStorageModel.create(FileSystem.create( "file:" + s + "/hapi/"+ u ), "$Y/$m/$Y$m$d." + parameter + ".csv");
+                    File[] ff= fsm.getFilesFor(tr);
+                    if ( ff.length==0 ) {
+                        FileStorageModel fsmgz = FileStorageModel.create(FileSystem.create( "file:" + s + "/hapi/"+ u ), "$Y/$m/$Y$m$d." + parameter + ".csv.gz");
+                        ff= fsmgz.getFilesFor(tr);
+                    }
+                    if ( ff.length>1 ) {
+                        throw new IllegalArgumentException("implementation error, should get just one file per day.");
+                    } else if ( ff.length==0 ) {
+                        hits[i][j]= false;
+                    } else {
+                        File f= ff[0];
+                        long ageMillis= timeNow - f.lastModified();
+                        boolean isStale= ( ageMillis > HapiServer.cacheAgeLimitMillis() );
+                        if ( lastModified>0 ) {
+                            isStale= f.lastModified() < lastModified; // Note FAT32 only has 4sec resolution, which could cause problems.
+                            if ( !isStale ) {
+                                logger.fine("server lastModified indicates the cache file can be used");
+                            } else {
+                                logger.fine("server lastModified indicates the cache file should be updated");
+                            }
+                        }
+                        if ( offline || !isStale ) {
+                            hits[i][j]= true;
+                            files[i][j]= f;
+                        } else {
+                            logger.log(Level.FINE, "cached file is too old to use: {0}", f);
+                            hits[i][j]= false;
+                            staleCacheFiles= true;
+                        }
+                    }
+                }
+            }
+        } catch ( IOException | IllegalArgumentException ex) {
+            logger.log(Level.FINE, "exception in cache", ex );
+            return null;
+        }
+                
+        if ( staleCacheFiles && !offline ) {
+            logger.fine("old cache files found, but new ones are available and accessible");
+            return null;
+        }
+    
+        boolean haveSomething= false;
+        boolean haveAll= true;
+        for ( int i=0; i<trs.size(); i++ ) {
+            for ( int j=0; j<parameters.length; j++ ) {
+                if ( hits[i][j]==false ) {
+                    haveAll= false;
+                }
+            }
+            if ( haveAll ) {
+                haveSomething= true;
+            }
+        }
+        
+        if ( !offline && !haveAll ) {
+            logger.fine("some cache files missing, but we are on-line and should retrieve all of them");
+            return null;
+        }
+        
+        if ( !haveSomething ) {
+            logger.fine("no cached data found");
+            return null;
+        }
+            
+        ConcatenateBufferedReader result= new ConcatenateBufferedReader();
+        for ( int i=0; i<trs.size(); i++ ) {
+            boolean haveAllForDay= true;
+            for ( int j=0; j<parameters.length; j++ ) {
+                if ( hits[i][j]==false ) {
+                    haveAllForDay= false;
+                }
+            }
+            if ( haveAllForDay ) {
+                PasteBufferedReader r1= new PasteBufferedReader();
+                r1.setDelim(',');
+                for ( int j=0; j<parameters.length; j++ ) {
+                    try {
+                        FileReader oneDayOneParam= new FileReader(files[i][j]);
+                        r1.pasteBufferedReader( new SingleFileBufferedReader( new BufferedReader(oneDayOneParam) ) );
+                    }catch ( IOException ex ) {
+                        logger.log( Level.SEVERE, ex.getMessage(), ex );
+                        return null;
+                    }
+                }
+                result.concatenateBufferedReader(r1);                
+            }   
+        }
+        
+        return result;
+    }
+
     private QDataSet getDataSetViaCsv(int totalFields, ProgressMonitor monitor, URL url, ParamDescription[] pds, DatumRange tr, int nparam, int[] nfields) throws IllegalArgumentException, Exception, IOException {
         DataSetBuilder builder= new DataSetBuilder(2,100,totalFields);
         monitor.setProgressMessage("reading data");
         monitor.setTaskProgress(20);
         long t0= System.currentTimeMillis() - 100; // -100 so it updates after receiving first record.
-        HttpURLConnection connection= (HttpURLConnection)url.openConnection();
-        connection.setRequestProperty( "Accept-Encoding", "gzip" );
-        connection= (HttpURLConnection)HttpUtil.checkRedirect(connection);
-        connection.connect();
-        boolean gzip= "gzip".equals( connection.getContentEncoding() );
-        try ( BufferedReader in= new BufferedReader( new InputStreamReader( gzip ? new GZIPInputStream( connection.getInputStream() ) : connection.getInputStream() ) ) ) {
+        
+        boolean useCache= HapiServer.useCache();
+        String cacheParam= getParam( "cache", "" );
+        if ( cacheParam.equals("F") ) {
+            useCache= false;
+        }
+        
+        AbstractLineReader cacheReader;
+        if ( useCache ) {
+            String[] parameters= new String[pds.length];
+            for ( int i=0; i<pds.length; i++ ) parameters[i]= pds[i].name;
+            cacheReader= getCacheReader(url, parameters, tr, FileSystem.settings().isOffline(), 0L );
+            if ( cacheReader!=null ) {
+                logger.fine("reading from cache");
+            }
+        } else {
+            cacheReader= null;
+        }
+        
+        if ( useCache ) { // round out data request to day boundaries.
+            Datum minMidnight= TimeUtil.prevMidnight( tr.min() );
+            Datum maxMidnight= TimeUtil.nextMidnight( tr.max() );
+            tr= new DatumRange( minMidnight, maxMidnight );
+            URISplit split= URISplit.parse(url.toURI());
+            Map<String,String> params= URISplit.parseParams(split.params);
+            params.put("time.min",minMidnight.toString());
+            params.put("time.max",maxMidnight.toString());
+            split.params= URISplit.formatParams(params);
+            String surl= URISplit.format(split);
+            url= new URL(surl);
+        }
+        
+        HttpURLConnection httpConnect;
+        if ( cacheReader==null ) {
+            if ( FileSystem.settings().isOffline() ) {
+                throw new NoDataInIntervalException("HAPI server is offline.");
+                //throw new FileSystem.FileSystemOfflineException("file system is offline");
+            } else {
+                loggerUrl.log(Level.FINE, "GET {0}", new Object[] { url } );            
+                httpConnect= (HttpURLConnection)url.openConnection();
+                httpConnect.setConnectTimeout(FileSystem.settings().getConnectTimeoutMs());
+                httpConnect.setReadTimeout(FileSystem.settings().getReadTimeoutMs());
+                httpConnect.setRequestProperty( "Accept-Encoding", "gzip" );
+                httpConnect= (HttpURLConnection)HttpUtil.checkRedirect(httpConnect);
+                httpConnect.connect();
+            }
+        } else {
+            httpConnect= null;
+        }
+                
+        //Check to see what time ranges are from entire days, then only call writeToCachedData for these intervals. 
+        Datum midnight= TimeUtil.prevMidnight( tr.min() );
+        DatumRange currentDay= new DatumRange( midnight, TimeUtil.next( TimeUtil.DAY, midnight) );
+        boolean completeDay= tr.contains(currentDay);
+
+        boolean gzip= cacheReader==null ? "gzip".equals( httpConnect.getContentEncoding() ) : false;
+        int linenumber=0;
+        try ( AbstractLineReader in= ( cacheReader!=null ? cacheReader :
+                new SingleFileBufferedReader( new BufferedReader( new InputStreamReader( gzip ? new GZIPInputStream( httpConnect.getInputStream() ) : httpConnect.getInputStream() ) ) ) ) ) {
             String line= in.readLine();
             while ( line!=null ) {
+                linenumber++;
                 String[] ss= lineSplit(line);
                 if ( ss.length!=totalFields ) {
-                    logger.log(Level.WARNING, "expected {0} fields, got {1}", new Object[]{totalFields, ss.length});
-                    throw new IllegalArgumentException( String.format( "expected %d fields, got %d", new Object[]{totalFields, ss.length} ) );
+                    if ( line.trim().length()==0 ) {
+                        logger.log(Level.WARNING, "expected {0} fields, got empty line at line {1}", new Object[]{totalFields,linenumber});
+                        line= in.readLine();
+                        continue;
+                    } else {
+                        logger.log(Level.WARNING, "expected {0} fields, got {1} at line {2}", new Object[]{totalFields, ss.length,linenumber});
+                        throw new IllegalArgumentException( String.format( "expected %d fields, got %d at line {2}", new Object[]{totalFields, ss.length,linenumber} ) );
+                    }
                 }
                 int ifield=0;
                 Datum xx;
@@ -764,11 +1258,39 @@ public class HapiDataSource extends AbstractDataSource {
                         t0= System.currentTimeMillis();
                         double d= DatumRangeUtil.normalize( tr, xx );
                         monitor.setTaskProgress( 20 + (int)( 75 * d ) );
+                        if ( monitor.isCancelled() ) 
+                            throw new CancelledOperationException("cancel was pressed");
                     }
                 } catch ( ParseException ex ) {
                     line= in.readLine();
                     continue;
                 }
+                
+                //TODO: compress the file, now that we are done.
+                if ( cacheReader==null && useCache && !currentDay.contains(xx) && tr.intersects(currentDay) && completeDay ) {
+                    writeToCachedDataFinish( url, pds, currentDay.middle() );
+                }
+                
+                while ( !currentDay.contains(xx) && tr.intersects(currentDay ) ) {
+                    currentDay= currentDay.next();
+                    completeDay= tr.contains(currentDay);
+                    if ( cacheReader==null && useCache && !currentDay.contains(xx) && tr.intersects(currentDay ) ) {
+                        // put empty file which is placeholder.
+                        writeToCachedDataFinish( url, pds, currentDay.middle() ); 
+                    }
+                }
+                
+                if ( !currentDay.contains(xx) ) {
+                    logger.fine("something's gone wrong, perhaps out-of-order timetags.");
+                    completeDay= false;
+                }
+                
+                if ( completeDay ) {
+                    if ( cacheReader==null && useCache ) {
+                        writeToCachedData( url, pds, xx, ss );
+                    }
+                }
+                        
                 builder.putValue( -1, ifield, xx );
                 ifield++;
                 for ( int i=1; i<nparam; i++ ) {  // nparam is number of parameters, which may have multiple fields.
@@ -790,26 +1312,53 @@ public class HapiDataSource extends AbstractDataSource {
                 builder.nextRecord();
                 line= in.readLine();
             }
+            while ( completeDay && tr.intersects(currentDay) ) {
+                if ( cacheReader==null && useCache && tr.intersects(currentDay ) ) {
+                    // put empty file which is placeholder.
+                    writeToCachedDataFinish( url, pds, currentDay.middle() ); 
+                }
+                currentDay= currentDay.next();
+                completeDay= tr.contains(currentDay);
+            }
         } catch ( IOException e ) {
             logger.log( Level.WARNING, e.getMessage(), e );
             monitor.finished();
-            throw new IOException( String.valueOf(connection.getResponseCode())+": "+connection.getResponseMessage() );
+            if ( httpConnect!=null ) {
+                throw new IOException( String.valueOf(httpConnect.getResponseCode())+": "+httpConnect.getResponseMessage() );
+            } else {
+                throw e;
+            }
             
         } catch ( Exception e ) {
             logger.log( Level.WARNING, e.getMessage(), e );
             monitor.finished();
             throw e;
         } finally {
-            connection.disconnect();
+            if ( httpConnect!=null ) httpConnect.disconnect();
         }
+        
+        if ( cacheReader!=null ) {
+            Map<String,String> cacheFiles= new HashMap<>();
+            cacheFiles.put( "cached", "true" );
+            builder.putProperty( QDataSet.USER_PROPERTIES, cacheFiles );
+        }
+        
         monitor.setTaskProgress(95);
         QDataSet ds= builder.getDataSet();
         return ds;
     }
-
+    
     private ParamDescription[] getParameterDescriptions(JSONObject doc) throws IllegalArgumentException, ParseException, JSONException {
         JSONArray parameters= doc.getJSONArray("parameters");
         int nparameters= parameters.length();
+        
+        long modificationDate= 0L;
+        if ( doc.has("modificationDate") ) {
+            String s= doc.getString("modificationDate");
+            Datum d= Units.ms1970.parse(s);
+            modificationDate= (long)( d.doubleValue(Units.ms1970) );
+        }
+        
         ParamDescription[] pds= new ParamDescription[nparameters];
         for ( int i=0; i<nparameters; i++ ) {
             
@@ -823,6 +1372,7 @@ public class HapiDataSource extends AbstractDataSource {
             }
             
             pds[i]= new ParamDescription( name );
+            pds[i].modifiedDateMillis= modificationDate;
             
             String type;
             if ( jsonObjecti.has("type") ) {
@@ -850,8 +1400,9 @@ public class HapiDataSource extends AbstractDataSource {
             } else {
                 pds[i].type= type;
                 if ( jsonObjecti.has("units") ) {
-                    String sunits= jsonObjecti.getString("units");
-                    if ( sunits!=null ) {
+                    Object ou= jsonObjecti.get("units");
+                    if ( ou instanceof String ) {
+                        String sunits= (String)ou;
                         pds[i].units= Units.lookupUnits(sunits);
                     }
                 } else {
@@ -869,7 +1420,7 @@ public class HapiDataSource extends AbstractDataSource {
                 
                 if ( jsonObjecti.has("fill") ) {
                     String sfill= jsonObjecti.getString("fill");
-                    if ( sfill!=null ) {
+                    if ( sfill!=null && !sfill.equals("null") ) {
                         if ( type.equals("string") ) {
                             pds[i].fillValue= ((EnumerationUnits)pds[i].units).createDatum( sfill ).doubleValue( pds[i].units );
                             pds[i].hasFill= true;
@@ -888,6 +1439,16 @@ public class HapiDataSource extends AbstractDataSource {
                     pds[i].description= ""; // when a value cannot be parsed, but it is not identified.
                 }
 
+                if ( jsonObjecti.has("label") ) {
+                    Object olabel= jsonObjecti.get("label");
+                    if ( olabel instanceof String ) {
+                        pds[i].label= (String)olabel;
+                    }
+                    if ( pds[i].label==null ) pds[i].label= name;
+                } else {
+                    pds[i].label= name;
+                }
+                
                 if ( jsonObjecti.has("length") ) {
                     pds[i].length= jsonObjecti.getInt("length");
                 }
@@ -897,9 +1458,11 @@ public class HapiDataSource extends AbstractDataSource {
                     if ( !(o instanceof JSONArray) ) {
                         if ( o.getClass()==Integer.class ) {
                             pds[i].size= new int[] { ((Integer)o) };
+                            pds[i].nFields= ((Integer)o);
                             logger.log( Level.WARNING, "size should be an int array, found int: {0}", name);
                         } else if ( o.getClass()==String.class ) {
                             pds[i].size= new int[] { Integer.parseInt( (String)o ) };
+                            pds[i].nFields= ((Integer)o);
                             logger.log( Level.WARNING, "size should be an int array, found String: {0}", name);
                         } else {
                             throw new IllegalArgumentException( String.format( "size should be an int array: %s", name ) );
@@ -907,9 +1470,12 @@ public class HapiDataSource extends AbstractDataSource {
                     } else {
                         JSONArray a= (JSONArray)o;
                         pds[i].size= new int[a.length()];
+                        int nFields=1;
                         for ( int j=0; j<a.length(); j++ ) {
                             pds[i].size[j]= a.getInt(j);
+                            nFields*= pds[i].size[j];
                         }
+                        pds[i].nFields= nFields;
                     }
                     if ( jsonObjecti.has("bins") ) {
                         o= jsonObjecti.get("bins");
@@ -920,7 +1486,7 @@ public class HapiDataSource extends AbstractDataSource {
                             for ( int j=0; j<ja.length(); j++ ) {
                                 JSONObject bins= ja.getJSONObject(j);
                                 if ( bins.has("parameter") ) {  // deprecated, see binsParameter below.  TODO: revisit this.
-                                    int n= DataSetUtil.product(pds[i].size);
+                                    int n= pds[i].nFields;
                                     pds[i].depend[j]= Ops.findgen(n);
                                     pds[i].dependName[j]= bins.getString("parameter");
                                 } else if ( bins.has("ranges") ) {
@@ -973,9 +1539,10 @@ public class HapiDataSource extends AbstractDataSource {
     }
 
     /**
-     * 
-     * @param ds
-     * @param pds
+     * Reform bundle into typical QDataSet schemes.  For example, a rank 2 bundle 
+     * ds[;T,N] would be reformed into rank 1 N[T].
+     * @param ds the bundle dataset
+     * @param pds metadata for each column.
      * @param sort if non-null, resort the data with these indeces.
      * @return 
      */
@@ -989,7 +1556,7 @@ public class HapiDataSource extends AbstractDataSource {
             ds= Ops.copy( Ops.slice1( ds, 1 ) );
             ds= Ops.putProperty( ds, QDataSet.DEPEND_0, depend0 );
             ds= Ops.putProperty( ds, QDataSet.NAME, Ops.safeName(pds[1].name) );
-            ds= Ops.putProperty( ds, QDataSet.LABEL, pds[1].name );
+            ds= Ops.putProperty( ds, QDataSet.LABEL, pds[1].label );
             ds= Ops.putProperty( ds, QDataSet.TITLE, pds[1].description );
             ds= Ops.putProperty( ds, QDataSet.UNITS, pds[1].units );
             if ( pds[1].hasFill ) {
@@ -1002,7 +1569,7 @@ public class HapiDataSource extends AbstractDataSource {
             }
             ds= Ops.putProperty( ds, QDataSet.DEPEND_0, depend0 );
             ds= Ops.putProperty( ds, QDataSet.NAME, Ops.safeName(pds[1].name) );
-            ds= Ops.putProperty( ds, QDataSet.LABEL, pds[1].name );
+            ds= Ops.putProperty( ds, QDataSet.LABEL, pds[1].label );
             ds= Ops.putProperty( ds, QDataSet.TITLE, pds[1].description );
             ds= Ops.putProperty( ds, QDataSet.UNITS, pds[1].units );
             if ( pds[1].hasFill ) {
@@ -1028,7 +1595,7 @@ public class HapiDataSource extends AbstractDataSource {
             int ifield=1;
             int length1=ds.length(0); // this should be overwritten
             for ( int i=1; i<pds.length; i++ ) {
-                int nfields1= DataSetUtil.product(pds[i].size);
+                int nfields1= pds[i].nFields;
                 SparseDataSetBuilder sdsb= new SparseDataSetBuilder(2);
                 sdsb.setLength(nfields1);
                 int startIndex= sort==null ? ifield-1 : sort[ifield]-1;

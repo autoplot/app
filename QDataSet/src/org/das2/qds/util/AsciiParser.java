@@ -250,6 +250,10 @@ public class AsciiParser {
             
             DataSetBuilder builder = new DataSetBuilder(2, 100, recordParser.fieldCount() );
             
+            // check for iso8601 times in the first two columns.
+            if ( UnitsUtil.isTimeLocation(this.units[0]) ) this.fieldParsers[0]= UNITS_PARSER;
+            if ( recordParser.fieldCount()>1 && UnitsUtil.isTimeLocation(this.units[1]) ) this.fieldParsers[1]= UNITS_PARSER;
+                
             while (line != null && iline<HEADER_LENGTH_LIMIT && this.recordParser.tryParseRecord(line, 0, builder) == false) {
                 line = reader.readLine();
                 iline++;
@@ -391,10 +395,11 @@ public class AsciiParser {
             for (String line1 : lines) {
                 if (p.fieldCount(line1) == p.fieldCount()) {
                     line = line1;
-                    Units[] u= new Units[this.units.length];
-                    System.arraycopy( this.units, 0, u, 0, this.units.length );
+                    int n= this.units.length;
+                    Units[] u= new Units[n];
+                    System.arraycopy( this.units, 0, u, 0, n );
                     result = createDelimParser(line1, p.getDelim(), -1); // set column names
-                    System.arraycopy( u, 0, this.units, 0, this.units.length );
+                    System.arraycopy( u, 0, this.units, 0, n );
                     break;
                 }
             }
@@ -1529,6 +1534,9 @@ public class AsciiParser {
         int fieldCount;
         String delimRegex;
         Pattern delimPattern;
+        /**
+         * true if we should attempt to parse the field, false if it should be skipped.
+         */
         boolean[] doParseField;
         public String header=null; // place to store the header.
         boolean showException= true;

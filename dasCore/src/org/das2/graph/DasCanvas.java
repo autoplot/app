@@ -741,6 +741,7 @@ public class DasCanvas extends JLayeredPane implements Printable, Editable, Scro
         }
         
         if ( doIncrementPaintCountTimer ) {
+            logger.log(Level.FINE, "incrementPaintCountTimer.restart() {0}", paintCount);
             incrementPaintCountTimer.restart();
         } else {
             doIncrementPaintCountTimer= true;
@@ -1543,8 +1544,7 @@ public class DasCanvas extends JLayeredPane implements Printable, Editable, Scro
     public Image getImageNonPrint(int width, int height) {
 
         long t0= System.currentTimeMillis();
-
-        String msg = "dasCanvas.getImage(" + width + "," + height + ")";
+        String msg = "dasCanvas.getImageNonPrint(" + width + "," + height + ")";
         logger.fine(msg);
 
         prepareForOutput(width, height);
