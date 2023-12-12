@@ -8,16 +8,14 @@
 # that unreferenced routines are not used.  This list is separate from the ant build script,
 # so the configuration needs to be kept in sync.
 #
-# CDF Support will be awkward because of the binaries.  Support this for the hudson platform.
-#
 # This should be run from the folder "Autoplot"
 #
-# Used by: autoplot-release on Hudson.
+# Used by: autoplot-release on Jenkins.
 #
 
 # set JAVA_HOME
 if [ "" = "$JAVA_HOME" ]; then
-    JAVA_HOME=/usr/local/jdk1.7.0_80/
+    JAVA_HOME=/usr/local/jdk1.8/
 fi
 
 if [[ $JAVA_HOME != */ ]]; then
@@ -37,6 +35,7 @@ if [ "" = "$DO_HIDE" ]; then
     DO_HIDE="true"
 fi
 
+echo "JAVA_HOME=${JAVA_HOME}"
 echo "DO_HIDE=${DO_HIDE}  # if false then show passwords etc for debugging."
 
 JAVAC=${JAVA_HOME}/bin/javac
@@ -81,7 +80,7 @@ function raiseerror {
 
 #JAVAARGS="-g -target 1.7 -source 1.7 -cp ../temp-volatile-classes:../AutoplotStable.jar:. -d ../temp-volatile-classes -Xmaxerrs 10"
 #JAVAARGS="-g -target 1.7 -source 1.7 -Xlint:unchecked -bootclasspath $JAVA_HOME/jre/lib/rt.jar -cp ../temp-volatile-classes:../AutoplotStable.jar:. -d ../temp-volatile-classes -Xmaxerrs 10"
-JAVAARGS="-g -target 1.7 -source 1.7 -bootclasspath $JAVA_HOME/jre/lib/rt.jar -cp ../temp-volatile-classes:../AutoplotStable.jar:. -d ../temp-volatile-classes -Xmaxerrs 10"
+JAVAARGS="-g -target 1.8 -source 1.8 -bootclasspath $JAVA_HOME/jre/lib/rt.jar -cp ../temp-volatile-classes:../AutoplotStable.jar:. -d ../temp-volatile-classes -Xmaxerrs 10"
 
 export timer=`date +%s`
 
@@ -106,7 +105,7 @@ if [ "" = "$CODEBASE" ]; then
 fi
 
 if [ "" = "$HUDSON_URL" ]; then
-    HUDSON_URL="http://apps-pw.physics.uiowa.edu/hudson"
+    HUDSON_URL="http://ci-pw.physics.uiowa.edu/"
 fi
 
 if [ "" = "$WGET" ]; then
@@ -132,12 +131,12 @@ mkdir temp-volatile-classes
 echo "pwd=" `pwd`
 if [ "" = "$AUTOPLOT_STABLE_DIR" ]; then 
    echo "copy jar file classes using wget -q..."
-   echo ${WGET} -q -O AutoplotStable.jar ${HUDSON_URL}/job/autoplot-jar-stable-2017/lastSuccessfulBuild/artifact/autoplot/Autoplot/dist/AutoplotStable.jar 
-   ${WGET} -q -O AutoplotStable.jar ${HUDSON_URL}/job/autoplot-jar-stable-2017/lastSuccessfulBuild/artifact/autoplot/Autoplot/dist/AutoplotStable.jar # 2>&1 | head -100
-   echo ${WGET} -q -O AutoplotStable.jar.pack.gz ${HUDSON_URL}/job/autoplot-jar-stable-2017/lastSuccessfulBuild/artifact/autoplot/Autoplot/dist/AutoplotStable.jar.pack.gz 
-   ${WGET} -q -O AutoplotStable.jar.pack.gz ${HUDSON_URL}/job/autoplot-jar-stable-2017/lastSuccessfulBuild/artifact/autoplot/Autoplot/dist/AutoplotStable.jar.pack.gz # 2>&1 | head -100
+   echo ${WGET} --no-check-certificate -q -O AutoplotStable.jar ${HUDSON_URL}/job/autoplot-jar-stable-2017/lastSuccessfulBuild/artifact/autoplot/Autoplot/dist/AutoplotStable.jar 
+   ${WGET} --no-check-certificate -q -O AutoplotStable.jar ${HUDSON_URL}/job/autoplot-jar-stable-2017/lastSuccessfulBuild/artifact/autoplot/Autoplot/dist/AutoplotStable.jar # 2>&1 | head -100
+   echo ${WGET} --no-check-certificate -q -O AutoplotStable.jar.pack.gz ${HUDSON_URL}/job/autoplot-jar-stable-2017/lastSuccessfulBuild/artifact/autoplot/Autoplot/dist/AutoplotStable.jar.pack.gz 
+   ${WGET} --no-check-certificate -q -O AutoplotStable.jar.pack.gz ${HUDSON_URL}/job/autoplot-jar-stable-2017/lastSuccessfulBuild/artifact/autoplot/Autoplot/dist/AutoplotStable.jar.pack.gz # 2>&1 | head -100
    if [ $? -ne 0 ]; then
-      echo "wget fails: $WGET -O AutoplotStable.jar ${HUDSON_URL}/job/autoplot-jar-stable-2017/lastSuccessfulBuild/artifact/autoplot/Autoplot/dist/AutoplotStable.jar"
+      echo "wget fails: $WGET wget --no-check-certificate -q -O AutoplotStable.jar ${HUDSON_URL}/job/autoplot-jar-stable-2017/lastSuccessfulBuild/artifact/autoplot/Autoplot/dist/AutoplotStable.jar"
       exit -1
    fi
 else
@@ -157,8 +156,9 @@ echo $plugins
 
 echo "copy sources..."
 for i in \
-  dasCore dasCoreUtil dasCoreDatum \
-  QDataSet QStream DataSource \
+  das2java/dasCore das2java/dasCoreUtil das2java/dasCoreDatum \
+  das2java/QDataSet das2java/QStream \
+  DataSource \
   JythonSupport \
   AutoplotHelp \
   IdlMatlabSupport \
@@ -199,7 +199,7 @@ else
    rm -rf temp-volatile-classes/JNLP-INF/
 fi
 
-printf "Main-Class: org.autoplot.AutoplotUI\nPermissions: all-permissions\nCodebase: autoplot.org apps-pw.physics.uiowa.edu\nApplication-Name: Autoplot\n" > temp-volatile-src/MANIFEST.MF
+printf "Main-Class: org.autoplot.AutoplotUI\nPermissions: all-permissions\nCodebase: autoplot.org *.physics.uiowa.edu jfaden.net\nApplication-Name: Autoplot\n" > temp-volatile-src/MANIFEST.MF
 
 # remove signatures
 rm -f temp-volatile-classes/META-INF/*.RSA
@@ -224,7 +224,7 @@ echo "done special handling of META-INF stuff."
 
 echo "=== copy resources..."
 cd temp-volatile-src
-for i in $( find * -name '*.png' -o -name '*.gif' -o -name '*.html' -o -name '*.py' -o -name '*.jy' -o -name '*.jyds' -o -name '*.xml' -o -name '*.xsl' -o -name '*.xsd' -o -name '*.CSV' -o -name '*.properties' -o -name '*.ttf' -o -name '*.otf' ); do
+for i in $( find * -name '*.png' -o -name '*.gif' -o -name '*.html' -o -name '*.py' -o -name '*.jy' -o -name '*.jyds' -o -name '*.xml' -o -name '*.xsl' -o -name '*.xsd' -o -name '*.CSV' -o -name '*.properties' -o -name '*.ttf' -o -name '*.otf' -o -name '*.json' ); do
    mkdir -p $(dirname ../temp-volatile-classes/$i)
    cp $i ../temp-volatile-classes/$i
 done
@@ -254,6 +254,7 @@ for i in $( find orbits -type f ); do               # copy in orbits files
    cp $i ../temp-volatile-classes/$i
 done
 
+echo "copy scheme_bk font from /home/jbf/project/autoplot..."
 if [ -f  /home/jbf/project/autoplot/fonts/scheme_bk.otf ]; then
    cp /home/jbf/project/autoplot/fonts/scheme_bk.otf ../temp-volatile-classes/resources
    echo "scheme_bk.otf is a proprietary font which is not licensed for use outside of Autoplot." > ../temp-volatile-classes/resources/fonts.license.txt
@@ -271,6 +272,7 @@ for i in \
   AutoplotHelp \
   IdlMatlabSupport \
   AudioSystemDataSource \
+  DataSourcePack \
   $plugins \
   Autoplot; do
     if [ -d ../${i}/javahelp/ ]; then
@@ -327,6 +329,9 @@ compilef 'org/das2/components/DataPointRecorderNew.java'
 compilef 'org/das2/components/AngleSpectrogramSlicer.java'
 compilef 'org/das2/graph/Auralizor.java'  
 compilef 'org/das2/graph/CurveRenderer.java'  
+compilef 'org/das2/graph/RangeLabel.java'  
+compilef 'org/das2/graph/LookupAxis.java'  
+compilef 'org/das2/graph/CollapseSpectrogramRenderer.java'  
 compilef 'org/das2/datum/Ratio.java'  
 compilef 'org/das2/datum/RationalNumber.java'  
 compilef 'org/das2/datum/SIUnits.java'  
@@ -335,6 +340,12 @@ compilef 'org/autoplot/jythonsupport/ui/DataMashUp.java'
 compilef 'org/das2/util/*Formatter.java'
 compilef 'org/autoplot/util/jemmy/*.java'
 compilef 'org/das2/qds/filters/*.java'
+compilef 'org/das2/qds/demos/PlasmaModel.java'
+compilef 'org/virbo/autoplot/*.java'
+compilef 'test/Unicode.java'
+compilef 'org/das2/util/Expect.java'
+compilef 'external/AuralizationHandler.java'
+compilef 'org/das2/util/filesystem/GitCommand.java'
 
 cat ../temp-volatile-classes/META-INF/org.autoplot.datasource.DataSourceFactory.extensions | cut -d' ' -f1
 for i in `cat ../temp-volatile-classes/META-INF/org.autoplot.datasource.DataSourceFactory.extensions | cut -d' ' -f1 | sed 's/\./\//g'`; do
@@ -353,10 +364,10 @@ for i in `cat ../temp-volatile-classes/META-INF/org.autoplot.datasource.DataSour
    compilef $i.java
 done
 
-# NetCDF IOServiceProvider allows Autoplot URIs to be used in ncml files.
-echo "compile AbstractIOSP and APIOServiceProvider"
-compilef org/autoplot/netCDF/AbstractIOSP.java
-compilef org/autoplot/netCDF/APIOServiceProvider.java
+## NetCDF IOServiceProvider allows Autoplot URIs to be used in ncml files.
+#echo "compile AbstractIOSP and APIOServiceProvider"
+#compilef org/autoplot/netCDF/AbstractIOSP.java
+#compilef org/autoplot/netCDF/APIOServiceProvider.java
 
 compilef-go
 
@@ -440,6 +451,10 @@ rm dist/AutoplotVolatile_pack_gz.jar
 
 echo "=== create jnlp file for build..."
 cp src/autoplot.jnlp dist
+cp src/autoplot_4GB.jnlp dist
+cp src/autoplot_1GB.jnlp dist
+cp src/autoplot_prod_4GB.jnlp dist
+cp src/autoplot_prod_1GB.jnlp dist
 
 echo "=== copy branding for release, such as png icon images"
 cp src/*.png dist
@@ -451,6 +466,10 @@ cd temp-volatile-src
 $JAVAC  -target 1.7 -source 1.7 -d ../temp-volatile-classes external/FileSearchReplace.java
 cd ..
 ${JAVA_HOME}/bin/java -cp temp-volatile-classes external.FileSearchReplace dist/autoplot.jnlp '#{tag}' $TAG '#{codebase}' $CODEBASE
+${JAVA_HOME}/bin/java -cp temp-volatile-classes external.FileSearchReplace dist/autoplot_1GB.jnlp '#{tag}' $TAG '#{codebase}' $CODEBASE
+${JAVA_HOME}/bin/java -cp temp-volatile-classes external.FileSearchReplace dist/autoplot_4GB.jnlp '#{tag}' $TAG '#{codebase}' $CODEBASE
+${JAVA_HOME}/bin/java -cp temp-volatile-classes external.FileSearchReplace dist/autoplot_prod_1GB.jnlp '#{tag}' $TAG '#{codebase}' $CODEBASE
+${JAVA_HOME}/bin/java -cp temp-volatile-classes external.FileSearchReplace dist/autoplot_prod_4GB.jnlp '#{tag}' $TAG '#{codebase}' $CODEBASE
 ${JAVA_HOME}/bin/java -cp temp-volatile-classes external.FileSearchReplace dist/index.html '#{tag}' $TAG '#{codebase}' $CODEBASE
 
 # if these are needed.

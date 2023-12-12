@@ -16,7 +16,7 @@
 # such as "unzip".
 #
 #  -h  --headless   run in headless mode
-#  -Jxxx            pass argument xxx to JRE (e.g. -J-Xmx4G to get 4 Gig of RAM)
+#  -Jxxx            pass argument xxx to JRE (e.g. -J-Xmx1G to limit to 1 Gig of RAM)
 #  -s  --script     launch into script
 #
 #  Set APDEBUG=1 to print debug infomation. (In bash, "export APDEBUG=1")
@@ -26,7 +26,7 @@
 #    chmod 755 autoplot.jar
 #    wget -O sayHello.jy http://autoplot.org/data/script/sayHello.jy
 #    export APDEBUG=1
-#    ./autoplot.jar -J-Xmx4G -h --script=sayHello.jy  # note this should result in: java -Xmx4G -Djava.awt.headless=true -jar autoplot.jar org.virbo.autoplot.AutoplotUI  --script=sayHello.jy
+#    ./autoplot.jar -J-Xmx8G -h --script=sayHello.jy  # note this should result in: java -Xmx4G -Djava.awt.headless=true -jar autoplot.jar org.autoplot.AutoplotUI  --script=sayHello.jy
 #  
 
 JAVA_ARGS=""
@@ -55,7 +55,7 @@ done
 AP_ARGS=${AP_ARGS:1}
 
 if [ $memIsImplicit == "1" ]; then 
-   JAVA_ARGS="${JAVA_ARGS} -Xmx1000M ";
+   JAVA_ARGS="${JAVA_ARGS} -Xmx4G -Dautoplot.release.type=singlejar";
 fi
 
 if [ "$APDEBUG" == "1" ]; then 
@@ -74,19 +74,27 @@ fi
 
 if [ "$APDEBUG" == "1" ]; then 
    if [ "${JAVA_HOME}" -a \( -x "${JAVA_HOME}"/bin/java \) ]; then      
-      echo $EXEC "${JAVA_HOME}"/bin/java ${JAVA_ARGS} -jar ${JARFILE} "${AP_ARGS}"
+      echo $EXEC "${JAVA_HOME}"/bin/java ${JAVA_ARGS} -jar ${JARFILE} ${AP_ARGS}
    else
-      echo $EXEC /usr/bin/env java ${JAVA_ARGS} -jar ${JARFILE} "${AP_ARGS}"
+      echo $EXEC /usr/bin/env java ${JAVA_ARGS} -jar ${JARFILE} ${AP_ARGS}
    fi
 fi
 
 
 if [ "${JAVA_HOME}" -a \( -x "${JAVA_HOME}"/bin/java \) ]; then      
-      $EXEC "${JAVA_HOME}"/bin/java ${JAVA_ARGS} -jar ${JARFILE} "${AP_ARGS}"
+      $EXEC "${JAVA_HOME}"/bin/java ${JAVA_ARGS} -jar ${JARFILE} ${AP_ARGS}
 else
-      $EXEC /usr/bin/env java ${JAVA_ARGS} -jar ${JARFILE} "${AP_ARGS}"
+      $EXEC /usr/bin/env java ${JAVA_ARGS} -jar ${JARFILE} ${AP_ARGS}
 fi
 
 exit
 
+
+
+
+
+
+
+
 # JAR FILE DATA STARTS AFTER THIS TEXT #
+#

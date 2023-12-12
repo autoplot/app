@@ -14,14 +14,14 @@
 # On OS 10.5.8, this worked:
 #  JAVA_HOME=/System/Library/Frameworks/JavaVM.framework/Versions/CurrentJDK/Home
 #
-# Used by: autoplot-jar-all on http://jfaden.net:8080/hudson.  This is used for testing.
+# Used by: autoplot-jar-all on http://jfaden.net/jenkins.  This is used for testing.
 #
 
 if [ "" = "$JAVA_HOME" ]; then
     JAVA_HOME=/usr/local/jdk1.7/
 fi
 
-JAVAARGS="-g -target 1.7 -source 1.7 -cp ../temp-classes:. -d ../temp-classes -Xmaxerrs 10"
+JAVAARGS="-g -target 1.8 -source 1.8 -cp ../temp-classes:. -d ../temp-classes -Xmaxerrs 10"
 
 echo "\${AP_VERSION}=${AP_VERSION}"
 
@@ -79,6 +79,11 @@ for i in ../../APLibs/lib/commons/*.jar; do
    jar xf $i
 done
 
+for i in ../../APLibs/lib/pds/*.jar; do
+   echo jar xf $i
+   jar xf $i
+done
+
 if [ "" = "$RSYNC" ]; then
     echo "using default rsync, assuming it is on the path"
     RSYNC=rsync
@@ -91,18 +96,21 @@ echo "done copy jar file classes."
 
 echo "copy sources..."
 for i in \
-  dasCore dasCoreUtil dasCoreDatum \
-  QDataSet QStream  DataSource \
+  das2java/dasCore das2java/dasCoreUtil das2java/dasCoreDatum \
+  das2java/QDataSet das2java/QStream \
+  DataSource \
   JythonSupport \
   AutoplotHelp \
   IdlMatlabSupport \
   AudioSystemDataSource \
   BinaryDataSource DataSourcePack JythonDataSource \
   Das2ServerDataSource TsdsDataSource  \
+  FedCatDataSource \
   NetCdfDataSource CefDataSource \
   WavDataSource ImageDataSource ExcelDataSource \
   FitsDataSource OpenDapDataSource \
-  CdfJavaDataSource CDAWebDataSource PDSPPIDataSource HapiDataSource \
+  CdfJavaDataSource CDAWebDataSource PDSPPIDataSource PDSDataSource \
+  HapiDataSource \
   Autoplot; do
     echo $RSYNC -a --exclude .svn ../${i}/src/ temp-src/
     $RSYNC -a --exclude .svn ../${i}/src/ temp-src/
@@ -148,7 +156,7 @@ echo "done special handling of META-INF stuff."
 
 echo "copy resources..."
 cd temp-src
-for i in $(find * -name '*.png' -o -name '*.gif' -o -name '*.html' -o -name '*.py' -o -name '*.jy' -o -name '*.jyds' -o -name '*.xml' -o -name '*.xsl' -o -name '*.xsd' -o -name '*.CSV' -o -name '*.properties' ); do
+for i in $( find * -name '*.png' -o -name '*.gif' -o -name '*.html' -o -name '*.py' -o -name '*.jy' -o -name '*.jyds' -o -name '*.xml' -o -name '*.xsl' -o -name '*.xsd' -o -name '*.CSV' -o -name '*.properties' -o -name '*.ttf' -o -name '*.otf' -o -name '*.json' ); do
    mkdir -p $(dirname ../temp-classes/$i)
    cp $i ../temp-classes/$i
 done
@@ -251,6 +259,9 @@ compilef 'org/das2/components/DataPointRecorderNew.java'
 compilef 'org/das2/components/AngleSpectrogramSlicer.java' 
 compilef 'org/das2/graph/Auralizor.java' 
 compilef 'org/das2/graph/CurveRenderer.java'  
+compilef 'org/das2/graph/RangeLabel.java'  
+compilef 'org/das2/graph/LookupAxis.java'  
+compilef 'org/das2/graph/CollapseSpectrogramRenderer.java'  
 compilef 'org/das2/datum/Ratio.java'
 compilef 'org/das2/datum/RationalNumber.java'
 compilef 'org/das2/datum/SIUnits.java'
@@ -259,7 +270,12 @@ compilef 'org/autoplot/jythonsupport/ui/DataMashUp.java'
 compilef 'org/das2/util/*Formatter.java'
 compilef 'org/autoplot/util/jemmy/*.java'
 compilef 'org/das2/qds/filters/*.java'
-compilef 'org/virbo/autoplot/*.java'
+compilef 'org/das2/qds/demos/PlasmaModel.java'
+compilef 'org/virbo/autoplot/*.java' # why is this repeated?
+compilef 'test/Unicode.java'
+compilef 'org/das2/util/Expect.java'
+compilef 'external/AuralizationHandler.java'
+compilef 'org/das2/util/filesystem/GitCommand.java'
 
 cat ../temp-classes/META-INF/org.autoplot.datasource.DataSourceFactory.extensions | cut -d' ' -f1
 for i in `cat ../temp-classes/META-INF/org.autoplot.datasource.DataSourceFactory.extensions | cut -d' ' -f1 | sed 's/\./\//g'`; do
@@ -274,10 +290,10 @@ for i in `cat ../temp-classes/META-INF/org.autoplot.datasource.DataSourceEditorP
    compilef $i.java
 done
 
-# NetCDF IOServiceProvider allows Autoplot URIs to be used in ncml files.
-echo "compile AbstractIOSP and APIOServiceProvider"
-compilef org/autoplot/netCDF/AbstractIOSP.java
-compilef org/autoplot/netCDF/APIOServiceProvider.java
+## NetCDF IOServiceProvider allows Autoplot URIs to be used in ncml files.
+#echo "compile AbstractIOSP and APIOServiceProvider"
+#compilef org/autoplot/netCDF/AbstractIOSP.java
+#compilef org/autoplot/netCDF/APIOServiceProvider.java
 
 cd ..
 echo "done compile sources."
