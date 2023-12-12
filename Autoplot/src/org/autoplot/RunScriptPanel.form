@@ -58,7 +58,8 @@
     </Component>
     <Component class="javax.swing.JCheckBox" name="toolsCB">
       <Properties>
-        <Property name="text" type="java.lang.String" value="Install in tools folder and menu"/>
+        <Property name="text" type="java.lang.String" value="Add to Tools menu"/>
+        <Property name="toolTipText" type="java.lang.String" value="Add to tools menu for convenient access."/>
       </Properties>
     </Component>
     <Container class="javax.swing.JScrollPane" name="jScrollPane1">
@@ -79,6 +80,7 @@
     <Component class="javax.swing.JLabel" name="jLabel2">
       <Properties>
         <Property name="text" type="java.lang.String" value="Make sure the script does not contain malicious code."/>
+        <Property name="toolTipText" type="java.lang.String" value="&lt;html&gt;Autoplot keeps track of what scripts you have run, and when &lt;br&gt;things change with a script you will be asked to verify&lt;br&gt;the script.  Scripts can be made which delete files, so be&lt;br&gt;sure to only run scripts from people you trust.&#xa;"/>
       </Properties>
     </Component>
   </SubComponents>

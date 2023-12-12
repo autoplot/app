@@ -25,7 +25,7 @@
   <Layout>
     <DimensionLayout dim="0">
       <Group type="103" groupAlignment="0" attributes="0">
-          <Component id="commentSplitPane" alignment="0" max="32767" attributes="0"/>
+          <Component id="commentSplitPane" alignment="0" pref="0" max="32767" attributes="0"/>
           <Component id="jPanel3" alignment="0" max="32767" attributes="0"/>
           <Component id="jPanel1" alignment="1" max="32767" attributes="0"/>
       </Group>
@@ -33,7 +33,7 @@
     <DimensionLayout dim="1">
       <Group type="103" groupAlignment="0" attributes="0">
           <Group type="102" alignment="1" attributes="0">
-              <Component id="commentSplitPane" pref="250" max="32767" attributes="0"/>
+              <Component id="commentSplitPane" pref="242" max="32767" attributes="0"/>
               <EmptySpace max="-2" attributes="0"/>
               <Component id="jPanel1" min="-2" max="-2" attributes="0"/>
               <EmptySpace max="-2" attributes="0"/>
@@ -62,9 +62,14 @@
                       <Component id="problemRadioButton" alignment="0" min="-2" max="-2" attributes="0"/>
                       <Component id="ignoreRadioButton" alignment="0" min="-2" max="-2" attributes="0"/>
                   </Group>
+                  <EmptySpace max="-2" attributes="0"/>
+                  <Group type="103" groupAlignment="1" max="-2" attributes="0">
+                      <Component id="okSaveNextButton" max="32767" attributes="0"/>
+                      <Component id="problemSaveNextButton" max="32767" attributes="0"/>
+                  </Group>
                   <EmptySpace max="32767" attributes="0"/>
-                  <Group type="103" groupAlignment="1" attributes="0">
-                      <Component id="saveButton" min="-2" pref="69" max="-2" attributes="0"/>
+                  <Group type="103" groupAlignment="0" attributes="0">
+                      <Component id="saveButton" alignment="1" min="-2" pref="69" max="-2" attributes="0"/>
                       <Component id="loginButton" alignment="1" min="-2" max="-2" attributes="0"/>
                   </Group>
                   <EmptySpace max="-2" attributes="0"/>
@@ -83,9 +88,13 @@
                           <Group type="103" groupAlignment="3" attributes="0">
                               <Component id="okRadioButton" alignment="3" min="-2" max="-2" attributes="0"/>
                               <Component id="loginButton" alignment="3" min="-2" max="-2" attributes="0"/>
+                              <Component id="okSaveNextButton" alignment="3" min="-2" max="-2" attributes="0"/>
                           </Group>
                           <EmptySpace max="-2" attributes="0"/>
-                          <Component id="problemRadioButton" min="-2" max="-2" attributes="0"/>
+                          <Group type="103" groupAlignment="3" attributes="0">
+                              <Component id="problemRadioButton" alignment="3" min="-2" max="-2" attributes="0"/>
+                              <Component id="problemSaveNextButton" alignment="3" min="-2" max="-2" attributes="0"/>
+                          </Group>
                           <EmptySpace max="-2" attributes="0"/>
                           <Component id="ignoreRadioButton" min="-2" max="-2" attributes="0"/>
                       </Group>
@@ -104,11 +113,7 @@
             <Property name="selected" type="boolean" value="true"/>
             <Property name="text" type="java.lang.String" value="OK"/>
             <Property name="toolTipText" type="java.lang.String" value="Submit for further processing"/>
-            <Property name="enabled" type="boolean" value="false"/>
           </Properties>
-          <Events>
-            <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="okRadioButtonActionPerformed"/>
-          </Events>
         </Component>
         <Component class="javax.swing.JRadioButton" name="problemRadioButton">
           <Properties>
@@ -119,9 +124,6 @@
             <Property name="toolTipText" type="java.lang.String" value="Send back for reprocessing"/>
             <Property name="enabled" type="boolean" value="false"/>
           </Properties>
-          <Events>
-            <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="problemRadioButtonActionPerformed"/>
-          </Events>
         </Component>
         <Component class="javax.swing.JRadioButton" name="ignoreRadioButton">
           <Properties>
@@ -132,9 +134,6 @@
             <Property name="toolTipText" type="java.lang.String" value="Do nothing further"/>
             <Property name="enabled" type="boolean" value="false"/>
           </Properties>
-          <Events>
-            <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="ignoreRadioButtonActionPerformed"/>
-          </Events>
         </Component>
         <Component class="javax.swing.JButton" name="saveButton">
           <Properties>
@@ -166,6 +165,24 @@
             <Property name="toolTipText" type="java.lang.String" value="reading sequence.properties..."/>
           </Properties>
         </Component>
+        <Component class="javax.swing.JButton" name="okSaveNextButton">
+          <Properties>
+            <Property name="text" type="java.lang.String" value="OK Save Next"/>
+            <Property name="toolTipText" type="java.lang.String" value="Mark as OK, Save, and advance to next image.  Ctrl+Enter can be used as well."/>
+          </Properties>
+          <Events>
+            <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="okSaveNextButtonActionPerformed"/>
+          </Events>
+        </Component>
+        <Component class="javax.swing.JButton" name="problemSaveNextButton">
+          <Properties>
+            <Property name="text" type="java.lang.String" value="Problem Save Next"/>
+            <Property name="toolTipText" type="java.lang.String" value="Mark as Problem, Save, and advance to next image.  "/>
+          </Properties>
+          <Events>
+            <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="problemSaveNextButtonActionPerformed"/>
+          </Events>
+        </Component>
       </SubComponents>
     </Container>
     <Container class="javax.swing.JSplitPane" name="commentSplitPane">
@@ -187,8 +204,8 @@
           <SubComponents>
             <Component class="javax.swing.JEditorPane" name="previousCommentEditorPane">
               <Properties>
-                <Property name="contentType" type="java.lang.String" value="text/html" noResource="true"/>
                 <Property name="editable" type="boolean" value="false"/>
+                <Property name="contentType" type="java.lang.String" value="text/html" noResource="true"/>
               </Properties>
               <AuxValues>
                 <AuxValue name="JavaCodeGenerator_InitCodePost" type="java.lang.String" value="// Set HTML renderer to use java system default font instead of Times New Roman&#xa;java.awt.Font font = javax.swing.UIManager.getFont(&quot;Label.font&quot;);&#xa;String bodyRule = &quot;body { font-family: &quot; + font.getFamily() + &quot;; &quot; +&#xa;                &quot;font-size: &quot; + font.getSize() + &quot;pt; }&quot;;&#xa;((javax.swing.text.html.HTMLDocument)previousCommentEditorPane.getDocument()).getStyleSheet().addRule(bodyRule);"/>
@@ -206,10 +223,10 @@
           <Layout>
             <DimensionLayout dim="0">
               <Group type="103" groupAlignment="0" attributes="0">
-                  <Component id="jScrollPane2" alignment="0" pref="324" max="32767" attributes="0"/>
-                  <Group type="102" alignment="0" attributes="0">
+                  <Component id="jScrollPane2" pref="371" max="32767" attributes="0"/>
+                  <Group type="102" attributes="0">
                       <Component id="jLabel1" min="-2" max="-2" attributes="0"/>
-                      <EmptySpace pref="141" max="32767" attributes="0"/>
+                      <EmptySpace min="0" pref="0" max="32767" attributes="0"/>
                   </Group>
               </Group>
             </DimensionLayout>
@@ -239,6 +256,9 @@
                     <Property name="lineWrap" type="boolean" value="true"/>
                     <Property name="wrapStyleWord" type="boolean" value="true"/>
                   </Properties>
+                  <Events>
+                    <EventHandler event="keyTyped" listener="java.awt.event.KeyListener" parameters="java.awt.event.KeyEvent" handler="newCommentTextAreaKeyTyped"/>
+                  </Events>
                 </Component>
               </SubComponents>
             </Container>

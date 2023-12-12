@@ -132,7 +132,7 @@
           <Layout>
             <DimensionLayout dim="0">
               <Group type="103" groupAlignment="0" attributes="0">
-                  <Component id="jScrollPane4" pref="486" max="32767" attributes="0"/>
+                  <Component id="parametersScrollPane" pref="486" max="32767" attributes="0"/>
                   <Group type="102" alignment="0" attributes="0">
                       <Component id="clearAllB" min="-2" max="-2" attributes="0"/>
                       <EmptySpace max="-2" attributes="0"/>
@@ -150,7 +150,7 @@
                   <Group type="102" alignment="0" attributes="0">
                       <Component id="titleLabel" min="-2" pref="17" max="-2" attributes="0"/>
                       <EmptySpace max="-2" attributes="0"/>
-                      <Component id="jScrollPane4" pref="188" max="32767" attributes="0"/>
+                      <Component id="parametersScrollPane" pref="188" max="32767" attributes="0"/>
                       <EmptySpace min="-2" max="-2" attributes="0"/>
                       <Group type="103" groupAlignment="3" attributes="0">
                           <Component id="clearAllB" alignment="3" min="-2" max="-2" attributes="0"/>
@@ -163,7 +163,7 @@
             </DimensionLayout>
           </Layout>
           <SubComponents>
-            <Container class="javax.swing.JScrollPane" name="jScrollPane4">
+            <Container class="javax.swing.JScrollPane" name="parametersScrollPane">
 
               <Layout class="org.netbeans.modules.form.compat2.layouts.support.JScrollPaneSupportLayout"/>
               <SubComponents>
@@ -303,7 +303,10 @@
             </Component>
             <Component class="org.autoplot.datasource.RecentComboBox" name="filtersComboBox">
               <Properties>
-                <Property name="toolTipText" type="java.lang.String" value="search bar"/>
+                <Property name="toolTipText" type="java.lang.String" value="search bar, any id or title containing regular expression (.* matches anything) is shown"/>
+                <Property name="maximumSize" type="java.awt.Dimension" editor="org.netbeans.beaninfo.editors.DimensionEditor">
+                  <Dimension value="[1028, 32767]"/>
+                </Property>
               </Properties>
               <Events>
                 <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="filtersComboBoxActionPerformed"/>

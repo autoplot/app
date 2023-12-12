@@ -188,6 +188,21 @@
                 </MenuItem>
               </SubComponents>
             </Menu>
+            <Menu class="javax.swing.JMenu" name="addSizeMenu">
+              <Properties>
+                <Property name="text" type="java.lang.String" value="App Size"/>
+              </Properties>
+              <SubComponents>
+                <MenuItem class="javax.swing.JMenuItem" name="resetAppSize">
+                  <Properties>
+                    <Property name="text" type="java.lang.String" value="Reset to default size"/>
+                  </Properties>
+                  <Events>
+                    <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="resetAppSizeActionPerformed"/>
+                  </Events>
+                </MenuItem>
+              </SubComponents>
+            </Menu>
             <MenuItem class="javax.swing.JPopupMenu$Separator" name="jSeparator4">
             </MenuItem>
             <Menu class="javax.swing.JMenu" name="resetZoomMenu">
@@ -280,60 +295,33 @@
                 <Property name="text" type="java.lang.String" value="Rendering Options"/>
               </Properties>
               <SubComponents>
-                <MenuItem class="javax.swing.JCheckBoxMenuItem" name="textAntiAlias">
-                  <Properties>
-                    <Property name="selected" type="boolean" value="true"/>
-                    <Property name="text" type="java.lang.String" value="Text Antialias"/>
-                    <Property name="toolTipText" type="java.lang.String" value="Enable/Disable Text Antialiasing"/>
-                  </Properties>
-                  <Events>
-                    <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="textAntiAliasActionPerformed"/>
-                  </Events>
-                </MenuItem>
-                <MenuItem class="javax.swing.JCheckBoxMenuItem" name="drawAntiAliasMenuItem">
-                  <Properties>
-                    <Property name="selected" type="boolean" value="true"/>
-                    <Property name="text" type="java.lang.String" value="Graphics Antialias"/>
-                    <Property name="toolTipText" type="java.lang.String" value="Enable/Disable Graphics Antialiasing"/>
-                  </Properties>
-                  <Events>
-                    <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="drawAntiAliasMenuItemActionPerformed"/>
-                  </Events>
-                </MenuItem>
-                <MenuItem class="javax.swing.JCheckBoxMenuItem" name="specialEffectsMenuItem">
-                  <Properties>
-                    <Property name="text" type="java.lang.String" value="Special Effects"/>
-                    <Property name="toolTipText" type="java.lang.String" value="Enable animated axes and other visual clues"/>
-                  </Properties>
-                  <Events>
-                    <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="specialEffectsMenuItemActionPerformed"/>
-                  </Events>
-                </MenuItem>
-                <MenuItem class="javax.swing.JCheckBoxMenuItem" name="overRenderingMenuItem">
-                  <Properties>
-                    <Property name="selected" type="boolean" value="true"/>
-                    <Property name="text" type="java.lang.String" value="Over-Rendering"/>
-                    <Property name="toolTipText" type="java.lang.String" value="Render (and load) data outside plot bounds to improve appearance."/>
-                  </Properties>
-                </MenuItem>
                 <MenuItem class="javax.swing.JCheckBoxMenuItem" name="drawGridCheckBox">
                   <Properties>
                     <Property name="selected" type="boolean" value="true"/>
                     <Property name="text" type="java.lang.String" value="Draw Grid"/>
                     <Property name="toolTipText" type="java.lang.String" value="Draw gridlines at major ticks"/>
                   </Properties>
+                  <Events>
+                    <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="drawGridCheckBoxActionPerformed"/>
+                  </Events>
                 </MenuItem>
                 <MenuItem class="javax.swing.JCheckBoxMenuItem" name="doyCB">
                   <Properties>
                     <Property name="text" type="java.lang.String" value="Day of Year Labels"/>
                     <Property name="toolTipText" type="java.lang.String" value="Use Day of Year instead of Year-Month-Day for labels"/>
                   </Properties>
+                  <Events>
+                    <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="doyCBActionPerformed"/>
+                  </Events>
                 </MenuItem>
                 <MenuItem class="javax.swing.JCheckBoxMenuItem" name="nnCb">
                   <Properties>
                     <Property name="text" type="java.lang.String" value="Nearest Neighbor Spectrograms"/>
                     <Property name="toolTipText" type="java.lang.String" value="Use Nearest Neighbor rebinning for new spectrograms"/>
                   </Properties>
+                  <Events>
+                    <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="nnCbActionPerformed"/>
+                  </Events>
                 </MenuItem>
               </SubComponents>
             </Menu>
@@ -455,6 +443,15 @@
                 <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="additionalOptionsMIActionPerformed"/>
               </Events>
             </MenuItem>
+            <MenuItem class="javax.swing.JMenuItem" name="saveOptionsMenuItem">
+              <Properties>
+                <Property name="text" type="java.lang.String" value="Save Options"/>
+                <Property name="toolTipText" type="java.lang.String" value="Save options for future sessions."/>
+              </Properties>
+              <Events>
+                <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="saveOptionsMenuItemActionPerformed"/>
+              </Events>
+            </MenuItem>
           </SubComponents>
         </Menu>
         <Menu class="javax.swing.JMenu" name="bookmarksMenu">
@@ -561,6 +558,7 @@
             <MenuItem class="javax.swing.JMenuItem" name="jMenuItem6">
               <Properties>
                 <Property name="text" type="java.lang.String" value="Events List"/>
+                <Property name="toolTipText" type="java.lang.String" value="Use an events list to control time range"/>
               </Properties>
               <Events>
                 <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="jMenuItem6ActionPerformed"/>
@@ -571,7 +569,7 @@
                 <Property name="accelerator" type="javax.swing.KeyStroke" editor="org.netbeans.modules.form.editors.KeyStrokeEditor">
                   <KeyStroke key="Ctrl+F"/>
                 </Property>
-                <Property name="text" type="java.lang.String" value="Fix Layout"/>
+                <Property name="text" type="java.lang.String" value="Fix Layout..."/>
                 <Property name="toolTipText" type="java.lang.String" value="Run new layout routine that removes spaces between plots"/>
               </Properties>
               <Events>
@@ -610,7 +608,7 @@
             <MenuItem class="javax.swing.JMenuItem" name="filtersMenuItem">
               <Properties>
                 <Property name="icon" type="javax.swing.Icon" editor="org.netbeans.modules.form.editors2.IconEditor">
-                  <Image iconType="3" name="/org/virbo/autoplot/resources/pipeMag2.png"/>
+                  <Image iconType="3" name="/org/autoplot/resources/pipeMag2.png"/>
                 </Property>
                 <Property name="text" type="java.lang.String" value="Additional Operations..."/>
               </Properties>
@@ -635,7 +633,7 @@
                   <KeyStroke key="Ctrl+L"/>
                 </Property>
                 <Property name="icon" type="javax.swing.Icon" editor="org.netbeans.modules.form.editors2.IconEditor">
-                  <Image iconType="3" name="/org/virbo/autoplot/resources/reload.png"/>
+                  <Image iconType="3" name="/org/autoplot/resources/reload.png"/>
                 </Property>
                 <Property name="text" type="java.lang.String" value="Reload All Data"/>
                 <Property name="toolTipText" type="java.lang.String" value="Reload all data, updating to get any changes.  Axis settings and labels should remain the same."/>

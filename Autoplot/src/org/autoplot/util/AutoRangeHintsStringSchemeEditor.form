@@ -1,0 +1,250 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+
+<Form version="1.5" maxVersion="1.9" type="org.netbeans.modules.form.forminfo.JPanelFormInfo">
+  <NonVisualComponents>
+    <Component class="javax.swing.ButtonGroup" name="buttonGroup1">
+    </Component>
+  </NonVisualComponents>
+  <AuxValues>
+    <AuxValue name="FormSettings_autoResourcing" type="java.lang.Integer" value="0"/>
+    <AuxValue name="FormSettings_autoSetComponentName" type="java.lang.Boolean" value="false"/>
+    <AuxValue name="FormSettings_generateFQN" type="java.lang.Boolean" value="true"/>
+    <AuxValue name="FormSettings_generateMnemonicsCode" type="java.lang.Boolean" value="false"/>
+    <AuxValue name="FormSettings_i18nAutoMode" type="java.lang.Boolean" value="false"/>
+    <AuxValue name="FormSettings_layoutCodeTarget" type="java.lang.Integer" value="1"/>
+    <AuxValue name="FormSettings_listenerGenerationStyle" type="java.lang.Integer" value="0"/>
+    <AuxValue name="FormSettings_variablesLocal" type="java.lang.Boolean" value="false"/>
+    <AuxValue name="FormSettings_variablesModifier" type="java.lang.Integer" value="2"/>
+  </AuxValues>
+
+  <Layout>
+    <DimensionLayout dim="0">
+      <Group type="103" groupAlignment="0" attributes="0">
+          <Group type="102" attributes="0">
+              <EmptySpace max="-2" attributes="0"/>
+              <Group type="103" groupAlignment="0" attributes="0">
+                  <Group type="102" attributes="0">
+                      <Component id="jLabel1" min="-2" max="-2" attributes="0"/>
+                      <EmptySpace min="-2" pref="18" max="-2" attributes="0"/>
+                  </Group>
+                  <Group type="102" alignment="0" attributes="0">
+                      <EmptySpace min="12" pref="12" max="-2" attributes="0"/>
+                      <Group type="103" groupAlignment="0" attributes="0">
+                          <Group type="102" alignment="0" attributes="0">
+                              <EmptySpace min="21" pref="21" max="-2" attributes="0"/>
+                              <Group type="103" groupAlignment="0" attributes="0">
+                                  <Component id="widthTextField" linkSize="1" min="-2" pref="131" max="-2" attributes="0"/>
+                                  <Component id="widthsTextField" min="-2" pref="345" max="-2" attributes="0"/>
+                                  <Group type="102" alignment="0" attributes="0">
+                                      <Component id="logTrueRB" min="-2" max="-2" attributes="0"/>
+                                      <EmptySpace max="-2" attributes="0"/>
+                                      <Component id="logFalseRB" min="-2" max="-2" attributes="0"/>
+                                  </Group>
+                                  <Group type="102" alignment="0" attributes="0">
+                                      <Component id="minValueTF" min="-2" pref="124" max="-2" attributes="0"/>
+                                      <EmptySpace min="0" pref="0" max="32767" attributes="0"/>
+                                  </Group>
+                              </Group>
+                          </Group>
+                          <Group type="102" alignment="0" attributes="0">
+                              <Component id="minValueCB" min="-2" max="-2" attributes="0"/>
+                              <EmptySpace min="-2" pref="96" max="-2" attributes="0"/>
+                              <Group type="103" groupAlignment="0" attributes="0">
+                                  <Group type="102" attributes="0">
+                                      <EmptySpace min="21" pref="21" max="-2" attributes="0"/>
+                                      <Component id="maxValueTF" min="-2" pref="155" max="-2" attributes="0"/>
+                                      <EmptySpace min="0" pref="0" max="32767" attributes="0"/>
+                                  </Group>
+                                  <Group type="102" attributes="0">
+                                      <Component id="maxValueCB" min="-2" max="-2" attributes="0"/>
+                                      <EmptySpace pref="266" max="32767" attributes="0"/>
+                                  </Group>
+                              </Group>
+                          </Group>
+                          <Group type="102" attributes="0">
+                              <Group type="103" groupAlignment="0" attributes="0">
+                                  <Component id="extendByPercentCB" min="-2" max="-2" attributes="0"/>
+                                  <Component id="includeZeroCB" alignment="0" min="-2" max="-2" attributes="0"/>
+                                  <Component id="logCB" min="-2" max="-2" attributes="0"/>
+                                  <Component id="widthCheckBox" alignment="0" min="-2" max="-2" attributes="0"/>
+                                  <Component id="widthsCheckBox" alignment="0" min="-2" max="-2" attributes="0"/>
+                                  <Component id="centerCB" alignment="0" min="-2" max="-2" attributes="0"/>
+                                  <Group type="102" attributes="0">
+                                      <EmptySpace min="21" pref="21" max="-2" attributes="0"/>
+                                      <Group type="103" groupAlignment="0" attributes="0">
+                                          <Component id="centerTextField" linkSize="1" pref="116" max="32767" attributes="0"/>
+                                          <Component id="extendByPercentTF" min="-2" pref="123" max="-2" attributes="0"/>
+                                      </Group>
+                                  </Group>
+                              </Group>
+                              <EmptySpace min="0" pref="0" max="32767" attributes="0"/>
+                          </Group>
+                      </Group>
+                  </Group>
+              </Group>
+          </Group>
+      </Group>
+    </DimensionLayout>
+    <DimensionLayout dim="1">
+      <Group type="103" groupAlignment="0" attributes="0">
+          <Group type="102" alignment="0" attributes="0">
+              <EmptySpace max="-2" attributes="0"/>
+              <Component id="jLabel1" min="-2" max="-2" attributes="0"/>
+              <EmptySpace type="unrelated" max="-2" attributes="0"/>
+              <Component id="includeZeroCB" min="-2" max="-2" attributes="0"/>
+              <EmptySpace type="unrelated" max="-2" attributes="0"/>
+              <Component id="widthCheckBox" min="-2" max="-2" attributes="0"/>
+              <EmptySpace max="-2" attributes="0"/>
+              <Component id="widthTextField" min="-2" max="-2" attributes="0"/>
+              <EmptySpace type="unrelated" max="-2" attributes="0"/>
+              <Component id="widthsCheckBox" min="-2" max="-2" attributes="0"/>
+              <EmptySpace max="-2" attributes="0"/>
+              <Component id="widthsTextField" min="-2" max="-2" attributes="0"/>
+              <EmptySpace type="unrelated" max="-2" attributes="0"/>
+              <Component id="logCB" min="-2" max="-2" attributes="0"/>
+              <EmptySpace min="-2" pref="4" max="-2" attributes="0"/>
+              <Group type="103" groupAlignment="3" attributes="0">
+                  <Component id="logTrueRB" alignment="3" min="-2" max="-2" attributes="0"/>
+                  <Component id="logFalseRB" alignment="3" min="-2" max="-2" attributes="0"/>
+              </Group>
+              <EmptySpace max="-2" attributes="0"/>
+              <Component id="centerCB" min="-2" max="-2" attributes="0"/>
+              <EmptySpace max="-2" attributes="0"/>
+              <Component id="centerTextField" min="-2" max="-2" attributes="0"/>
+              <EmptySpace max="-2" attributes="0"/>
+              <Group type="103" groupAlignment="3" attributes="0">
+                  <Component id="minValueCB" alignment="3" min="-2" max="-2" attributes="0"/>
+                  <Component id="maxValueCB" alignment="3" min="-2" max="-2" attributes="0"/>
+              </Group>
+              <EmptySpace max="-2" attributes="0"/>
+              <Group type="103" groupAlignment="3" attributes="0">
+                  <Component id="minValueTF" alignment="3" min="-2" max="-2" attributes="0"/>
+                  <Component id="maxValueTF" alignment="3" min="-2" max="-2" attributes="0"/>
+              </Group>
+              <EmptySpace type="unrelated" max="-2" attributes="0"/>
+              <Component id="extendByPercentCB" min="-2" max="-2" attributes="0"/>
+              <EmptySpace max="-2" attributes="0"/>
+              <Component id="extendByPercentTF" min="-2" max="-2" attributes="0"/>
+              <EmptySpace pref="89" max="32767" attributes="0"/>
+          </Group>
+      </Group>
+    </DimensionLayout>
+  </Layout>
+  <SubComponents>
+    <Component class="javax.swing.JLabel" name="jLabel1">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="Auto Range Hints"/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JCheckBox" name="includeZeroCB">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="Ensure that zero is within range"/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JCheckBox" name="widthCheckBox">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="Constrain the axis range to a particular width"/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JTextField" name="widthTextField">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="10"/>
+      </Properties>
+      <BindingProperties>
+        <BindingProperty name="enabled" source="widthCheckBox" sourcePath="${selected}" target="widthTextField" targetPath="enabled" updateStrategy="0" immediately="false"/>
+      </BindingProperties>
+    </Component>
+    <Component class="javax.swing.JCheckBox" name="widthsCheckBox">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="Constrain the axis range to a set of widths"/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JTextField" name="widthsTextField">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="10,300,10000"/>
+      </Properties>
+      <BindingProperties>
+        <BindingProperty name="enabled" source="widthsCheckBox" sourcePath="${selected}" target="widthsTextField" targetPath="enabled" updateStrategy="0" immediately="false"/>
+      </BindingProperties>
+    </Component>
+    <Component class="javax.swing.JCheckBox" name="logCB">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="Force log or linear"/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JRadioButton" name="logTrueRB">
+      <Properties>
+        <Property name="buttonGroup" type="javax.swing.ButtonGroup" editor="org.netbeans.modules.form.RADComponent$ButtonGroupPropertyEditor">
+          <ComponentRef name="buttonGroup1"/>
+        </Property>
+        <Property name="text" type="java.lang.String" value="true"/>
+      </Properties>
+      <BindingProperties>
+        <BindingProperty name="enabled" source="logCB" sourcePath="${selected}" target="logTrueRB" targetPath="enabled" updateStrategy="0" immediately="false"/>
+      </BindingProperties>
+    </Component>
+    <Component class="javax.swing.JRadioButton" name="logFalseRB">
+      <Properties>
+        <Property name="buttonGroup" type="javax.swing.ButtonGroup" editor="org.netbeans.modules.form.RADComponent$ButtonGroupPropertyEditor">
+          <ComponentRef name="buttonGroup1"/>
+        </Property>
+        <Property name="text" type="java.lang.String" value="false"/>
+      </Properties>
+      <BindingProperties>
+        <BindingProperty name="enabled" source="logCB" sourcePath="${selected}" target="logFalseRB" targetPath="enabled" updateStrategy="0" immediately="false"/>
+      </BindingProperties>
+    </Component>
+    <Component class="javax.swing.JCheckBox" name="centerCB">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="Center the axis at this value"/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JTextField" name="centerTextField">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="0"/>
+      </Properties>
+      <BindingProperties>
+        <BindingProperty name="enabled" source="centerCB" sourcePath="${selected}" target="centerTextField" targetPath="enabled" updateStrategy="0" immediately="false"/>
+      </BindingProperties>
+    </Component>
+    <Component class="javax.swing.JCheckBox" name="minValueCB">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="Min Value"/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JTextField" name="minValueTF">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="0"/>
+      </Properties>
+      <BindingProperties>
+        <BindingProperty name="enabled" source="minValueCB" sourcePath="${selected}" target="minValueTF" targetPath="enabled" updateStrategy="0" immediately="false"/>
+      </BindingProperties>
+    </Component>
+    <Component class="javax.swing.JCheckBox" name="maxValueCB">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="Max Value"/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JTextField" name="maxValueTF">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="100"/>
+      </Properties>
+      <BindingProperties>
+        <BindingProperty name="enabled" source="maxValueCB" sourcePath="${selected}" target="maxValueTF" targetPath="enabled" updateStrategy="0" immediately="false"/>
+      </BindingProperties>
+    </Component>
+    <Component class="javax.swing.JCheckBox" name="extendByPercentCB">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="Extend by Percent"/>
+      </Properties>
+    </Component>
+    <Component class="javax.swing.JTextField" name="extendByPercentTF">
+      <Properties>
+        <Property name="text" type="java.lang.String" value="10"/>
+      </Properties>
+      <BindingProperties>
+        <BindingProperty name="enabled" source="extendByPercentCB" sourcePath="${selected}" target="extendByPercentTF" targetPath="enabled" updateStrategy="0" immediately="false"/>
+      </BindingProperties>
+    </Component>
+  </SubComponents>
+</Form>

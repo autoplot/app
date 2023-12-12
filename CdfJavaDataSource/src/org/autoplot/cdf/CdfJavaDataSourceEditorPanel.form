@@ -49,7 +49,7 @@
           <Group type="103" groupAlignment="0" attributes="0">
               <Group type="102" alignment="1" attributes="0">
                   <EmptySpace max="-2" attributes="0"/>
-                  <Component id="jSplitPane2" pref="599" max="32767" attributes="0"/>
+                  <Component id="jSplitPane2" pref="675" max="32767" attributes="0"/>
                   <EmptySpace max="-2" attributes="0"/>
               </Group>
           </Group>
@@ -58,7 +58,7 @@
           <Group type="103" groupAlignment="0" attributes="0">
               <Group type="102" attributes="0">
                   <EmptySpace min="-2" max="-2" attributes="0"/>
-                  <Component id="jSplitPane2" pref="436" max="32767" attributes="0"/>
+                  <Component id="jSplitPane2" pref="425" max="32767" attributes="0"/>
                   <EmptySpace max="-2" attributes="0"/>
               </Group>
           </Group>
@@ -108,31 +108,38 @@
                       <Group type="103" groupAlignment="0" attributes="0">
                           <Group type="102" alignment="0" attributes="0">
                               <EmptySpace max="-2" attributes="0"/>
-                              <Component id="whereParamList" pref="209" max="32767" attributes="0"/>
+                              <Component id="whereParamList" max="32767" attributes="0"/>
                               <EmptySpace max="-2" attributes="0"/>
                               <Component id="whereOp" min="-2" pref="84" max="-2" attributes="0"/>
                               <EmptySpace max="-2" attributes="0"/>
                               <Component id="whereTF" min="-2" pref="53" max="-2" attributes="0"/>
                           </Group>
-                          <Group type="102" alignment="0" attributes="0">
+                          <Group type="102" attributes="0">
                               <Group type="103" groupAlignment="0" attributes="0">
                                   <Component id="jLabel4" alignment="0" min="-2" max="-2" attributes="0"/>
+                                  <Component id="whereCB" alignment="0" min="-2" max="-2" attributes="0"/>
                                   <Component id="interpretMetadataLabel" alignment="0" min="-2" max="-2" attributes="0"/>
-                                  <Group type="102" alignment="0" attributes="0">
+                                  <Group type="102" attributes="0">
                                       <EmptySpace min="12" pref="12" max="-2" attributes="0"/>
                                       <Group type="103" groupAlignment="0" attributes="0">
-                                          <Component id="subsetComboBox" min="-2" pref="160" max="-2" attributes="0"/>
-                                          <Component id="showAllVarTypeCB" alignment="0" min="-2" max="-2" attributes="0"/>
-                                          <Group type="102" alignment="0" attributes="0">
-                                              <Component id="noInterpMeta" min="-2" max="-2" attributes="0"/>
-                                              <EmptySpace max="-2" attributes="0"/>
-                                              <Component id="noDep" min="-2" max="-2" attributes="0"/>
+                                          <Group type="102" attributes="0">
+                                              <Group type="103" groupAlignment="0" attributes="0">
+                                                  <Component id="noInterpMeta" alignment="0" min="-2" max="-2" attributes="0"/>
+                                                  <Component id="showAllVarTypeCB" alignment="0" min="-2" max="-2" attributes="0"/>
+                                                  <Component id="sortAlphaCheckBox" alignment="0" min="-2" max="-2" attributes="0"/>
+                                              </Group>
+                                              <EmptySpace type="unrelated" max="-2" attributes="0"/>
+                                              <Group type="103" groupAlignment="0" attributes="0">
+                                                  <Component id="filterComboBox" alignment="0" min="-2" max="-2" attributes="0"/>
+                                                  <Component id="noDep" alignment="0" min="-2" max="-2" attributes="0"/>
+                                                  <Component id="emptyVariablesCB" alignment="0" min="-2" max="-2" attributes="0"/>
+                                              </Group>
                                           </Group>
+                                          <Component id="subsetComboBox" alignment="0" min="-2" pref="160" max="-2" attributes="0"/>
                                       </Group>
                                   </Group>
-                                  <Component id="whereCB" alignment="0" min="-2" max="-2" attributes="0"/>
                               </Group>
-                              <EmptySpace min="0" pref="147" max="32767" attributes="0"/>
+                              <EmptySpace min="0" pref="0" max="32767" attributes="0"/>
                           </Group>
                       </Group>
                     </DimensionLayout>
@@ -150,7 +157,7 @@
                                   <Component id="whereOp" alignment="3" min="-2" max="-2" attributes="0"/>
                                   <Component id="whereTF" alignment="3" min="-2" max="-2" attributes="0"/>
                               </Group>
-                              <EmptySpace type="separate" min="-2" max="-2" attributes="0"/>
+                              <EmptySpace max="-2" attributes="0"/>
                               <Component id="interpretMetadataLabel" min="-2" max="-2" attributes="0"/>
                               <EmptySpace min="-2" max="-2" attributes="0"/>
                               <Group type="103" groupAlignment="3" attributes="0">
@@ -158,8 +165,15 @@
                                   <Component id="noDep" alignment="3" min="-2" max="-2" attributes="0"/>
                               </Group>
                               <EmptySpace min="-2" max="-2" attributes="0"/>
-                              <Component id="showAllVarTypeCB" min="-2" max="-2" attributes="0"/>
+                              <Group type="103" groupAlignment="3" attributes="0">
+                                  <Component id="showAllVarTypeCB" alignment="3" min="-2" max="-2" attributes="0"/>
+                                  <Component id="filterComboBox" alignment="3" min="-2" max="-2" attributes="0"/>
+                              </Group>
                               <EmptySpace min="-2" max="-2" attributes="0"/>
+                              <Group type="103" groupAlignment="3" attributes="0">
+                                  <Component id="sortAlphaCheckBox" alignment="3" min="-2" max="-2" attributes="0"/>
+                                  <Component id="emptyVariablesCB" alignment="3" min="-2" max="-2" attributes="0"/>
+                              </Group>
                           </Group>
                       </Group>
                     </DimensionLayout>
@@ -258,9 +272,39 @@
                         <BindingProperty name="enabled" source="whereCB" sourcePath="${selected}" target="whereTF" targetPath="enabled" updateStrategy="0" immediately="false"/>
                       </BindingProperties>
                     </Component>
+                    <Component class="org.autoplot.datasource.RecentComboBox" name="filterComboBox">
+                      <Properties>
+                        <Property name="toolTipText" type="java.lang.String" value="Pattern to match in variables names.  If this is a valid regular expression, it will be used as such, otherwise the variables containing the string are used."/>
+                      </Properties>
+                      <Events>
+                        <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="filterComboBoxActionPerformed"/>
+                      </Events>
+                    </Component>
+                    <Component class="javax.swing.JCheckBox" name="sortAlphaCheckBox">
+                      <Properties>
+                        <Property name="text" type="java.lang.String" value="sort alpha"/>
+                        <Property name="toolTipText" type="java.lang.String" value="Sort the names alphabetically."/>
+                      </Properties>
+                      <Events>
+                        <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="sortAlphaCheckBoxActionPerformed"/>
+                      </Events>
+                    </Component>
+                    <Component class="javax.swing.JCheckBox" name="emptyVariablesCB">
+                      <Properties>
+                        <Property name="selected" type="boolean" value="true"/>
+                        <Property name="text" type="java.lang.String" value="empty variables"/>
+                        <Property name="toolTipText" type="java.lang.String" value="show variables which have no records"/>
+                      </Properties>
+                      <Events>
+                        <EventHandler event="actionPerformed" listener="java.awt.event.ActionListener" parameters="java.awt.event.ActionEvent" handler="emptyVariablesCBActionPerformed"/>
+                      </Events>
+                    </Component>
                   </SubComponents>
                 </Container>
                 <Container class="javax.swing.JTabbedPane" name="jTabbedPane1">
+                  <Events>
+                    <EventHandler event="stateChanged" listener="javax.swing.event.ChangeListener" parameters="javax.swing.event.ChangeEvent" handler="jTabbedPane1StateChanged"/>
+                  </Events>
                   <Constraints>
                     <Constraint layoutClass="org.netbeans.modules.form.compat2.layouts.support.JSplitPaneSupportLayout" value="org.netbeans.modules.form.compat2.layouts.support.JSplitPaneSupportLayout$JSplitPaneConstraintsDescription">
                       <JSplitPaneConstraints position="left"/>
@@ -302,7 +346,7 @@
                       <Layout>
                         <DimensionLayout dim="0">
                           <Group type="103" groupAlignment="0" attributes="0">
-                              <Component id="xCheckBox" pref="319" max="32767" attributes="0"/>
+                              <Component id="xCheckBox" pref="401" max="32767" attributes="0"/>
                               <Component id="jScrollPane4" alignment="0" max="32767" attributes="0"/>
                           </Group>
                         </DimensionLayout>
@@ -311,7 +355,7 @@
                               <Group type="102" alignment="0" attributes="0">
                                   <Component id="xCheckBox" min="-2" max="-2" attributes="0"/>
                                   <EmptySpace max="-2" attributes="0"/>
-                                  <Component id="jScrollPane4" pref="174" max="32767" attributes="0"/>
+                                  <Component id="jScrollPane4" pref="169" max="32767" attributes="0"/>
                               </Group>
                           </Group>
                         </DimensionLayout>
@@ -324,9 +368,9 @@
 
                           <Layout class="org.netbeans.modules.form.compat2.layouts.support.JScrollPaneSupportLayout"/>
                           <SubComponents>
-                            <Component class="javax.swing.JTree" name="parameterTree1">
+                            <Component class="javax.swing.JTree" name="xParameterTree">
                               <Events>
-                                <EventHandler event="valueChanged" listener="javax.swing.event.TreeSelectionListener" parameters="javax.swing.event.TreeSelectionEvent" handler="parameterTree1ValueChanged"/>
+                                <EventHandler event="valueChanged" listener="javax.swing.event.TreeSelectionListener" parameters="javax.swing.event.TreeSelectionEvent" handler="xParameterTreeValueChanged"/>
                               </Events>
                             </Component>
                           </SubComponents>
@@ -354,7 +398,7 @@
                       <Layout>
                         <DimensionLayout dim="0">
                           <Group type="103" groupAlignment="0" attributes="0">
-                              <Component id="yCheckBox" pref="319" max="32767" attributes="0"/>
+                              <Component id="yCheckBox" pref="401" max="32767" attributes="0"/>
                               <Component id="jScrollPane5" alignment="0" max="32767" attributes="0"/>
                           </Group>
                         </DimensionLayout>
@@ -363,7 +407,7 @@
                               <Group type="102" alignment="0" attributes="0">
                                   <Component id="yCheckBox" min="-2" max="-2" attributes="0"/>
                                   <EmptySpace min="-2" max="-2" attributes="0"/>
-                                  <Component id="jScrollPane5" pref="174" max="32767" attributes="0"/>
+                                  <Component id="jScrollPane5" pref="169" max="32767" attributes="0"/>
                               </Group>
                           </Group>
                         </DimensionLayout>
@@ -376,9 +420,9 @@
 
                           <Layout class="org.netbeans.modules.form.compat2.layouts.support.JScrollPaneSupportLayout"/>
                           <SubComponents>
-                            <Component class="javax.swing.JTree" name="parameterTree2">
+                            <Component class="javax.swing.JTree" name="yParameterTree">
                               <Events>
-                                <EventHandler event="valueChanged" listener="javax.swing.event.TreeSelectionListener" parameters="javax.swing.event.TreeSelectionEvent" handler="parameterTree2ValueChanged"/>
+                                <EventHandler event="valueChanged" listener="javax.swing.event.TreeSelectionListener" parameters="javax.swing.event.TreeSelectionEvent" handler="yParameterTreeValueChanged"/>
                               </Events>
                             </Component>
                           </SubComponents>
