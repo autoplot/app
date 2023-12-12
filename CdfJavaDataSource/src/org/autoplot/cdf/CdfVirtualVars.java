@@ -22,6 +22,7 @@ import org.das2.qds.ops.Ops;
  * These should reflect a subset of those functions, with the IDL implementations at
  * http://spdf.gsfc.nasa.gov/CDAWlib.html
  * see ftp://cdaweb.gsfc.nasa.gov/pub/CDAWlib/unix/CDAWlib.tar.gz, routine read_myCDF.pro
+ * @see https://cdaweb.gsfc.nasa.gov/pub/software/cdawlib/source/virtual_funcs.pro
  * @author jbf
  */
 public class CdfVirtualVars {
@@ -30,12 +31,13 @@ public class CdfVirtualVars {
     /**
      * Implementations of CDF virtual functions.  These are a subset of those in the CDAWeb library, plus a couple
      * extra that they will presumably add to the library at some point.
-     * @param metadata the metadata for the new result dataset, in QDataSet semantics such as FILL_VALUE=-1e31
+     * @param metadata the metadata for the new result dataset, CDF semantics such as FILLVAL=-1e31
      * @param function the function name, which is case insensitive.  See code isSupported for list of function names.
      * @param args list of QDataSets that are the arguments to the function
      * @param mon monitor for the function
-     * @see isSupported
-     * @return
+     * @see #isSupported(java.lang.String) 
+     * @return the computed variable.
+     * @see https://spdf.gsfc.nasa.gov/istp_guide/vattributes.html
      */
     public static QDataSet execute( Map<String,Object> metadata, String function, List<QDataSet> args, ProgressMonitor mon ) throws IllegalArgumentException {
         logger.log(Level.FINE, "implement virtual variable \"{0}\"", function);
@@ -103,7 +105,7 @@ public class CdfVirtualVars {
             //return args.get(0);
             ArrayDataSet real_data = ArrayDataSet.copy( args.get(0) );
             QDataSet region_data = args.get(1);
-            Number fill= (Number) metadata.get(QDataSet.FILL_VALUE);
+            Number fill= (Number) metadata.get("FILLVAL");
             if ( fill==null ) fill= Double.NaN;
             for ( int i=0; i<real_data.length(); i++ ) {
                 if ( region_data.value(i) != 1 ) { // 1=solar wind
@@ -151,28 +153,89 @@ public class CdfVirtualVars {
         } else if ( function.equalsIgnoreCase("apply_esa_qflag") ) {
             ArrayDataSet esa_data= ArrayDataSet.copy(args.get(0));
             QDataSet quality_data= args.get(1);
-            Number fill= (Number) metadata.get(QDataSet.FILL_VALUE);
+            Number fill= (Number) metadata.get("FILLVAL");
             if ( fill==null ) fill= Double.NaN;
+            double dfill= fill.doubleValue();
             int n= DataSetUtil.product(DataSetUtil.qubeDims(esa_data.slice(0)));
             for ( int i=0; i<quality_data.length(); i++ ) {
                 if ( quality_data.value(i) > 0 ) {
-                    if ( esa_data.rank()==1 ) {
-                        esa_data.putValue(i,fill.doubleValue());
-                    } else {
-                        for ( int j=0; j<n; j++ ) {
-                            esa_data.putValue(i,j,fill.doubleValue()); // CAUTION: this uses array aliasing of ArrayDataSet for rank>2
-                        }
-                    }
+                    switch (esa_data.rank()) {
+                        case 1:
+                            esa_data.putValue(i,dfill);
+                            break;
+                        case 2:
+                            {
+                                int n1= esa_data.length(0);
+                                for ( int j=0; j<n1; j++ ) {
+                                    esa_data.putValue(i,j,dfill);
+                                }       break;
+                            }
+                        case 3:
+                            {
+                                int n1= esa_data.length(0);
+                                for ( int j=0; j<n1; j++ ) {
+                                    int n2= esa_data.length(0,0);
+                                    for ( int k=0; k<n2; k++ ) {
+                                        esa_data.putValue(i,j,k,dfill);
+                                    }
+                                }       break;
+                            }
+                        case 4:
+                            {
+                                int n1= esa_data.length(0);
+                                for ( int j=0; j<n1; j++ ) {
+                                    int n2= esa_data.length(0,0);
+                                    for ( int k=0; k<n2; k++ ) {
+                                        int n3= esa_data.length(0,0);
+                                        for ( int l=0; l<n3; l++ ) {
+                                            esa_data.putValue(i,j,k,1,dfill);
+                                        }
+                                    }
+                                }       break;
+                            }
+                        default:
+                            throw new IllegalArgumentException("unsupported rank ");
+                    } 
                 }
             }
             return esa_data;
+        } else if ( function.equalsIgnoreCase("arr_slice") ) {
+            //TODO: how is the index communicated?
+            QDataSet sliceable= args.get(0);
+            Map<String,Object> m= metadata;
+            if ( m==null ) {
+                throw new IllegalArgumentException("unable to implement because metadata is needed");
+            } else {
+                Object oi= m.get("ARR_INDEX");
+                Object od= m.get("ARR_DIM");
+                QDataSet result;
+                if ( od instanceof Number ) {
+                    int i= ((Number)od).intValue();
+                    switch ( i ) {
+                        case 1:
+                            result= Ops.slice2(sliceable,((Number)oi).intValue());
+                            break;
+                        case 2:
+                            result= Ops.slice3(sliceable,((Number)oi).intValue());
+                            break;
+                        default:
+                            throw new IllegalArgumentException("not supported slice dimension");
+                    }
+                } else {
+                    throw new IllegalArgumentException("ARR_DIM property in metadata should be a number");
+                }
+                return result;
+            }
+            
         } else {
             throw new IllegalArgumentException("virtual variable function not implemented: "+function );
         }
     }
 
     /**
-     * see virtual_funcs.pro function calc_p
+     * @see https://cdaweb.gsfc.nasa.gov/pub/software/cdawlib/source/virtual_funcs.pro around "FUNCTION calc_p"
+     * @param args list of datasets: [ V_GSE_p, np ]
+     * @return result which is 1.6726e-6 *np[i]*V_GSE_p[0,i]^2.0
      */
     protected static QDataSet calcP( List<QDataSet> args ) {
         QDataSet coefficient= DataSetUtil.asDataSet( 1.6726e-6 );
@@ -222,7 +285,7 @@ public class CdfVirtualVars {
                 "fftpower","fftPower512","fftPower1024","fftpowerdeltatranslation512", 
                 "alternate_view", "calc_p", "region_filt", 
                 "apply_esa_qflag", "apply_qflag",
-                "sum_values" );
+                "sum_values", "arr_slice" );
         boolean supported= functions.contains(function.toLowerCase());
         logger.log(Level.FINE, "virtual variable function \"{0}\" is supported: {1}", new Object[]{function, supported});
         return supported;

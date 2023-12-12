@@ -26,9 +26,10 @@ public class BinaryDataSourceFactory extends AbstractDataSourceFactory {
         if ( cc.context==CompletionContext.CONTEXT_PARAMETER_NAME ) {
             List<CompletionContext> result= new ArrayList<>();
             result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "byteOffset=", "byte offset of the first record" ) );
-            result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "byteLength=", "total number of bytes to read" ) );
+            result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "byteLength=", "total number of bytes to read (limit 2G)" ) );
             result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "fieldCount=", "specify record length based on field type" ) );
-            result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "rank2=", "start and stop indeces for rank 2 data set" ) );
+            result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "rank2=", "start and stop indices for rank 2 data set" ) );
+            result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "dims=", "like rank2, but allows for higher dimensions") );
             result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "recCount=", "limit the number of records to read in" ) );
             result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "recLength=", "byte length of each record" ) );
             result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "recOffset=", "byte offset into each record") );
@@ -36,7 +37,7 @@ public class BinaryDataSourceFactory extends AbstractDataSourceFactory {
             result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "column=", "byte offset into each record based on field type" ) );
             result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "type=") );
             result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "depend0=") );
-            result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "depend0Offset=", "byte offset into each record for dep0") );
+            result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "depend0Offset=", "byte offset into each record for dep0.  If the first 8 bytes is the timetag, then this would be zero (which is also the default).") );
             result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "depend0Type=") );
             result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "depend0Units=", "support timetags like 'seconds since 2001-001'" ) );
             result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "validMin=") );
@@ -44,7 +45,7 @@ public class BinaryDataSourceFactory extends AbstractDataSourceFactory {
             result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "fillValue=", "value indicating invalid data.") );
             result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "units=", "indicating unit type, like cmps or TT2000.") );
             result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "byteOrder=", "endianess of the data" ) );
-            result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "reportOffset=yes", "depend0 is byte offset into file, this is the legacy (2010) behavior"));
+            result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "reportOffset=T", "depend0 is byte offset into file, this is the legacy (2010) behavior"));
             result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "format=", "specify format"));
             return result;
         } else if ( cc.context==CompletionContext.CONTEXT_PARAMETER_VALUE ) {
@@ -90,6 +91,12 @@ public class BinaryDataSourceFactory extends AbstractDataSourceFactory {
                     result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_VALUE, ":", "as many as will fit in one record" ) );
                     return result;
                 }
+                case "dims": {
+                    List<CompletionContext> result= new ArrayList<>();
+                    result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_VALUE, "[10]", "rank 2 ds[:,10]" ) );
+                    result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_VALUE, "[48,64]", "rank 3 ds[:,48,64]" ) );
+                    return result;
+                }
                 case "type":
                 {
                     List<CompletionContext> result= new ArrayList<>();
@@ -105,7 +112,8 @@ public class BinaryDataSourceFactory extends AbstractDataSourceFactory {
                     result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_VALUE, "byte") );
                     result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_VALUE, "ubyte") );
                     result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_VALUE, "nybble", "four-bit integers") );
-                    result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_VALUE, "time24", "ISO8601 time in 24 ASCII characters") );
+                    result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_VALUE, "time24", "ISO8601 time in 24 ASCII characters (16-24 allowed)") );
+                    result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_VALUE, "ascii8", "Formatted number in 8 ASCII characters (1-24 allowed)") );
                     return result;
                 }
                 case "depend0":
@@ -124,7 +132,8 @@ public class BinaryDataSourceFactory extends AbstractDataSourceFactory {
                     result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_VALUE, "ushort") );
                     result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_VALUE, "byte") );
                     result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_VALUE, "ubyte") );
-                    result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_VALUE, "time24", "ISO8601 time in 24 ASCII characters") );
+                    result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_VALUE, "time24", "ISO8601 time in 24 ASCII characters (16-24 allowed)") );
+                    result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_VALUE, "ascii8", "Formatted number in 8 ASCII characters (1-24 allowed)") );
                     return result;
                 }
                 case "depend0Units":
@@ -166,5 +175,9 @@ public class BinaryDataSourceFactory extends AbstractDataSourceFactory {
         }
     }
 
+    @Override
+    public String getDescription() {
+        return "Binary Tables within files";
+    }
     
 }

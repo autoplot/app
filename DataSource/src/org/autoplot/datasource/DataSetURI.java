@@ -63,7 +63,14 @@ import org.das2.util.filesystem.WebFileSystem;
 import org.autoplot.aggregator.AggregatingDataSourceFactory;
 import org.autoplot.aggregator.AggregatingDataSourceFormat;
 import org.autoplot.datasource.capability.TimeSeriesBrowse;
+import org.das2.datum.HttpUtil;
 import org.das2.qds.ops.Ops;
+import org.das2.util.Base64;
+import org.das2.util.FileUtil;
+import org.das2.util.filesystem.GitHubFileSystem;
+import org.das2.util.filesystem.KeyChain;
+import org.das2.util.monitor.AlertNullProgressMonitor;
+import org.das2.util.monitor.CancelledOperationException;
 
 /**
  *
@@ -80,7 +87,6 @@ public class DataSetURI {
 
     private static final Logger logger = LoggerManager.getLogger("apdss.uri");
 
-
     static {
         logger.fine("load class DataSetURI");
         DataSourceRegistry registry = DataSourceRegistry.getInstance();
@@ -91,6 +97,7 @@ public class DataSetURI {
 
     static {
         FileSystem.registerFileSystemFactory("zip", new zipfs.ZipFileSystemFactory());
+        FileSystem.registerFileSystemFactory("tar", new org.das2.util.filesystem.VFSFileSystemFactory());
         FileSystem.registerFileSystemFactory("ftp", new FTPBeanFileSystemFactory());
         if ( System.getProperty("AP_CURL")!=null || System.getProperty("AP_WGET")!=null ) { // TODO: this only handles HTTP and HTTPS. FTP should probably be handled as well, but check curl.
             FileSystem.registerFileSystemFactory("http", new WGetFileSystemFactory() );
@@ -112,9 +119,14 @@ public class DataSetURI {
 
     /**
      * returns the explicit extension, or the file extension if found, or null.
-     * The extension will not contain a period.
+     * The extension will not contain a period.  
+     * Inputs include:<ul>
+     * <li>ac_h2_cris_20111221_v06.cdf &rarr; "cdf"
+     * <li>/tmp/ac_h2_cris_20111221_v06.cdf &rarr; "cdf"
+     * <li>/tmp/ac_h2_cris_20111221_v06 &rarr; null
+     * </ul>
      * @param surl
-     * @return the extension found, or null if no period is found in the filename.
+     * @return the extension found, without the ".", or null if no period is found in the filename.
      */
     public static String getExt(String surl) {
         if ( surl==null ) throw new NullPointerException();
@@ -124,7 +136,6 @@ public class DataSetURI {
         } else {
             URISplit split = URISplit.parse(surl);
             if (split.file != null) {
-
                 int i0 = split.file.lastIndexOf('/');
                 if (i0 == -1) return null;
                 int i1 = split.file.lastIndexOf('.');
@@ -134,7 +145,16 @@ public class DataSetURI {
                     return null;
                 }
             } else {
-                return null;
+                if ( !surl.contains("/") && !surl.contains("\\") ) { // \\ is for Windows.
+                    int i= surl.lastIndexOf(".");
+                    if ( i>-1 ) {
+                        return surl.substring(i+1);
+                    } else {
+                        return null;
+                    }
+                } else {
+                    return null;
+                }
             }
         }
     }
@@ -362,7 +382,7 @@ public class DataSetURI {
             DataSourceFactory dsf= getDataSourceFactory( toUri(value), new NullProgressMonitor() );
             if ( dsf==null ) return null; // I was getting this because I removed a datasource (HAPI)
             TimeSeriesBrowse tsb= dsf.getCapability( TimeSeriesBrowse.class );
-            if (tsb==null ) return null;
+            if (tsb==null ) return value; // nothing to blur.
             tsb.setURI(value);
             return tsb.blurURI();
         } catch (URISyntaxException | IOException | IllegalArgumentException | ParseException ex) {
@@ -481,6 +501,7 @@ public class DataSetURI {
      * @return the factory that produces the data source.
      * @throws java.io.IOException 
      * @throws URISyntaxException if the schemeSpecficPart is not itself a URI.
+     * @throws IllegalArgumentException if 
      * TODO: this should probably throw UnrecognizedDataSourceException
      */
     public static DataSourceFactory getDataSourceFactory(
@@ -491,7 +512,24 @@ public class DataSetURI {
         if ( isAggregating( suri ) ) {
             String eext = DataSetURI.getExplicitExt( suri );
             if (eext != null) {
-                DataSourceFactory delegateFactory = DataSourceRegistry.getInstance().getSource(eext);
+                DataSourceFactory delegateFactory;
+                if ( eext.equals(RECOGNIZE_FILE_EXTENSION_XML) || eext.equals(RECOGNIZE_FILE_EXTENSION_JSON) ) {
+                    String ff= AggregatingDataSourceFactory.getRepresentativeFile( uri, mon.getSubtaskMonitor("find representative file") );
+                    if ( ff==null ) {
+                        mon.finished();
+                        throw new IllegalArgumentException("Unable to find file from aggregation: "+uri);
+                    }
+                    File f= getFile( ff, mon.getSubtaskMonitor("get representative file") );
+                    mon.finished();
+                    String extr= DataSourceRecognizer.guessDataSourceType(f);
+                    if ( extr!=null && extr.startsWith("vap+") ) {
+                        delegateFactory=  DataSourceRegistry.getInstance().getSource(extr);
+                    } else {
+                        delegateFactory = DataSourceRegistry.getInstance().getSource(eext); // just do what we would have done before.
+                    }
+                } else {
+                    delegateFactory = DataSourceRegistry.getInstance().getSource(eext);
+                }
                 AggregatingDataSourceFactory factory = new AggregatingDataSourceFactory();
                 factory.setDelegateDataSourceFactory(delegateFactory);
                 return factory;
@@ -503,6 +541,13 @@ public class DataSetURI {
         // The user explicitly specified the source. E.g. vap+cdaweb:...
         String ext = DataSetURI.getExplicitExt( suri );
         if (ext != null && !suri.startsWith("vap+X:") ) {
+            if ( ext.equals(RECOGNIZE_FILE_EXTENSION_XML) || ext.equals(RECOGNIZE_FILE_EXTENSION_JSON) ) {
+                File f= getFile( uri.getRawSchemeSpecificPart(), mon );
+                String extr= DataSourceRecognizer.guessDataSourceType(f);
+                if ( extr!=null ) {
+                    ext= extr;
+                }
+            }
             return DataSourceRegistry.getInstance().getSource(ext);
         }
 
@@ -577,6 +622,16 @@ public class DataSetURI {
     }
     
     /**
+     * carefully inspect the file to see if there is a particular handler for it.
+     */
+    public static final String RECOGNIZE_FILE_EXTENSION_JSON = "json";
+
+    /**
+     * carefully inspect the file to see if there is a particular handler for it.
+     */
+    public static final String RECOGNIZE_FILE_EXTENSION_XML = "xml";
+    
+    /**
      * get the InputStream from the path part of the URI.  The stream must be closed by the client.
      * 
      * @param url URL like http://autoplot.org/data/autoplot.dat
@@ -610,6 +665,8 @@ public class DataSetURI {
      * @throws IOException 
      */
     public static InputStream getInputStream(URI uri, ProgressMonitor mon) throws IOException {
+        logger.entering("DataSetURI", "getInputStream", uri );
+        
         URISplit split = URISplit.parse( uri );
         FileSystem fs;
         fs = FileSystem.create( DataSetURI.toUri(split.path) );
@@ -620,7 +677,9 @@ public class DataSetURI {
         if (!fo.isLocal()) {
             logger.log(Level.FINE, "getInputStream(URI): downloading file {0} from {1}{2}", new Object[] { fo.getNameExt(), fs.getRootURI(), filename } );
         }
-        return fo.getInputStream(mon);
+        InputStream result= fo.getInputStream(mon);
+        logger.exiting("DataSetURI", "getInputStream" );
+        return result;
 
     }
 
@@ -654,6 +713,9 @@ public class DataSetURI {
                 suri = suri.replaceAll("\\[", "%5B"); // Windows appends these in temporary download rte_1495358356
                 suri = suri.replaceAll("\\]", "%5D");
                 suri = suri.replaceAll("\\^", "%5E");
+            }
+            if ( suri.startsWith("\\") ) {
+                return new File(suri).toURI();
             }
             return new URI(suri); //bug 3055130 okay
         } catch (URISyntaxException ex) {
@@ -773,11 +835,14 @@ public class DataSetURI {
      * TODO: why is there both getFile(url,mon) and getFile( suri, allowHtml, mon )???
      * 
      * @param url the URL of the file.
-     * @param mon progress monitor
+     * @param mon progress monitor or null.  If null then AlertProgressMonitor is used to show when the download time is not trivial.
      * @return the File
      * @throws java.io.IOException
+     * @see #getFile(java.lang.String, boolean, org.das2.util.monitor.ProgressMonitor) 
      */
     public static File getFile(URL url, ProgressMonitor mon) throws IOException {
+        
+        if ( mon==null ) mon= new AlertNullProgressMonitor("loading "+url);
 
         URISplit split = URISplit.parse(url.toString());
 
@@ -845,9 +910,10 @@ public class DataSetURI {
      * provide standard logic for identifying the cache location for a file.  The file
      * will not be downloaded, but clients can check to see if such resource has already been loaded.
      * There is one case where this might be slow, and that's when a zip file must be downloaded to get
-     * the location.
+     * the location.  This returns null if the file is not from the cache (e.g. local file references).
      * @param suri the uri like http://autoplot.org/data/autoplot.dat
-     * @return the cache file, like /home/jbf/autoplot_data/fscache/http/autoplot.org/data/autoplot.dat
+     * @return the cache file, like /home/jbf/autoplot_data/fscache/http/autoplot.org/data/autoplot.dat, or null if the file is not 
+     * from the cache.
      */
     public static File getCacheFilename( URI suri ) {
         URISplit split = URISplit.parse( suri );
@@ -856,7 +922,13 @@ public class DataSetURI {
             try {
                 URI root= new URI( split.file ); // from WebFileSystem.
                 File local = FileSystem.settings().getLocalCacheDir();
-
+                
+                //TODO: Experimental GitHub code
+                if ( null!=GitHubFileSystem.isGithubFileSystem( root.getHost(), root.getPath() ) ) {
+                    String file= split.file.substring( split.path.length() );
+                    return new File( GitHubFileSystem.getLocalRoot( DataSetURI.getResourceURI(split.path) ), file );
+                }
+                
                 logger.log( Level.FINE, "WFS localRoot={0}", local);
            
                 String s = root.getScheme() + "/" + root.getHost() + "/" + root.getPath(); //TODO: check getPath
@@ -883,14 +955,23 @@ public class DataSetURI {
      * @param mon progress monitor
      * @return a local copy of the file.
      * @throws java.io.IOException
+     * @see #getFile(java.net.URL, org.das2.util.monitor.ProgressMonitor) 
+     * @see FileSystemUtil#doDownload(java.lang.String, org.das2.util.monitor.ProgressMonitor) 
      */
     public static File getFile( String suri, boolean allowHtml, ProgressMonitor mon) throws IOException {
+        
+        if ( mon==null ) mon= new AlertNullProgressMonitor("loading "+suri);
+                
         URISplit split = URISplit.parse( suri );
 
+        if ( split.resourceUri==null ) {
+            throw new IllegalArgumentException("suri is not a URI or URL: "+suri);
+        }
+        
         URL url= isUrl( split.resourceUri ) ? split.resourceUri.toURL() : null;
 
         try {
-            FileSystem fs = FileSystem.create(toUri(split.path),mon); // mon because of ZipFileSystem
+            FileSystem fs = FileSystem.create(toUri(split.path),mon.getSubtaskMonitor("create filesystem")); // mon because of ZipFileSystem
             String filename = split.file.substring(split.path.length());
             FileObject fo = fs.getFileObject(filename);
             File tfile;
@@ -971,12 +1052,13 @@ public class DataSetURI {
      * @param mon
      * @return
      * @throws IOException
+     * @see FileSystemUtil#doDownload(java.lang.String, org.das2.util.monitor.ProgressMonitor) 
      */
     public static File getFile( URI uri, ProgressMonitor mon) throws IOException {
         String suri= fromUri( uri );
         return getFile(suri,false,mon);
     }
-
+    
     /**
      * This loads the URL to a local temporary file.  If the temp file
      * is already downloaded and less than 10 seconds old, it will be used.  
@@ -1011,6 +1093,7 @@ public class DataSetURI {
      * @param mon a progress monitor, or null.
      * @return a File in the FileSystemCache.  The file will have question marks and ampersands removed.
      * @throws IOException
+     * @see HtmlUtil#getInputStream(java.net.URL) which is not used but serves a similar function.
      */
     public static File downloadResourceAsTempFile( URL url, int timeoutSeconds, ProgressMonitor mon ) throws IOException {
 
@@ -1022,8 +1105,26 @@ public class DataSetURI {
         
         if ( mon==null ) mon= new NullProgressMonitor();
 
+                                
+        String userInfo;
+        try {
+            userInfo = KeyChain.getDefault().getUserInfo(url);
+        } catch ( CancelledOperationException ex ) {
+            userInfo= null;
+        }
+
         URISplit split = URISplit.parse( url.toString() ); // get the folder to put the file.
 
+        if ( ( "https".equals(split.scheme) || "http".equals(split.scheme) ) 
+                && split.params==null && !split.file.endsWith("/") ) {
+            try {
+                File f= getFile(url, mon);
+                return f;
+            } catch ( IOException ex ) {
+                logger.fine("fail to load with FileSystem API, doing what we did before.");
+            }    
+        }
+        
         if ( split.file.startsWith("file:/") ) {
             if ( split.params!=null && split.params.length()>0 ) {
                 throw new IllegalArgumentException("local file URLs cannot have arguments");
@@ -1038,7 +1139,13 @@ public class DataSetURI {
         File local= FileSystem.settings().getLocalCacheDir();
         //FileSystem fs = FileSystem.create( toUri(split.path) );
 
-        String id= split.scheme + "/" + split.path.substring(split.scheme.length()+3); // fs.getLocalRoot().toString().substring(FileSystem.settings().getLocalCacheDir().toString().length());
+        int is;
+        if ( split.path.contains("@") ) {
+            is= split.path.indexOf("@")+1;
+        } else {
+            is= split.scheme.length()+3;
+        }
+        String id= split.scheme + "/" + split.path.substring(is); // fs.getLocalRoot().toString().substring(FileSystem.settings().getLocalCacheDir().toString().length());
 
         final long tnow= System.currentTimeMillis();
 
@@ -1198,19 +1305,34 @@ public class DataSetURI {
 
         } else {
             boolean fail= true;
-            InputStream in=null;
-            try {
-                Logger loggerUrl= org.das2.util.LoggerManager.getLogger( "das2.url" );
-                mon.setProgressMessage("downloading "+url);
-                mon.started();
-                logger.log(Level.FINEST,"downloadResourceAsTempFile-> transfer");
-                logger.log(Level.FINE, "reading URL {0}", url);
-                loggerUrl.log(Level.FINE,"GET to get data {0}", url);
-                URLConnection urlc= url.openConnection();
-                urlc.setRequestProperty("Accept-Encoding", "gzip"); // RFE
-                urlc.setConnectTimeout( FileSystem.settings().getConnectTimeoutMs() ); // Reiner describes hang at LANL
-                urlc.setReadTimeout( FileSystem.settings().getReadTimeoutMs() );
-                in= urlc.getInputStream();
+
+            Logger loggerUrl= org.das2.util.LoggerManager.getLogger( "das2.url" );
+            mon.setProgressMessage("downloading "+url);
+            mon.started();
+            logger.log(Level.FINEST,"downloadResourceAsTempFile-> transfer");
+            logger.log(Level.FINE, "reading URL {0}", url);
+            loggerUrl.log(Level.FINE,"GET to get data {0}", url);
+
+            URLConnection urlc= url.openConnection();
+            urlc.setRequestProperty("Accept-Encoding", "gzip"); // RFE
+            urlc.setConnectTimeout( FileSystem.settings().getConnectTimeoutMs() ); // Reiner describes hang at LANL
+            urlc.setReadTimeout( FileSystem.settings().getReadTimeoutMs() );
+            urlc.setAllowUserInteraction(false);
+            if ( userInfo != null) {
+                String encode = Base64.getEncoder().encodeToString( userInfo.getBytes());
+                urlc.setRequestProperty("Authorization", "Basic " + encode);
+            }
+            urlc= HttpUtil.checkRedirect(urlc);
+            if ( urlc instanceof HttpURLConnection ) {
+                HttpURLConnection huc= (HttpURLConnection)urlc;
+                if ( huc.getResponseCode()==400 ) {
+                    FileUtil.consumeStream( huc.getErrorStream() );
+                    throw new IOException(url.toString());
+                }
+            }
+                
+            try ( InputStream in= urlc.getInputStream() )  {
+                
                 Map<String, List<String>> headers = urlc.getHeaderFields();
                 List<String> contentEncodings=headers.get("Content-Encoding");
                 boolean hasGzipHeader=false;
@@ -1227,19 +1349,22 @@ public class DataSetURI {
                 if ( contentLengths!=null && contentLengths.size()>0 ) {
                     contentLength= Long.parseLong( contentLengths.get(0) );
                 }
+                
+                InputStream fin= in;
+                
                 if ( hasGzipHeader ) {
                     logger.fine("temp file is compressed");
-                    in= new GZIPInputStream(in);
+                    fin= new GZIPInputStream(fin);
                 } else {
                     logger.fine("temp file is not compressed");
                 }
                 ProgressMonitor loadMonitor= mon.getSubtaskMonitor("loading");
                 if ( contentLength>-1 ) loadMonitor.setTaskSize(contentLength);
                 
-                in= new DasProgressMonitorInputStream( in, loadMonitor ); 
+                fin= new DasProgressMonitorInputStream( fin, loadMonitor ); 
                 if ( urlc instanceof HttpURLConnection ) {
                     final HttpURLConnection hurlc= (HttpURLConnection) urlc;
-                    ((DasProgressMonitorInputStream)in).addRunWhenClosedRunnable( new Runnable() {
+                    ((DasProgressMonitorInputStream)fin).addRunWhenClosedRunnable( new Runnable() {
                         @Override
                         public void run() {
                             hurlc.disconnect();
@@ -1247,10 +1372,10 @@ public class DataSetURI {
                     });
                 }
                 if ( contentLength>-1 ) {
-                    ((DasProgressMonitorInputStream)in).setStreamLength(contentLength);
+                    ((DasProgressMonitorInputStream)fin).setStreamLength(contentLength);
                 }
                 OutputStream out= new FileOutputStream( tempfile );
-                DataSourceUtil.transfer( Channels.newChannel(in), Channels.newChannel(out) );
+                DataSourceUtil.transfer( Channels.newChannel(fin), Channels.newChannel(out) );
                 fail= false;
                 logger.log(Level.FINE,"downloadResourceAsTempFile-> transfer was successful");
             } catch ( IOException ex ) { 
@@ -1265,7 +1390,6 @@ public class DataSetURI {
                     }
                 }
                 mon.finished();
-                if ( in!=null ) in.close(); // This will throw the InterruptedIOException
             }
         }
 
@@ -1296,6 +1420,18 @@ public class DataSetURI {
         return getFile( uri, false, mon );
     }
 
+    /**
+     * retrieve the file specified in the URI, possibly using the VFS library to
+     * download the resource to a local cache.  The URI should be a downloadable
+     * file, and not the vap scheme URI.
+     * @param uri resource to download, such as "sftp://user@host/file.dat."
+     * @return the file
+     * @throws IOException
+     */
+    public static File getFile( String uri ) throws IOException {
+        return getFile( uri, false, new AlertNullProgressMonitor("downloading "+uri) );
+    }
+    
     /**
      * get the file, allowing it to have "&lt;html&gt;" in the front.  Normally this is not
      * allowed because of http://sourceforge.net/tracker/?func=detail&aid=3379717&group_id=199733&atid=970682
@@ -1351,6 +1487,8 @@ public class DataSetURI {
         surl = surl.replaceAll(">", "%3E");
         surl = surl.replaceAll(" ", "%20"); // drop the spaces are pluses in filenames.
         surl = surl.replaceAll("\\^", "%5E"); 
+        surl = surl.replaceAll("\\\\", "%5C");  
+        surl = surl.replaceAll("\\|", "%7C");
         //}
         if (split.vapScheme != null) {
             if ( split.vapScheme.contains(" ") ) {
@@ -1532,6 +1670,8 @@ public class DataSetURI {
 
         if (!cacheF.exists()) return Collections.emptyList();
         s = cacheF.list();
+        
+        if ( s==null ) return Collections.emptyList();
 
         boolean foldCase = true;
         if (foldCase) {
@@ -1694,7 +1834,8 @@ public class DataSetURI {
             if (scomp.startsWith(prefix) && !scomp.endsWith(".listing")) {
                 File ff = new File(cacheF, item);
                 if ( ! ff.isDirectory() ) continue;
-                if ( ff.list().length==0 ) continue;
+                String[] ss= ff.list();
+                if ( ss==null || ss.length==0 ) continue;
                 StringBuilder result1 = new StringBuilder(item);
                 result1.append( "/" );
                 // drill down single entries, since often the root doesn't provide a list.
@@ -1738,6 +1879,10 @@ public class DataSetURI {
      */
     public static List<CompletionResult> getFileSystemCompletions(final String surl, final int carotpos, boolean inclAgg, List<String> inclFiles, String acceptPattern, ProgressMonitor mon) throws IOException, URISyntaxException {
         URISplit split = URISplit.parse(surl.substring(0, carotpos),carotpos,false);
+        if ( split.file==null ) {
+            logger.info("url passed to getFileSystemCompletions does not appear to be a filesystem.");
+            return Collections.emptyList();
+        }
         String prefix = URISplit.uriDecode(split.file.substring(split.path.length()));
         String surlDir = URISplit.uriDecode(split.path);
 
@@ -1771,8 +1916,8 @@ public class DataSetURI {
                 if ( stimeRange!=null ) {
                     timeRange= DatumRangeUtil.parseTimeRange(stimeRange);
                 }
-            } catch ( Exception e ) {
-                
+            } catch ( ParseException e ) {
+                logger.log(Level.WARNING, "parse exception: {0}", e);
             }
             
             int ip= surlDir.indexOf("$Y");
@@ -1805,11 +1950,6 @@ public class DataSetURI {
         } else {
             // Since FileSystem.create can't throw IOExceptions, the error is hidden in an IllegalArgumentException.
             // Until this is cleaned up, do this kludge.
-            if ( surlDir.startsWith("file:/") && !( surlDir.contains(".zip/") || surlDir.contains(".ZIP/" ) ) ) {
-                if ( !new File( new URL( split.path ).getPath() ).exists() ) {
-                    throw new FileNotFoundException("directory does not exist: "+split.path );
-                }
-            }
             fs = FileSystem.create( surlDir, mon );
             s = fs.listDirectory("/");
         }
@@ -1908,6 +2048,8 @@ public class DataSetURI {
                     } // kludge for dods
                     // Hack for .zip archives:
                     if (s[j].endsWith(".zip") || s[j].endsWith(".ZIP") ) s[j] = s[j] + "/";
+                    // Hack for .tar archives:
+                    if (s[j].endsWith(".tar") || s[j].endsWith(".tgz") || s[j].endsWith(".tar.gz") ) s[j] = s[j] + "/";
 
                     boolean haveMatch= true;
                     if ( ! s[j].endsWith("/") ) {
@@ -2018,7 +2160,11 @@ public class DataSetURI {
             try {
                 DataSourceFactory o = DataSourceRegistry.getInstance().getSource(ext);
                 if ( o!=null && o.supportsDiscovery() ) {
-                    result.add(ext);
+						 
+                    // Temporary: Keep das2 federated catalog out of the top level list
+                    // while testing is in progress.  --cwp
+                    if(! ext.equals((".dc")))
+                    result.add(ext); /* dascat */
                 }
             } catch (RuntimeException ex) {
                 throw ex;

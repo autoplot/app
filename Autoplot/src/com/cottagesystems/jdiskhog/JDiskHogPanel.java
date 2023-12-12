@@ -5,6 +5,7 @@
  */
 package com.cottagesystems.jdiskhog;
 
+import java.awt.BorderLayout;
 import java.awt.Component;
 import java.awt.event.ActionEvent;
 import java.awt.event.MouseListener;
@@ -15,6 +16,7 @@ import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -26,7 +28,10 @@ import javax.swing.Action;
 import javax.swing.JDialog;
 import javax.swing.JFileChooser;
 import javax.swing.JLabel;
+import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
+import javax.swing.JPanel;
+import javax.swing.JPopupMenu;
 import javax.swing.JTree;
 import javax.swing.SwingUtilities;
 import javax.swing.tree.DefaultMutableTreeNode;
@@ -41,6 +46,11 @@ import org.das2.util.filesystem.FileSystem;
 import org.das2.util.monitor.ProgressMonitor;
 import org.autoplot.AutoplotUI;
 import org.autoplot.datasource.AutoplotSettings;
+import org.das2.util.filesystem.FileSystem.FileSystemOfflineException;
+import org.das2.util.filesystem.GitCommand;
+import org.das2.util.filesystem.GitHubFileObject;
+import org.das2.util.filesystem.GitHubFileSystem;
+import org.das2.util.filesystem.WebFileSystem;
 
 /**
  * Tool for cleaning up files in a local filesystem.  This has minor customizations 
@@ -290,6 +300,61 @@ public final class JDiskHogPanel extends javax.swing.JPanel {
         return true;
     }
     
+    Action getLocalPullAction( final File path) {
+        return new AbstractAction("Pull Remote Changes") {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                LoggerManager.logGuiEvent(e);
+                
+                try {
+                    GitCommand.GitResponse response= new GitCommand(path).pull();
+                    if ( response.getExitCode()==0 ) {
+                        JOptionPane.showMessageDialog( app, "git pull was successful.");
+                    } else {
+                        JOptionPane.showMessageDialog( app, "git pull was unsuccessful with exit code "+response.getExitCode() + ":"
+                                + response.getErrorResponse() );
+                        
+                    }
+                } catch (IOException | InterruptedException ex) {
+                    logger.log(Level.SEVERE, null, ex);
+                }
+                
+            }
+        };
+    }
+    
+    protected void maybeAddGitPullAction( JPopupMenu popup ) {
+        FSTreeModel model = (FSTreeModel) jTree1.getModel();
+
+        TreePath path = jTree1.getSelectionPath();
+        if ( path==null ) return;
+
+        File f = model.getFile(path);
+        String outsideName= outsideName(f.toString());
+        String[] nn= null;
+        File localCache=null; // the local root if set already
+
+        if ( outsideName!=null ) {
+            try {
+                FileSystem fs = FileSystem.create(outsideName);
+                if ( fs instanceof GitHubFileSystem ) {
+                    File localROCache= ((GitHubFileSystem)fs).getReadOnlyCache();
+                    if ( localROCache!=null ) {
+                        JMenuItem mi= new JMenuItem( getLocalPullAction(localROCache) );
+                        mi.setToolTipText( "Pull changes from the remote repository to the local RO cache." );
+                        popup.add(mi);       
+                        return;
+                    }
+                }
+            } catch ( FileSystemOfflineException | UnknownHostException | FileNotFoundException ex ) {
+                logger.log(Level.SEVERE, null, ex);
+            }
+        }
+        JMenuItem mi= new JMenuItem( getLocalPullAction(null) );
+        mi.setEnabled(false);
+        popup.add(mi);  // always add the option, even if it is disabled.
+    }
+                        
     Action getLocalROCacheAction(final JTree jtree) {
         return new AbstractAction("Link to Local Read-Only Cache...") {
             @Override
@@ -314,11 +379,15 @@ public final class JDiskHogPanel extends javax.swing.JPanel {
 
                     String outsideName= outsideName(f.toString());
                     String[] nn= null;
+                    File localCache=null; // the local root if set already
+                    
                     if ( outsideName!=null ) {
                         try {
                             FileSystem fs = FileSystem.create(outsideName);
                             nn= fs.listDirectory("/");
-
+                            if ( fs instanceof WebFileSystem ) {
+                                localCache= ((WebFileSystem)fs).getReadOnlyCache();
+                            }
                         } catch ( IOException ex ) {
                             logger.log(Level.SEVERE, ex.getMessage(), ex);
                         }
@@ -332,12 +401,18 @@ public final class JDiskHogPanel extends javax.swing.JPanel {
                         for ( int i=1; i<6; i++ ) {
                             if ( nn.length>i ) s.append( "<br>").append( nn[i] );
                         }
-                        final JLabel label= new JLabel("<html>Target should contain the files:<br>"+ s.toString() );
-                        choose.setAccessory( label );
+                        final JLabel label= new JLabel("<html><u>Target should contain:</u><br>"+ s.toString() );
+                        JPanel p= new JPanel();
+                        p.setLayout( new BorderLayout() );
+                        p.add( label, BorderLayout.NORTH );
+                        choose.setAccessory( p );
                     }
 
                     choose.setFileSelectionMode( JFileChooser.DIRECTORIES_ONLY );
-                    
+                    if ( localCache!=null ) {
+                        choose.setSelectedFile( localCache );
+                        choose.setCurrentDirectory( localCache );
+                    }
                     if ( choose.showOpenDialog(jtree)==JFileChooser.APPROVE_OPTION ) {
                         try {
                             File ff= choose.getSelectedFile();
@@ -418,7 +493,7 @@ public final class JDiskHogPanel extends javax.swing.JPanel {
 
         jScrollPane2.setViewportView(jTree1);
 
-        jButton1.setText("Ok");
+        jButton1.setText("Close");
         jButton1.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
                 jButton1ActionPerformed(evt);
@@ -459,7 +534,7 @@ public final class JDiskHogPanel extends javax.swing.JPanel {
                 .add(4, 4, 4)
                 .add(goButton, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 87, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
-                .add(jButton1, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 69, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE))
+                .add(jButton1, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 94, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE))
         );
         layout.setVerticalGroup(
             layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)

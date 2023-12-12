@@ -14,7 +14,9 @@ import java.util.logging.Logger;
 import org.das2.util.monitor.ProgressMonitor;
 import org.das2.dataset.NoDataInIntervalException;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.text.ParseException;
 import java.util.LinkedHashMap;
@@ -48,10 +50,13 @@ public class NetCDFDataSource extends AbstractDataSource {
     private static final Logger logger= LoggerManager.getLogger("apdss.netcdf");
     
     protected static final String PARAM_WHERE = "where";
-    protected static final String PARAM_X = "x";
-    protected static final String PARAM_Y = "y";
+    protected static final String PARAM_X = "X";
+    protected static final String PARAM_Y = "Y";
+    protected static final String PARAM_X_UNITS = "xunits";
         
     private Variable variable;
+    
+    private Map<String,Object> globalAttributes;
     
     /**
      * if non-null, the variable to use for the where filter.
@@ -112,6 +117,18 @@ public class NetCDFDataSource extends AbstractDataSource {
             } else {
                 svariable= (String) p.get("arg_0"); 
             }
+
+            swhereVariable= p.get( PARAM_WHERE );  // may be null, typically is null.
+            sxVariable= p.get( PARAM_X ); // may be null, typically is null.
+            if ( sxVariable==null ) sxVariable= p.get( "x" );
+            syVariable= p.get( PARAM_Y ); // may be null, typically is null.
+            if ( syVariable==null ) syVariable= p.get( "y" );
+
+            if ( svariable==null && syVariable!=null ) {
+                svariable= syVariable;
+                syVariable= null;
+            }
+            
             if ( svariable!=null ) {
                 svariable= svariable.replaceAll(" ","+");
                 int ic= svariable.indexOf("[");
@@ -122,10 +139,7 @@ public class NetCDFDataSource extends AbstractDataSource {
                     constraint= null;
                 }
             }
-            
-            swhereVariable= p.get( PARAM_WHERE );  // may be null, typically is null.
-            sxVariable= p.get( PARAM_X ); // may be null, typically is null.
-            syVariable= p.get( PARAM_Y ); // may be null, typically is null.
+                        
         }
     }
     
@@ -139,9 +153,23 @@ public class NetCDFDataSource extends AbstractDataSource {
             
             QDataSet result= NetCdfVarDataSet.create( variable, constraint, ncfile, mon.getSubtaskMonitor(15,20,"copy over ") );
             
+            String xunits= getParam( "xunits", "" );
+            
             if ( sxVariable!=null && sxVariable.length()>0 ) {
                 NetCdfVarDataSet xds= NetCdfVarDataSet.create( xVariable, constraint, ncfile, new NullProgressMonitor() );
+            
+                if ( !xunits.equals("") ) {
+                    xds.putProperty( QDataSet.UNITS, Units.lookupUnits(xunits.replaceAll("\\+"," ")) );
+                }
                 result = Ops.link( xds, result );
+            }
+            
+            if ( xunits.length()>0 && sxVariable==null ) {
+                NetCdfVarDataSet dep0= (NetCdfVarDataSet) result.property(QDataSet.DEPEND_0);
+                if ( dep0!=null ) {
+                    dep0.putProperty( QDataSet.UNITS, Units.lookupUnits(xunits.replaceAll("\\+"," ")) );
+                }
+                result= Ops.putProperty( result, QDataSet.DEPEND_0, dep0 );
             }
 
             if ( syVariable!=null && syVariable.length()>0 ) {
@@ -151,7 +179,17 @@ public class NetCDFDataSource extends AbstractDataSource {
             
             String w= (String)getParam(PARAM_WHERE,"" );
             if ( w!=null && w.length()>0 ) {
-                NetCdfVarDataSet whereParm= NetCdfVarDataSet.create( whereVariable, constraint, ncfile, new NullProgressMonitor() );
+                int ieq= w.indexOf(".");
+                String sparm= w.substring(0,ieq);
+                String constraint1;
+                int k = sparm.indexOf("[");
+                if (k != -1) {
+                    constraint1 = sparm.substring(k);
+                    sparm = sparm.substring(0, k);
+                } else {
+                    constraint1 = constraint;
+                }  
+                NetCdfVarDataSet whereParm= NetCdfVarDataSet.create( whereVariable, constraint1, ncfile, new NullProgressMonitor() );
                 result = doWhereFilter( w, whereParm, DataSetOps.makePropertiesMutable(result) );
             }
 
@@ -181,7 +219,11 @@ public class NetCDFDataSource extends AbstractDataSource {
                 result= Ops.putProperty( result, QDataSet.FILL_VALUE, fillValue );
             }
             
+            Map<String,Object> metadata= new LinkedHashMap<>();
+            metadata.put( "GlobalAttributes", globalAttributes );
             
+            result= Ops.putProperty( result, QDataSet.METADATA, metadata );
+
             logger.finer("ncfile.close()");
             ncfile.close();
             
@@ -226,27 +268,23 @@ public class NetCDFDataSource extends AbstractDataSource {
     
     /**
      * this is sloppy in that it opens the file and then relies on someone else to close it.
+     * The local variables "variable" "xvariable" and "yvariable" are populated, as well as 
+     * "whereVariable".
      * @param mon
      * @throws IOException
      */
     private void readData( ProgressMonitor mon ) throws IOException {
 
-        String location;
-        boolean makeLocal= true;
-        if ( makeLocal ) {
-            File file= getFile(mon.getSubtaskMonitor("getFile"));
-            location= file.toURI().toURL().toString();
-        } else {
-            location= DataSetURI.fromUri(resourceURI);
-        }
-        
+        File file= getFile(mon.getSubtaskMonitor("getFile"));
+
         NetcdfDataset dataset;
 
         mon.started();
         try {
             if ( sMyUrl.endsWith(".ncml" ) ) {
-                dataset= NcMLReader.readNcML( location, null );
+                dataset= NcMLReader.readNcML( file.toURI().toURL().toString(), null ); // bug 1958: this handles %20 as escapes
             } else {
+                String location= file.toString(); // bug 1958: but this doesn't
                 NetCDFDataSourceFactory.checkMatlab(location);
                 logger.log(Level.FINE, "NetcdfFile.open( {0} )", location);
                 NetcdfFile f= NetcdfFile.open( location );
@@ -257,7 +295,20 @@ public class NetCDFDataSource extends AbstractDataSource {
 
             logger.log(Level.FINER, "dataset.getVariables()" );
             List<Variable> variables= (List<Variable>)dataset.getVariables();
-
+            
+            List<Attribute> globalAttributes= dataset.getGlobalAttributes();
+            
+            Map<String,Object> metadata= new LinkedHashMap<>();
+            
+            for ( Attribute a: globalAttributes ) {
+                if ( a.isArray() ) {
+                    metadata.put( a.getName(), a.getValues() );
+                } else {
+                    metadata.put( a.getName(), a.getStringValue() );
+                }
+            }
+            this.globalAttributes= metadata;
+            
             if ( svariable==null ) {
                 for (Variable v : variables) {
                     if ( !v.getDimension(0).getName().equals(v.getName()) ) { // search for dependent variable
@@ -288,6 +339,10 @@ public class NetCDFDataSource extends AbstractDataSource {
                 int i= swhereVariable.lastIndexOf("(");
                 i= swhereVariable.lastIndexOf(".",i);
                 String swv= swhereVariable.substring(0,i);
+                i= swv.indexOf("[");
+                if ( i>-1 ) {
+                    swv= swv.substring(0,i);
+                }
                 for (Variable v : variables) {
                     if ( v instanceof Structure ) {
                         for ( Variable v2: ((Structure) v).getVariables() ) {
@@ -338,7 +393,9 @@ public class NetCDFDataSource extends AbstractDataSource {
                         }
                     }
                 }
-                if ( yVariable==null ) throw new IllegalArgumentException("y refers to unresolved variable: "+syVariable );
+                if ( yVariable==null ) {
+                    throw new IllegalArgumentException("Y refers to unresolved variable: "+syVariable );
+                }
             }            
         } finally {
             mon.finished();
@@ -370,9 +427,22 @@ public class NetCDFDataSource extends AbstractDataSource {
             Map<String,Object> result= new LinkedHashMap<>();
             for (Object attr1 : attr) {
                 Attribute at = (Attribute) attr1;
-                result.put( at.getName(), at.getStringValue() );
+                if ( at.getLength()==1 && ( at.getName().equals("valid_min") || at.getName().equals("valid_max") || at.getName().equals("missing_value") ) ) {
+                    try {
+                        Object o= at.getValue(0);
+                        if ( o!=null ) result.put( at.getName(), o );
+                    } catch ( Exception e ) {
+                        result.put( at.getName(), at.getStringValue() );
+                    }
+                } else {
+                    result.put( at.getName(), at.getStringValue() );
+                }
             }
 
+            if ( globalAttributes!=null ) {
+                result.put( "GlobalAttributes", globalAttributes );
+            }
+            
             try {
                 if ( ncfile!=null ) {
                     logger.finer("ncfile.close()");

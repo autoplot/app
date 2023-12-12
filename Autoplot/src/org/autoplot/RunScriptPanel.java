@@ -7,12 +7,14 @@
 
 package org.autoplot;
 
+import java.awt.Window;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.net.URISyntaxException;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.swing.JCheckBox;
@@ -23,7 +25,9 @@ import org.autoplot.jythonsupport.JythonRefactory;
 import org.das2.util.monitor.ProgressMonitor;
 import org.python.util.InteractiveInterpreter;
 import org.autoplot.datasource.AutoplotSettings;
+import org.autoplot.datasource.DataSetURI;
 import org.autoplot.jythonsupport.ui.EditorTextPane;
+import org.das2.components.DasProgressPanel;
 
 /**
  *
@@ -63,7 +67,7 @@ public class RunScriptPanel extends javax.swing.JPanel {
                 InteractiveInterpreter interp = JythonUtil.createInterpreter(true, false);
                 interp.set("dom", model.getDocumentModel());
                 interp.set("monitor", mon);
-                interp.exec( JythonRefactory.fixImports(buf.toString()) );
+                interp.exec( JythonRefactory.fixImports(buf.toString(),ff.getName())  );
             } else {
                 throw new IllegalArgumentException("file was empty: "+ff );
             }
@@ -74,6 +78,10 @@ public class RunScriptPanel extends javax.swing.JPanel {
 
     }
 
+    /**
+     * return the checkbox indicating that the script should be added as a tool.
+     * @return 
+     */
     public JCheckBox getToolsCB() {
         return toolsCB;
     }
@@ -109,6 +117,37 @@ public class RunScriptPanel extends javax.swing.JPanel {
         }
     }
     
+    /**
+     * load the file into the panel for review, asynchronously.
+     * @param window the dialog parent for a progress bar.
+     * @param script the script location.
+     * @throws IOException
+     */
+    protected void loadFileSoon( final Window window, final String script ) throws IOException {
+        Runnable run= new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    final File ff = DataSetURI.getFile( DataSetURI.getURI(script), DasProgressPanel.createFramed( window,"downloading script"));
+                    loadFile(ff);
+                } catch (URISyntaxException ex) {
+                    logger.log(Level.SEVERE, null, ex);
+                } catch (IOException ex) {
+                    try {
+                        logger.log(Level.SEVERE, null, ex);
+                        Document d = getTextArea().getDocument();
+                        d.remove( 0, d.getLength() );
+                        d.insertString( 0, "unable to load script", null );
+                        scriptFilename.setText("unable to load script");
+                    } catch (BadLocationException ex1) {
+                        Logger.getLogger(RunScriptPanel.class.getName()).log(Level.SEVERE, null, ex1);
+                    }
+                }
+            }
+        };
+        new Thread(run,"loadScriptAsynchronously").start();
+    }
+    
 
     /** This method is called from within the constructor to
      * initialize the form.
@@ -128,7 +167,8 @@ public class RunScriptPanel extends javax.swing.JPanel {
 
         jLabel1.setText("Run the script:");
 
-        toolsCB.setText("Install in tools folder and menu");
+        toolsCB.setText("Add to Tools menu");
+        toolsCB.setToolTipText("Add to tools menu for convenient access.");
 
         scriptPanel.setLayout(new java.awt.BorderLayout());
         jScrollPane1.setViewportView(scriptPanel);
@@ -136,6 +176,7 @@ public class RunScriptPanel extends javax.swing.JPanel {
         scriptFilename.setText("<html><i>script filename ");
 
         jLabel2.setText("Make sure the script does not contain malicious code.");
+        jLabel2.setToolTipText("<html>Autoplot keeps track of what scripts you have run, and when <br>things change with a script you will be asked to verify<br>the script.  Scripts can be made which delete files, so be<br>sure to only run scripts from people you trust.\n");
 
         org.jdesktop.layout.GroupLayout layout = new org.jdesktop.layout.GroupLayout(this);
         this.setLayout(layout);

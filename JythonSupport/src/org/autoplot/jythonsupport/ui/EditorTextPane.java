@@ -2,8 +2,10 @@
 package org.autoplot.jythonsupport.ui;
 
 import java.awt.BorderLayout;
+import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Font;
+import java.awt.HeadlessException;
 import java.awt.Toolkit;
 import java.awt.event.ActionEvent;
 import java.awt.event.InputEvent;
@@ -24,6 +26,7 @@ import java.net.Socket;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Properties;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.swing.AbstractAction;
@@ -35,17 +38,21 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import javax.swing.text.BadLocationException;
 import javax.swing.text.Document;
+import javax.swing.text.EditorKit;
 import javax.swing.undo.UndoManager;
 import jsyntaxpane.DefaultSyntaxKit;
+import static jsyntaxpane.DefaultSyntaxKit.CONFIG_SELECTION;
 import jsyntaxpane.SyntaxDocument;
+import jsyntaxpane.SyntaxStyle;
 import jsyntaxpane.SyntaxStyles;
-import jsyntaxpane.TokenType;
 import jsyntaxpane.actions.ActionUtils;
 import jsyntaxpane.actions.IndentAction;
+import org.autoplot.datasource.AutoplotSettings;
 import org.das2.DasApplication;
 import org.das2.components.propertyeditor.PropertyEditor;
 import org.das2.jythoncompletion.CompletionContext;
@@ -61,11 +68,19 @@ import org.das2.qds.MutablePropertyDataSet;
 import org.das2.qds.QDataSet;
 import org.autoplot.datasource.DataSourceEditorPanel;
 import org.autoplot.datasource.DataSourceEditorPanelUtil;
+import org.autoplot.datasource.DataSourceFormatEditorPanel;
+import org.autoplot.datasource.DataSourceRegistry;
+import org.autoplot.datasource.URISplit;
 import org.autoplot.datasource.WindowManager;
+import org.autoplot.jythonsupport.JythonToJavaConverter;
 import org.autoplot.jythonsupport.JythonUtil;
 import org.autoplot.jythonsupport.PyQDataSet;
 import org.autoplot.jythonsupport.SimplifyScriptSupport;
+import org.autoplot.jythonsupport.StaticCodeAnalysis;
 import org.das2.qstream.StreamException;
+import org.python.core.PySyntaxError;
+import org.python.parser.ast.Name;
+import org.python.parser.ast.aliasType;
 
 /**
  * Special editor for Jython scripts, adding undo and redo actions, bigger/smaller
@@ -85,12 +100,21 @@ public class EditorTextPane extends JEditorPane {
     
     public EditorTextPane() {
 
-        Runnable run= new Runnable() {
+        Runnable run= getInitializeRunnable();
+        
+        if ( !DasApplication.getDefaultApplication().isHeadless() ) {
+            SwingUtilities.invokeLater(run);
+        }
+
+    }
+
+    public final Runnable getInitializeRunnable() {
+        return  new Runnable() {
             @Override
             public void run() {
 
                 final UndoManager undo = new UndoManager();
-
+                
                 getActionMap().put( "undo", new AbstractAction( undo.getUndoPresentationName() ) {
                     @Override
                     public void actionPerformed( ActionEvent e ) {
@@ -101,31 +125,31 @@ public class EditorTextPane extends JEditorPane {
                 getActionMap().put( "redo", new AbstractAction( undo.getRedoPresentationName() ) {
                     @Override
                     public void actionPerformed( ActionEvent e ) {
-                       try {
+                        try {
                             if ( undo.canRedo() ) undo.redo();
-                       } catch ( javax.swing.undo.CannotRedoException ex ) {
-
-                       }
+                        } catch ( javax.swing.undo.CannotRedoException ex ) {
+                            
+                        }
                     }
                 });
 
                 getActionMap().put( "biggerFont", new AbstractAction( "Text Size Bigger" ) {
                     @Override
                     public void actionPerformed( ActionEvent e ) {
-                       Font f= getFont();
-                       float size= f.getSize2D();
-                       float step= size < 14 ? 1 : 2;
-                       setFont( f.deriveFont( Math.min( 40, size + step ) ) );
+                        Font f= getFont();
+                        float size= f.getSize2D();
+                        float step= size < 14 ? 1 : 2;
+                        setFont( f.deriveFont( Math.min( 40, size + step ) ) );
                     }
                 } );
 
                 getActionMap().put( "smallerFont", new AbstractAction( "Text Size Smaller" ) {
                     @Override
                     public void actionPerformed( ActionEvent e ) {
-                       Font f= getFont();
-                       float size= f.getSize2D();
-                       float step= size < 14 ? 1 : 2;
-                       setFont( f.deriveFont( Math.max( 4, size - step ) ) );
+                        Font f= getFont();
+                        float size= f.getSize2D();
+                        float step= size < 14 ? 1 : 2;
+                        setFont( f.deriveFont( Math.max( 4, size - step ) ) );
                     }
                 } );
 
@@ -141,34 +165,35 @@ public class EditorTextPane extends JEditorPane {
                 getActionMap().put( "plotItem", new AbstractAction( "plotItem" ) {
                     @Override
                     public void actionPerformed( ActionEvent e ) {
-                        LoggerManager.logGuiEvent(e);                
-                        String doThis= getSelectedText();
-                        if ( doThis==null ) return;
-                        try {
-                            plotSoon(doThis);
-                        } catch ( IllegalArgumentException ex ) {
-                            JOptionPane.showMessageDialog(EditorTextPane.this,
-                                    "<html>A debugging session must be active.  Insert stop to halt script execution.</html>");
-                        }
+                        LoggerManager.logGuiEvent(e);
+                        plotItem();
                     }
-                } );                
-
+                } );
+                
                 getActionMap().put( "developer1", new AbstractAction( "developer1" ) {
                     @Override
                     public void actionPerformed( ActionEvent e ) {
                         LoggerManager.logGuiEvent(e);                
-                        showCompletionsView();
+                        showParametersView();
                     }
                 } );                
                 
-                getActionMap().put( "usages", new AbstractAction( "usages" ) {
+                getActionMap().put( "showUsages", new AbstractAction( "showUsages" ) {
                     @Override
                     public void actionPerformed( ActionEvent e ) {
                         LoggerManager.logGuiEvent(e);  
                         showUsages();
                     }
-                } );                
+                } );
 
+                getActionMap().put( "importCode", new AbstractAction( "importCode" ) {
+                    @Override
+                    public void actionPerformed( ActionEvent e ) {
+                        LoggerManager.logGuiEvent(e);  
+                        doImports();
+                    }
+                } );
+                
                 Toolkit tk= Toolkit.getDefaultToolkit();
 
                 getInputMap().put( KeyStroke.getKeyStroke( KeyEvent.VK_Z,tk.getMenuShortcutKeyMask() ), "undo" );
@@ -177,22 +202,55 @@ public class EditorTextPane extends JEditorPane {
                 getInputMap().put( KeyStroke.getKeyStroke( KeyEvent.VK_MINUS, tk.getMenuShortcutKeyMask() ), "smallerFont" );
                 getInputMap().put( KeyStroke.getKeyStroke( KeyEvent.VK_F5, InputEvent.SHIFT_DOWN_MASK ), "settings" );
                 getInputMap().put( KeyStroke.getKeyStroke( KeyEvent.VK_C, InputEvent.SHIFT_DOWN_MASK | InputEvent.CTRL_DOWN_MASK ), "plotItem" );
-                getInputMap().put( KeyStroke.getKeyStroke( KeyEvent.VK_U, InputEvent.SHIFT_DOWN_MASK | InputEvent.CTRL_DOWN_MASK ), "usages" );
+                getInputMap().put( KeyStroke.getKeyStroke( KeyEvent.VK_U, InputEvent.SHIFT_DOWN_MASK | InputEvent.CTRL_DOWN_MASK ), "showUsages" );
+                getInputMap().put( KeyStroke.getKeyStroke( KeyEvent.VK_I, InputEvent.SHIFT_DOWN_MASK | InputEvent.ALT_DOWN_MASK ), "importCode" );
                 getInputMap().put( KeyStroke.getKeyStroke( KeyEvent.VK_F12, InputEvent.SHIFT_DOWN_MASK | InputEvent.CTRL_DOWN_MASK ), "developer1" );
                 
                 doLayout(); // kludge for DefaultSyntaxKit
                 DefaultSyntaxKit.initKit();
                 
-                SyntaxStyles.getInstance().getStyle(TokenType.DELIMITER).isDrawTabs();
-
                 JPopupMenu oldPopup= EditorTextPane.this.getComponentPopupMenu();
                 EditorTextPane.this.setContentType("text/python");
+
+                Properties p= new Properties();
+                String f= AutoplotSettings.settings().resolveProperty(AutoplotSettings.PROP_AUTOPLOTDATA );
+                File config= new File( new File(f), "config" );
+                EditorKit k= EditorTextPane.this.getEditorKit();
+                if ( config.exists() && k instanceof jsyntaxpane.syntaxkits.PythonSyntaxKit ) {
+                    try {
+                        File syntaxPropertiesFile= new File( config, "jsyntaxpane.properties" );
+                        logger.log(Level.FINE, "Resetting editor colors using {0}", syntaxPropertiesFile );
+                        try ( FileInputStream ins= new FileInputStream( syntaxPropertiesFile ) ) {
+                            p.load( ins );
+                        }
+                    } catch (FileNotFoundException ex) {
+                        logger.log(Level.SEVERE, null, ex);
+                    } catch (IOException ex) {
+                        logger.log(Level.SEVERE, null, ex);
+                    }
+                    ((jsyntaxpane.syntaxkits.PythonSyntaxKit)k).setConfig( p );
+                    String s;
+                    s= p.getProperty("Background", "0xFFFFFF");
+                    EditorTextPane.this.setBackground( Color.decode( s ) );
+                    s= p.getProperty("CaretColor", "0x000000" );
+                    EditorTextPane.this.setCaretColor( Color.decode( s ) );
+                    s= p.getProperty( CONFIG_SELECTION,"0x99ccff");
+                    EditorTextPane.this.setSelectionColor( Color.decode( s ) );
+                    SyntaxStyle deft= SyntaxStyles.getInstance().getStyle(null);
+                    if ( EditorTextPane.this.getBackground().getRed()<128 ) {
+                        deft.setColorString("0xFFFFFF");
+                    } else {
+                        deft.setColorString("0x000000");
+                    }
+                    
+                }
 
                 String v= System.getProperty("java.version");
                 if ( v.startsWith("1.8") || v.startsWith("1.7") ) {
                     
                 } else {
                     ((SyntaxDocument)EditorTextPane.this.getDocument()).setUndoManager( new UndoManager() );
+                    //TODO: jsyntaxpane has been fixed...
                 }
                 
                 if ( JythonCompletionProvider.getInstance().settings().isTabIsCompletion()==false ) {
@@ -215,36 +273,90 @@ public class EditorTextPane extends JEditorPane {
             }
 
         };
-        
-        if ( !DasApplication.getDefaultApplication().isHeadless() ) {
-            SwingUtilities.invokeLater(run);
+    }
+    
+    /**
+     * used to show the current simplified code used for completions.
+     */
+    JEditorPane completionsEditorPane= null;
+
+    private void showInCompletionsEditorPane( String scriptPrime ) {
+                    JEditorPane a;
+        JDialog d;
+        if ( completionsEditorPane==null ) {
+            a= new JEditorPane();
+            completionsEditorPane= a;
+            DefaultSyntaxKit.initKit();
+            Properties p= new Properties();
+            String f= AutoplotSettings.settings().resolveProperty(AutoplotSettings.PROP_AUTOPLOTDATA );
+            File config= new File( new File(f), "config" );
+            if ( config.exists() ) { // Note the syntax kit has already been configured.
+                try {
+                    File syntaxPropertiesFile= new File( config, "jsyntaxpane.properties" );
+                    logger.log(Level.FINE, "Resetting editor colors using {0}", syntaxPropertiesFile );
+                    try ( FileInputStream in = new FileInputStream( syntaxPropertiesFile ) ) {
+                        p.load( in );
+                    }
+                } catch (FileNotFoundException ex) {
+                    logger.log(Level.SEVERE, null, ex);
+                } catch (IOException ex) {
+                    logger.log(Level.SEVERE, null, ex);
+                }
+                String s;
+                s= p.getProperty("Background", "0xFFFFFF");
+                a.setBackground( Color.decode( s ) );
+                s= p.getProperty("CaretColor", "0x000000" );
+                a.setCaretColor( Color.decode( s ) );
+                s= p.getProperty( CONFIG_SELECTION,"0x99ccff");
+                EditorTextPane.this.setSelectionColor( Color.decode( s ) );
+                SyntaxStyle deft= SyntaxStyles.getInstance().getStyle(null);
+                if ( a.getBackground().getRed()<128 ) {
+                    deft.setColorString("0xFFFFFF");
+                } else {
+                    deft.setColorString("0x000000");
+                }
+                completionsEditorPane.setFont( completionsEditorPane.getFont().deriveFont(10.f) );
+            }
+            a.setContentType("text/python");
+            d= new JDialog();
+            d.setTitle("Completions Peek Editor");
+            a.setMinimumSize( new Dimension(600,800) );
+            a.setPreferredSize( new Dimension(600,800) );
+            d.getContentPane().add(new JScrollPane(a));
+            d.pack();
+        } else {
+            a= completionsEditorPane;
+            d= (JDialog)SwingUtilities.getWindowAncestor( completionsEditorPane );
         }
+        a.setText(scriptPrime);
+        d.setVisible(true);
 
     }
-
-
+    
     public void showCompletionsView() {
         String doThis= this.getSelectedText();
         if ( doThis==null || doThis.length()==0 ) {
             doThis= this.getText();
+            doThis= doThis.substring( 0,this.getCaretPosition() );
         }
         try {
             String scriptPrime= SimplifyScriptSupport.simplifyScriptToCompletions(doThis);
-            JEditorPane a= new JEditorPane();
-            DefaultSyntaxKit.initKit();
-            SyntaxStyles.getInstance().getStyle(TokenType.DELIMITER).isDrawTabs();
-            a.setContentType("text/python");
-            a.setText(scriptPrime);
-            JDialog d= new JDialog();
-            a.setMinimumSize( new Dimension(400,400) );
-            a.setPreferredSize( new Dimension(400,400) );
-            d.getContentPane().add(new JScrollPane(a));
-            d.pack();
-            d.setVisible(true);
-        } catch ( Exception ex ) {
+            showInCompletionsEditorPane(scriptPrime);
+        } catch ( NumberFormatException | PySyntaxError ex ) {
+            logger.log( Level.WARNING, ex.getMessage(), ex );
             JOptionPane.showMessageDialog( this, ex.toString() );
         }
     }    
+
+    /**
+     * show the script used to create the GUI panel.
+     */
+    public void showParametersView() {
+        String script= this.getText();
+        String scriptPrime= JythonUtil.simplifyScriptToGetParams( script, true );
+        showInCompletionsEditorPane(scriptPrime);
+    }
+    
     /**
      * Ed and I verified that this is being set off of the event thread.
      * @param doc 
@@ -256,19 +368,122 @@ public class EditorTextPane extends JEditorPane {
         }
         super.setDocument(doc); //To change body of generated methods, choose Tools | Templates.
     }
-    
-    
-
-    private void showUsages() {
+        
+    /**
+     * highlite the places where a variable name is used.
+     */
+    protected void showUsages() {
         String script= getText();
         String var= getSelectedText();
         if ( var==null || var.length()==0 ) {
-            var= EditorAnnotationsSupport.getSymbolAt( this );
+            var= EditorAnnotationsSupport.getSymbolAt(this, this.getCaretPosition() );
         }
         support.clearAnnotations();
-        List<SimpleNode> usages= JythonUtil.showUsage( script,var );
-        for ( SimpleNode n: usages ) {
-            support.annotateChars( n.beginLine, n.beginColumn, n.beginColumn+var.length(), EditorAnnotationsSupport.ANNO_USAGE, var, null );
+        setSelectionEnd( getSelectionStart() ); // clear the selection.
+        List<SimpleNode> usages= StaticCodeAnalysis.showUsage( script,var );
+        for ( SimpleNode use: usages ) {
+            support.annotateChars( use.beginLine, use.beginColumn, use.beginColumn+var.length(), EditorAnnotationsSupport.ANNO_USAGE, var, null );
+        }
+        showWriteWithoutRead();
+        showReadButNotAssigned();
+    }
+    
+    /**
+     * do static analysis on code and highlite results.
+     */
+    void doStaticCodeAnalysis() {
+        support.clearAnnotations();
+        showWriteWithoutRead();
+        showReadButNotAssigned();
+    }
+    
+    protected void showWriteWithoutRead() {
+        String script= getText();
+        //support.clearAnnotations();
+        setSelectionEnd( getSelectionStart() ); // clear the selection.
+        List<SimpleNode> writeWithoutRead= StaticCodeAnalysis.showWriteWithoutRead(script);
+        for ( SimpleNode n: writeWithoutRead ) {
+            int len=1;
+            if ( n instanceof Name ) {
+                len= ((Name)n).id.length();
+                if ( len==1 && ((Name)n).id.equals("_") ) continue;
+                support.annotateChars( n.beginLine, n.beginColumn, n.beginColumn+len, EditorAnnotationsSupport.ANNO_CODE_HINT, "assigned but not read", null );
+            } else if ( n instanceof aliasType ) {
+                aliasType a= ((aliasType)n);
+                if ( a.asname!=null ) {
+                    len= a.asname.length();
+                } else {
+                    len= a.name.length();
+                }
+                support.annotateChars( n.beginLine, n.beginColumn, n.beginColumn+len, EditorAnnotationsSupport.ANNO_CODE_HINT, "import not used", null );
+            } else {
+                support.annotateChars( n.beginLine, n.beginColumn, n.beginColumn+len, EditorAnnotationsSupport.ANNO_CODE_HINT, "assigned but not read", null );
+            }
+        }
+    }
+    
+    protected void showReadButNotAssigned() {
+        String script= getText();
+        //support.clearAnnotations();
+        setSelectionEnd( getSelectionStart() ); // clear the selection.
+        List<SimpleNode> writeWithoutRead= StaticCodeAnalysis.showReadButNotAssigned(script,true,"");
+        for ( SimpleNode n: writeWithoutRead ) {
+            int len=1;
+            if ( n instanceof Name ) {
+                len= ((Name)n).id.length();
+            }
+            support.annotateChars( n.beginLine, n.beginColumn, n.beginColumn+len, EditorAnnotationsSupport.ANNO_WARNING, "name not assigned", null );
+        }
+    }
+    
+    /**
+     * offer possible imports and insert an import for the Java class
+     */
+    protected void doImports() {
+        String var= getSelectedText();
+        if ( var==null || var.length()==0 ) {
+            var= EditorAnnotationsSupport.getSymbolAt(this, this.getCaretPosition() );
+        }
+        String pkg= JythonToJavaConverter.guessPackage(var);
+        
+        if ( pkg!=null) {
+            String src= getText();
+            String src2= JythonToJavaConverter.addImport( src, pkg, var );
+            if ( src.equals(src2) ) {
+                JOptionPane.showMessageDialog( this,
+                "\""+var+"\" is already imported." );
+            }
+
+            if ( JOptionPane.OK_OPTION==
+                    JOptionPane.showConfirmDialog( this, 
+                            "Add import for "+var + " in " +pkg + "?", "Import", 
+                            JOptionPane.OK_CANCEL_OPTION ) ) {
+                src= JythonToJavaConverter.addImport( src, pkg, var );
+                setText(src);
+            }
+        } else {
+            JOptionPane.showMessageDialog( this,
+                "No suggestions found." );
+        }
+        
+    }
+    
+    
+    
+    /**
+     * plot the selected expression, assuming that it is defined where the interpreter is stopped.
+     */
+    protected void plotItem() {
+        String doThis= getSelectedText();
+        if ( doThis==null || doThis.length()==0 ) {
+           doThis= EditorAnnotationsSupport.getSymbolAt( EditorTextPane.this, EditorTextPane.this.getCaretPosition() );
+        }
+        logger.log(Level.FINE, "plotItem: {0}", doThis);
+        try {
+            plotSoon(doThis);
+        } catch ( IllegalArgumentException ex ) {
+            JOptionPane.showMessageDialog(EditorTextPane.this,
+                "<html>A debugging session must be active.  Insert stop to halt script execution.</html>");
         }
     }
     
@@ -283,6 +498,46 @@ public class EditorTextPane extends JEditorPane {
     
     public EditorAnnotationsSupport getEditorAnnotationsSupport() {
         return support;
+    }
+    
+    /**
+     * kludge in a branch for where "inspect URI" is entered for a formatDataSet
+     * command.
+     * @param lineStart
+     * @param line
+     * @param suri 
+     */
+    private void doInspectURIFormat( int lineStart, String line, String suri ) {
+                    
+        int uri0= line.indexOf(suri);
+        int uri1= uri0 + suri.length();
+            
+        JPanel parent= new JPanel();
+        parent.setLayout( new BorderLayout() );
+        URISplit split= URISplit.parse(suri);
+        suri= URISplit.format(split);
+        
+        int i= suri.indexOf('?');
+        String ss;
+        if ( i>-1 ){
+            ss= suri.substring(0,i);
+        } else {
+            ss= suri;
+        }
+        Object oeditorPanel= DataSourceRegistry.getInstance().getDataSourceFormatEditorByExt(ss);
+        if ( oeditorPanel==null ) {
+            logger.log(Level.WARNING, "unable to find editor for: {0}", ss);
+        }
+        DataSourceFormatEditorPanel editorPanel= (DataSourceFormatEditorPanel)DataSourceRegistry.getInstanceFromClassName( (String)oeditorPanel );
+        editorPanel.setURI(suri);
+        parent.add(editorPanel.getPanel());
+        Icon icon= new javax.swing.ImageIcon(getClass().getResource("/org/autoplot/datasource/fileMag.png") );
+        if ( JOptionPane.OK_OPTION==WindowManager.showConfirmDialog( this, parent, "Editing URI", JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE, icon ) ) {
+            String newUri= editorPanel.getURI();
+            this.setSelectionStart(lineStart+uri0);
+            this.setSelectionEnd(lineStart+uri1);
+            this.replaceSelection(newUri);
+        }    
     }
 
     protected void inspectURI( ) {
@@ -300,10 +555,23 @@ public class EditorTextPane extends JEditorPane {
             i2= pos;
             i1= i1- i0;
             i0= 0;
+            
+            if ( line.trim().startsWith("formatDataSet") ) {
+                if ( pos<line.length() && line.charAt(pos)=='\'' ) {
+                    pos= pos-1;
+                }
+                int i3= line.lastIndexOf("'",pos);
+                if ( i3>-1 ) i3= i3+1;
+                int i4= line.indexOf("'",i3);
+                if ( i4==-1 ) i4= line.length();
+                String s= line.substring(i3,i4);
+                doInspectURIFormat(lineStart,line,s);
+                return;
+            }
         
             CompletionContext cc= CompletionSupport.getCompletionContext( line, pos, i0, i1, i2 );
             if ( cc==null ) {
-                JOptionPane.showMessageDialog( this, "<html>String URI argument must start with vap+cdaweb:, vap+inline:,etc", "URI needed", JOptionPane.INFORMATION_MESSAGE );
+                JOptionPane.showMessageDialog( this, "<html>String URI argument must start with vap+cdaweb:, vap+inline:, etc", "URI needed", JOptionPane.INFORMATION_MESSAGE );
                 return;
             }
             String oldUri= cc.completable;
@@ -357,24 +625,22 @@ public class EditorTextPane extends JEditorPane {
                     MutablePropertyDataSet mpds= ArrayDataSet.copy(pds.getQDataSet());
                     String oldTitle= (String) mpds.property(QDataSet.TITLE);
                     mpds.putProperty(QDataSet.TITLE, oldTitle==null ? doThis : ( doThis+": "+oldTitle ) );
-                    FileOutputStream fout= new FileOutputStream(tmpfile);
-                    try {
+                    try (FileOutputStream fout = new FileOutputStream(tmpfile)) {
                         new org.das2.qstream.SimpleStreamFormatter().format(mpds, fout, true );
-                    } finally {
-                        fout.close();
                     }
                     Socket s= new Socket("localhost",12345);
-                    OutputStream out= s.getOutputStream();
-                    try {
+                    try (OutputStream out = s.getOutputStream()) {
+                        out.write( ( "plot(None)\n").getBytes() );
                         out.write( ( cmd + "\n").getBytes() );
-                    } finally {
-                        out.close();
                     }
                 } catch (StreamException ex) {
                     logger.log(Level.SEVERE, ex.getMessage(), ex);
                 } catch (IOException ex) {
                     if ( ex instanceof ConnectException ) {
-                        JOptionPane.showMessageDialog(this,"<html>Unable to connect to socket 12345.  Start a second Autoplot and enable the Server feature.</html>");
+                        JOptionPane.showMessageDialog(this,"<html>Unable to connect to socket 12345."
+                                + "<br>Start a second Autoplot and"
+                                + "<br>enable the Server feature using"
+                                + "<br>[Menubar]&rarr;Options&rarr;Enable Feature&rarr;Server</html>");
                         return;
                     }
                     logger.log(Level.SEVERE, ex.getMessage(), ex);
@@ -384,7 +650,7 @@ public class EditorTextPane extends JEditorPane {
                 JOptionPane.showMessageDialog(this,"Selected item is not a dataset");
             }
 
-        } catch ( Exception e  ) {
+        } catch ( HeadlessException e  ) {
             JOptionPane.showMessageDialog(this,"Selected item caused exception: " + e.toString() );
         }        
     }
@@ -471,10 +737,18 @@ public class EditorTextPane extends JEditorPane {
             int length= -1;
             try {
                 while ( line!=null ) {
-                    if ( line.startsWith("def ") && line.contains("(") ) {
+                    if ( line.trim().startsWith("def ") && line.contains("(") ) {
                         int i= line.indexOf("(");
                         jumpToList.add( reader.getLineNumber() + ":" + line.substring(0,i) );
+                    } else if ( line.startsWith("class ") && line.contains(":") ) {
+                        int i= line.indexOf("(");
+                        if ( i>-1 ) {
+                            jumpToList.add( reader.getLineNumber() + ":" + line.substring(0,i) );
+                        } else {
+                            jumpToList.add( reader.getLineNumber() + ":" + line );
+                        }
                     }
+                    
                     length= reader.getLineNumber()+1;
                     line= reader.readLine();
                 }

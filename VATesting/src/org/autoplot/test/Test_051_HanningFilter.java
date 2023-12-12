@@ -37,6 +37,7 @@ public class Test_051_HanningFilter implements Scenario {
 
         JemmyProperties.setCurrentOutput(TestOut.getNullOutput());
 
+        System.err.println("$Date: 2023-12-11 17:40:04 -0600 (Mon, 11 Dec 2023) $");
         try {
             ScriptContext.createGui();
 
@@ -45,18 +46,22 @@ public class Test_051_HanningFilter implements Scenario {
             JFrameOperator mainFrame = new JFrameOperator(app);
             // wait for the application to be in the "ready" state.
             new JLabelOperator(mainFrame).waitText( AutoplotUI.READY_MESSAGE );
-
-            new JMenuBarOperator( mainFrame ).pushMenu("Options|Enable Feature|Data Panel", "|");
+            
+            if ( app.getTabs().getTabByTitle("layout")==null ) {
+                new JMenuBarOperator( mainFrame ).pushMenu("Options|Enable Feature|Data Panel", "|");
+            }
             
             Thread.sleep(3000);
 
             JTabbedPaneOperator tabs = new JTabbedPaneOperator( app.getTabs() );
             
             //need to use different dataset for this test
-            new JTextFieldOperator( app.getDataSetSelector().getEditor() ).setText("http://emfisis.physics.uiowa.edu/Flight/RBSP-A/L3/2012/12/01/rbsp-a_magnetometer_1sec-gei_emfisis-L3_20121201_v1.3.3.cdf?Magnitude");
+            new JTextFieldOperator( app.getDataSetSelector().getEditor() ).setText("https://emfisis.physics.uiowa.edu/Flight/RBSP-A/L3/2012/12/01/rbsp-a_magnetometer_1sec-gei_emfisis-L3_20121201_v1.3.4.cdf?Magnitude");
             new JButtonOperator(app.getDataSetSelector().getGoButton()).clickMouse();
             
             Thread.sleep(3000);
+            
+            ScriptContext.waitUntilIdle();
             
             FiltersTreePicker.pickFilter( mainFrame, "Filters|Fourier Filtering|Hanning".split("\\|") );
         

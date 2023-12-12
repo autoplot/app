@@ -6,7 +6,9 @@
 
 package org.autoplot.aggregator;
 
+import java.io.OutputStream;
 import java.net.URI;
+import java.util.Iterator;
 import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -43,6 +45,9 @@ public class AggregatingDataSourceFormat implements DataSourceFormat {
         
         FileStorageModel fsm = AggregatingDataSourceFactory.getFileStorageModel(surl);
         QDataSet dep0= (QDataSet) data.property(QDataSet.DEPEND_0);
+        if ( dep0==null ) {
+            throw new IllegalArgumentException("data must have DEPEND_0 property to be exported to aggregation");
+        }
         DatumRange lviewRange= DataSetUtil.asDatumRange( Ops.extent(dep0) );
         DatumRange limit= str==null ? null : DatumRangeUtil.parseTimeRange(str);
         
@@ -73,6 +78,11 @@ public class AggregatingDataSourceFormat implements DataSourceFormat {
     @Override
     public String getDescription() {
         return "Aggregating Data Source Format";
+    }
+
+    //@Override
+    public boolean streamData(Map<String, String> params, Iterator<QDataSet> data, OutputStream out) throws Exception {
+        return false;
     }
     
 }

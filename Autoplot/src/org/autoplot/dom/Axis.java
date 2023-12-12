@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.logging.Level;
 import org.das2.datum.Datum;
 import org.das2.datum.DatumRange;
+import org.das2.datum.DatumRangeUtil;
 //import org.das2.datum.DatumRangeUtil;
 import org.das2.datum.Units;
 //import org.das2.datum.UnitsUtil;
@@ -42,12 +43,20 @@ public class Axis extends DomNode {
             return;
         }
 //        System.err.println("range="+range);
-//        if ( this.controller!=null 
-//            && this.controller.dasAxis.isHorizontal()
-//            && !org.das2.datum.UnitsUtil.isTimeLocation( range.getUnits() ) 
-//            && range.width().value()==1. ) {
-//            logger.log( Level.WARNING, "breakpoint here in setRange");
+//        if ( this.controller==null 
+//            && this.getId().equals("")
+//            && org.das2.datum.UnitsUtil.isTimeLocation( range.getUnits() ) 
+//            && DatumRangeUtil.parseTimeRangeValid("Dec 2005 through Jan 2006").contains(range) 
+//                ) {
+//            if ( DatumRangeUtil.parseTimeRangeValid("2005-12-31 22:00 to 2006-01-02 01:00").equals(range) ) {
+//                new Exception("where is this coming from").printStackTrace();
+//            }
+//            if ( DatumRangeUtil.parseTimeRangeValid("2005-12-31 23:00 to 2006-01-02 01:00").equals(range) ) {
+//                new Exception("this is the correct path").printStackTrace();
+//            }
+//            System.err.println("### xaxis setRange "+range);
 //        }
+        
 //        if ( this.controller!=null 
 //            && this.controller.dasAxis.isHorizontal()
 //            && org.das2.datum.UnitsUtil.isTimeLocation( range.getUnits() ) 
@@ -95,6 +104,26 @@ public class Axis extends DomNode {
         this.log = log;
         propertyChangeSupport.firePropertyChange(PROP_LOG, oldLog, log);
     }
+    
+    private String reference = "";
+
+    public static final String PROP_REFERENCE = "reference";
+
+    public String getReference() {
+        return reference;
+    }
+
+    /**
+     * draw an optional reference line at the location.  Valid entries
+     * can be parsed into a Datum, using the units of the axis.
+     * @param reference 
+     */
+    public void setReference(String reference) {
+        String oldReference = this.reference;
+        this.reference = reference.trim();
+        propertyChangeSupport.firePropertyChange(PROP_REFERENCE, oldReference, reference);
+    }
+    
     protected String label = "";
     /**
      * concise label for the axis.
@@ -199,9 +228,13 @@ public class Axis extends DomNode {
     }
 
     public void setAutoRange(boolean autorange) {
-        if ( this.controller!=null ) {
-            logger.log(Level.FINEST, "{0}.setAutoRange({1})", new Object[]{this.id, autorange});
-        }
+        //if ( this.controller!=null ) {
+        //    if ( this.id.startsWith("yaxis") ) {
+        //        logger.log(Level.FINEST, "Y {0}.setAutoRange({1})", new Object[]{this.id, autorange});
+        //    } else {
+        //        logger.log(Level.FINEST, "{0}.setAutoRange({1})", new Object[]{this.id, autorange});
+        //    }
+        //}
         boolean oldAutorange = this.autoRange;
         this.autoRange = autorange;
         propertyChangeSupport.firePropertyChange(PROP_AUTORANGE, oldAutorange, autorange);
@@ -213,7 +246,7 @@ public class Axis extends DomNode {
      * <li>includeZero
      * <li>log=T or log=F
      * <li>center=DATUM
-     * <li>width=DATUM, note percent increase can be used with log.
+     * <li>width=DATUM, for log this is the number of 10-fold cycles.
      * <li>reluctant=true
      * <li>units=UNITS, explicitly set the units.
      * These are formed by combining them with ampersands, so for example:
@@ -266,6 +299,30 @@ public class Axis extends DomNode {
         propertyChangeSupport.firePropertyChange(PROP_FLIPPED, oldFlipped, flipped);
     }
 
+    private String tickValues="";
+
+    public static final String PROP_TICKVALUES = "tickValues";
+
+    public String getTickValues() {
+        return tickValues;
+    }
+
+    /**
+     * manually set the tick positions or spacing.  The following are 
+     * examples of accepted settings:<table>
+     * <tr><td></td><td>empty string is legacy behavior</td></tr>
+     * <tr><td>0,45,90,135,180</td><td>explicit tick positions, in axis units</td></tr>
+     * <tr><td>+45</td><td>spacing between tickValues, parsed with the axis offset units.</td></tr>
+     * <tr><td>+30s</td><td>30 seconds spacing between tickValues</td></tr>
+     * </table>
+     * @param ticks 
+     */
+    public void setTickValues(String ticks) {
+        String oldTicks = this.tickValues;
+        this.tickValues = ticks;
+        propertyChangeSupport.firePropertyChange(PROP_TICKVALUES, oldTicks, ticks);
+    }
+
 
     AxisController controller;
 
@@ -278,9 +335,9 @@ public class Axis extends DomNode {
         super.syncTo(n);
         if ( !( n instanceof Axis ) ) throw new IllegalArgumentException("node should be an Axis");                        
         if ( controller!=null ) {
-            controller.syncTo(n,new ArrayList<String>());
+            controller.syncTo(n,new ArrayList<>());
         } else {
-            syncTo(n,new ArrayList<String>() );
+            syncTo(n,new ArrayList<>() );
         }
     }
 
@@ -300,9 +357,11 @@ public class Axis extends DomNode {
             if ( !exclude.contains( PROP_LABEL ) ) this.setLabel(that.getLabel());
             if ( !exclude.contains( PROP_FONTSIZE ) ) this.setFontSize(that.getFontSize());
             if ( !exclude.contains( PROP_AUTORANGE ) ) this.setAutoRange(that.isAutoRange());
-            if ( !exclude.contains( PROP_AUTORANGEHINTS ) ) this.setAutoRangeHints(that.getAutoRangeHints());
             if ( !exclude.contains( PROP_AUTOLABEL ) ) this.setAutoLabel(that.isAutoLabel());
+            if ( !exclude.contains( PROP_AUTORANGEHINTS ) ) this.setAutoRangeHints(that.getAutoRangeHints());
             if ( !exclude.contains( PROP_DRAWTICKLABELS ) ) this.setDrawTickLabels(that.isDrawTickLabels());
+            if ( !exclude.contains( PROP_TICKVALUES ) ) this.setTickValues(that.getTickValues());
+            if ( !exclude.contains( PROP_REFERENCE ) ) this.setReference(that.getReference());            
             if ( !exclude.contains( PROP_VISIBLE ) ) this.setVisible(that.isVisible());
         }
     }
@@ -345,6 +404,10 @@ public class Axis extends DomNode {
         if ( !b ) result.add(new PropertyChangeDiff( PROP_AUTOLABEL, that.autoLabel , this.autoLabel ) );
         b=  that.drawTickLabels==this.drawTickLabels;
         if ( !b ) result.add(new PropertyChangeDiff( PROP_DRAWTICKLABELS, that.drawTickLabels, this.drawTickLabels ) );
+        b=  that.tickValues.equals(this.tickValues);
+        if ( !b ) result.add(new PropertyChangeDiff( PROP_TICKVALUES, that.tickValues, this.tickValues ) );
+        b=  that.reference.equals(this.reference);
+        if ( !b ) result.add(new PropertyChangeDiff( PROP_REFERENCE, that.reference, this.reference ) );
         b=  that.visible==this.visible;
         if ( !b ) result.add(new PropertyChangeDiff( PROP_VISIBLE, that.visible, this.visible ) );
 

@@ -35,6 +35,7 @@ import java.io.BufferedWriter;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
@@ -114,14 +115,14 @@ public class ScreenshotsTool extends EventQueue {
     
     File outLocationFolder;
     BufferedWriter logFile;
-    TimeParser tp = TimeParser.create("$Y$m$d_$H$M$S_$(subsec,places=3)");
+    TimeParser tp = TimeParser.create("$Y$m$d_$H$M$S_$(milli)");
     TickleTimer tickleTimer;
     
     private static void checkFolderContents( String text, JCheckBox deleteFilesCheckBox ) {
         File f= new File( text );
         if ( f.exists() ) {
             File[] ff= f.listFiles();
-            if ( ff.length>1 ) {
+            if ( ff!=null && ff.length>1 ) {
                 deleteFilesCheckBox.setEnabled(true);
             } else {
                 deleteFilesCheckBox.setEnabled(false);
@@ -145,7 +146,7 @@ public class ScreenshotsTool extends EventQueue {
         JPanel p= new JPanel();
         p.setLayout( new BoxLayout(p,BoxLayout.PAGE_AXIS ) );
 
-        p.add( new JLabel( "<html>This will automatically take screenshots, recording them to a folder.<br><br>Hold Ctrl and press Shift twice to stop recording." ), JLabel.LEFT_ALIGNMENT );
+        p.add( new JLabel( "<html>This will automatically take screenshots, recording them to a folder.<br><br>Hold Ctrl and press Shift twice to stop recording, <br>or Hold Alt and press Shift twice." ), JLabel.LEFT_ALIGNMENT );
 
         JPanel folderPanel= new JPanel();
         folderPanel.setLayout( new FlowLayout() );
@@ -468,6 +469,50 @@ public class ScreenshotsTool extends EventQueue {
     }
 
     /**
+     * identify parts of the desktop that are Autoplot, for the user's privacy.
+     * @param g the graphics to paint on.
+     * @param b the rectangle showing the display translation.
+     * @param active the list which will be populates
+     * @return the rectangle union of all frames, in the same frame as mouse events.
+     */
+    private static Rectangle getActiveBackground( List<Rectangle> active ) {
+        
+        long t0= System.currentTimeMillis();
+        
+        Rectangle r= null;
+
+        boolean containsPointer= false;
+        
+        Frame[] frames = Frame.getFrames();
+        for (Frame frame : frames) {
+            if ( frame.isVisible() ) {
+                if( frame.getExtendedState() != Frame.ICONIFIED ) {
+                    Rectangle rect= frame.getBounds();
+                    logger.log(Level.FINER, "showing {0} {1}", new Object[]{rect, frame.getTitle()});
+                    if ( r==null ) r=rect; else r.add( rect );
+                    active.add( rect );
+                }
+            }
+        }
+
+        Window[] windows= Window.getWindows();
+        for ( Window window: windows ) {
+            if ( window.isVisible() ) {
+                if ( window.isShowing() ) {
+                    Rectangle rect= window.getBounds();
+                    logger.log(Level.FINER, "showing {0} {1}", new Object[]{rect, window.getType()});
+                    if ( r==null ) r=rect; else r.add( rect );
+                    active.add( rect );
+                }
+            }
+        }
+        
+        logger.log(Level.FINE, "getActiveBackground in {0}ms", (System.currentTimeMillis()-t0));
+        return r;
+        
+    }
+    
+    /**
      * mask out parts of the desktop that are not Autoplot, for the user's privacy.
      * It's been shown that this takes just a few milliseconds.
      * @param g the graphics to paint on.
@@ -711,14 +756,31 @@ public class ScreenshotsTool extends EventQueue {
         Point mousePointerLocation= info.getLocation();
         bounds= gs[i].getDefaultConfiguration().getBounds();
         Rectangle b= new Rectangle(bounds);
+
+        List<Rectangle> activeRects= new ArrayList<>();
+        
+        Rectangle appRect= getActiveBackground( activeRects );
+        
+        boolean screenHasPointer= info.getDevice()==gs[i];
+        boolean appContainsPointer= appRect.contains(mousePointerLocation);
+        
         try {
-            logger.log(Level.FINE, "getting screenshot from screen {0}.", i);
+            long t1= System.currentTimeMillis();
+            
+            logger.log(Level.FINER, "getting screenshot from screen {0}.", i);
             screenshot = new Robot(gs[i]).createScreenCapture(bounds);
+            logger.log(Level.FINER, "got screenshot from screen {0} in {1}ms.", new Object[]{i, System.currentTimeMillis()-t1});
+            
             boolean allBlack= true;
             if ( bounds.x>0 ) {
-                for ( int ii=0; ii<screenshot.getWidth(); ii++ ) {
-                    for ( int jj=0; jj<screenshot.getHeight(); jj++ ) {
-                        if ( screenshot.getRGB(ii,jj)>0 ) allBlack= false;
+                int lastX= bounds.width; // appRect.x+appRect.width;
+                int lastY= bounds.height; //appRect.y+appRect.height;
+                for ( int ii=0; ii<lastX && allBlack; ii++ ) {
+                    for ( int jj=0; jj<lastY; jj++ ) {
+                        if ( screenshot.getRGB(ii,jj)!=0 ) {
+                            allBlack= false;
+                            break;
+                        }
                     }
                 }
                 if ( allBlack ) {
@@ -735,14 +797,17 @@ public class ScreenshotsTool extends EventQueue {
             screenshot = new BufferedImage( gs[i].getDisplayMode().getWidth(), gs[i].getDisplayMode().getHeight(), BufferedImage.TYPE_INT_ARGB );
         }
 
-        boolean appContainsPointer= filterBackground( (Graphics2D)screenshot.getGraphics(), b, mousePointerLocation );
+        logger.log(Level.FINER, "got screenshot at {0}ms", (System.currentTimeMillis()-t0));
         
-        boolean screenHasPointer= info.getDevice()==gs[i];
-
+        filterBackground( (Graphics2D)screenshot.getGraphics(), b, mousePointerLocation );
+        //boolean appContainsPointer= true;
+        
         if ( includePointer ) {
             if ( screenHasPointer && appContainsPointer ) {
-                // get the mouse info before grabbing the screenshot, which takes several hundred millis.
+                int pntrX, pntrY; 
                 BufferedImage pointer;
+        
+                // get the mouse info before grabbing the screenshot, which takes several hundred millis.
                 if ( ( button & MouseEvent.BUTTON1_DOWN_MASK ) == MouseEvent.BUTTON1_DOWN_MASK ) {
                     pointer= pnt_b1;
                 } else if ( ( button & MouseEvent.BUTTON2_DOWN_MASK ) == MouseEvent.BUTTON2_DOWN_MASK ) {
@@ -758,8 +823,12 @@ public class ScreenshotsTool extends EventQueue {
                 } else {
                     pointer= pnt;
                 }
+                logger.log(Level.FINER, "pointer identified at {0}ms", (System.currentTimeMillis()-t0));
+                pntrX= mousePointerLocation.x - b.x - ptrXOffset;
+                pntrY= mousePointerLocation.y - b.y - ptrYOffset;
                 
-                screenshot.getGraphics().drawImage( pointer, mousePointerLocation.x - b.x - ptrXOffset, mousePointerLocation.y - b.y - ptrYOffset, null );
+                screenshot.getGraphics().drawImage( pointer, pntrX, pntrY, null );
+                logger.log(Level.FINER, "pointer drawn at {0}ms", (System.currentTimeMillis()-t0));
             }
         }
         
@@ -1072,26 +1141,28 @@ public class ScreenshotsTool extends EventQueue {
         }
 
         // 400 401 402 are Key events.
-        if ( theEvent.getID()==Event.MOUSE_MOVE || theEvent.getID()==400 
-                || theEvent.getID()==401 || theEvent.getID()==402 ) {
+        if ( theEvent.getID()==Event.MOUSE_MOVE 
+                || theEvent.getID()==Event.KEY_PRESS 
+                || theEvent.getID()==Event.KEY_RELEASE
+                || theEvent.getID()==400 ) {
             tickleTimer.tickle( String.valueOf(theEvent.getID()) );
         }
 
-        if ( theEvent.getID()==401 && theEvent instanceof KeyEvent) {
-            if ( ((KeyEvent)theEvent).getKeyCode()==KeyEvent.VK_CONTROL ) {
+        if ( theEvent.getID()==Event.KEY_PRESS && theEvent instanceof KeyEvent ) {
+            int keyCode= ((KeyEvent)theEvent).getKeyCode();
+            System.err.println( "keyEscape: "+keyEscape + " theEvent: " + theEvent  );
+            if ( keyCode ==KeyEvent.VK_CONTROL || keyCode ==KeyEvent.VK_ALT ) {
                 keyEscape=2;
             } else if ( ((KeyEvent)theEvent).getKeyCode()==KeyEvent.VK_SHIFT ) {
                 keyEscape--;
                 if ( keyEscape==0 ) {
                     pop();
-
-                    Runnable run= new Runnable() {
-                        @Override
-                        public void run() {
-                            finishUp();
-                        }
+                    Runnable run= () -> {
+                        finishUp();
                     };
                     new Thread(run).start();
+                } else if ( keyEscape<0 ) {
+                    keyEscape= 0;
                 }
             }
         } else if ( theEvent.getID()==402 && theEvent instanceof KeyEvent ) {
@@ -1142,7 +1213,7 @@ public class ScreenshotsTool extends EventQueue {
 
                 }
             }
-            PngWalkTool tool= PngWalkTool.start( "file:"+outLocationFolder+ "/*.png", null );
+            PngWalkTool tool= PngWalkTool.start( "file:"+outLocationFolder+ "/$Y$m$d_$H$M$S_$(subsec;places=3)_$x.png", null );
             if ( !PngWalkTool.isQualityControlEnabled() ) {
                 tool.startQC();
             }

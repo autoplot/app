@@ -1,16 +1,19 @@
-/*
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
- */
 
 package external;
 
 import java.awt.Color;
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.net.URISyntaxException;
+import java.net.URL;
+import java.nio.charset.StandardCharsets;
+import java.text.ParseException;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.stream.Collectors;
 import org.das2.datum.DatumRange;
-import org.das2.datum.Units;
 import org.das2.graph.DasColorBar;
 import org.das2.graph.DefaultPlotSymbol;
 import org.das2.graph.PlotSymbol;
@@ -22,6 +25,7 @@ import org.python.core.PyObject;
 import org.python.core.PyString;
 import org.autoplot.RenderType;
 import org.autoplot.ScriptContext;
+import org.autoplot.datasource.DataSourceUtil;
 import org.autoplot.dom.Application;
 import org.autoplot.dom.CanvasUtil;
 import org.autoplot.dom.Column;
@@ -33,14 +37,14 @@ import org.autoplot.dom.PlotElement;
 import org.autoplot.dom.Row;
 import org.das2.qds.QDataSet;
 import org.autoplot.jythonsupport.JythonOps;
-import org.autoplot.jythonsupport.PyQDataSet;
 import org.autoplot.jythonsupport.PyQDataSetAdapter;
+import org.das2.datum.DatumRangeUtil;
 import org.das2.graph.FillStyle;
 import org.das2.graph.Renderer;
 import org.das2.graph.SeriesRenderer;
-import org.das2.graph.TickVDescriptor;
 import org.das2.qds.DataSetUtil;
 import org.das2.qds.ops.Ops;
+import org.das2.util.monitor.NullProgressMonitor;
 import org.python.core.PyJavaInstance;
 import org.python.core.PyList;
 import org.python.core.PyMethod;
@@ -90,8 +94,19 @@ public class PlotCommand extends PyObject {
             + " <tr><td> [xyz]autoRangeHints</td><td>hints to the autorange, see http://autoplot.org/AxisAutoRangeHints\n</td>"
             + " <tr><td> renderer</td><td>add custom renderer, a class extending org.das2.graph.Renderer, see http://autoplot.org/CustomRenderers</td>"
             + " <tr><td> rightAxisOf</td><td>specify a plot where a new plot with a new yaxis.</td>"
+            + " <tr><td> topAxisOf</td><td>specify a plot where a new plot with a new xaxis above.</td>"
+            + " <tr><td> overplotOf</td><td>a plot or plot element with which this should share axes.  Note something should reset the plot!</td>"
             + "</table></html>");
 
+    public static final PyString __completions__;
+    
+    static {
+        String text = new BufferedReader(
+            new InputStreamReader( PlotCommand.class.getResourceAsStream("PlotCommand.json"), StandardCharsets.UTF_8) )
+            .lines().collect(Collectors.joining("\n"));
+        __completions__= new PyString( text );
+    }
+        
     private static QDataSet coerceIt( PyObject arg0 ) {
         Object o = arg0.__tojava__(QDataSet.class);
         if (o == null || o == Py.NoConversion) {
@@ -126,6 +141,7 @@ public class PlotCommand extends PyObject {
     public PyObject __call__(PyObject[] args, String[] keywords) {
 
         PyObject False= Py.newBoolean(false);
+        PyObject True= Py.newBoolean(true);
 
         FunctionSupport fs= new FunctionSupport( "plot", 
             new String[] { "pos", "x", "y", "z",
@@ -145,8 +161,8 @@ public class PlotCommand extends PyObject {
             "xdrawTickLabels", "ydrawTickLabels",
             "xautoRangeHints", "yautoRangeHints", "zautoRangeHints",
             "xtickValues", "ytickValues", "ztickValues",
-            "renderer", "rightAxisOf",
-            "index"
+            "renderer", "rightAxisOf", "topAxisOf", "overplotOf",
+            "index", "reset"
         },
         new PyObject[] { Py.None, Py.None, Py.None, Py.None,
             Py.None, Py.None,
@@ -165,8 +181,8 @@ public class PlotCommand extends PyObject {
             Py.None, Py.None,
             Py.None, Py.None, Py.None,
             Py.None, Py.None, Py.None,
-            Py.None, Py.None,
-            Py.None
+            Py.None, Py.None, Py.None, Py.None,
+            Py.None, True,
         } );
         
         fs.args( args, keywords );
@@ -181,6 +197,8 @@ public class PlotCommand extends PyObject {
         int iplot=0;
         int nargs= nparm;
 
+        boolean reset=true; // reset axis settings
+        
         // If the first (zeroth) argument is an int, than this is the data source where the value should be inserted.  Additional
         // data sources and plots will be added until there are enough.
         // this is an alias for the index argument.
@@ -248,36 +266,64 @@ public class PlotCommand extends PyObject {
                     }
                 }
                 if ( column==null ) column=dom.getCanvases(0).getMarginColumn();
-            } else if ( keywords[i].equals("rightAxisOf") ) {
+            } else if ( keywords[i].equals("rightAxisOf") || keywords[i].equals("topAxisOf") || keywords[i].equals("overplotOf") ) {
                 String spec= args[i+nparm].toString();
-                Plot p;
+                Plot p=null;
                 if ( Ops.isSafeName(spec) ) {
                     DomNode n= DomUtil.getElementById( dom, spec );
+                    if ( n instanceof PlotElement ) {
+                        n= DomUtil.getElementById( dom, ((PlotElement)n).getPlotId() );
+                    }
                     p= (Plot)n;
                 } else {
-                    p= ((Plot)args[i+nparm].__tojava__(Plot.class));
+                    try {
+                        p = (Plot)args[i+nparm].__tojava__(Plot.class);
+                    } catch ( Exception e ) {
+                        PlotElement pe= ((PlotElement)args[i+nparm].__tojava__(PlotElement.class));
+                        if ( pe!=null ) {
+                            p= (Plot) DomUtil.getElementById( dom, ((PlotElement)pe).getPlotId() );
+                        }                        
+                    }
+                }
+                if ( p==null ) {
+                    throw new IllegalArgumentException("unable to identify plot");
                 }
                 Plot underPlot=null;
                 row= (Row)DomUtil.getElementById(dom,p.getRowId());
                 column= (Column)DomUtil.getElementById(dom,p.getColumnId());
-                for ( Plot p1: dom.getPlots() ) {
-                    if ( p1.getRowId().equals(row.getId()) && p1.getColumnId().equals(column.getId()) ) {
-                        if ( p1.getYaxis().isOpposite() ) {
-                            plot= p1;
-                        } else {
-                            underPlot= p1;
+                if ( keywords[i].equals("overplotOf") ) {
+                    plot= p;
+                    iplot= dom.getDataSourceFilters().length;
+                } else {
+                    for ( Plot p1: dom.getPlots() ) {
+                        if ( p1.getRowId().equals(row.getId()) && p1.getColumnId().equals(column.getId()) ) {
+                            if ( p1.getYaxis().isOpposite() ) {
+                                plot= p1;
+                            } else {
+                                underPlot= p1;
+                            }
                         }
                     }
                 }
+                
                 if ( plot==null ) {
                     plot= dom.getController().addPlot( row, column );
-                    plot.getYaxis().setOpposite(true);
-                    dom.getController().bind( underPlot.getXaxis(), "range", plot.getXaxis(), "range"  );
-                    plot.getXaxis().setVisible(false);
+                    if ( keywords[i].equals("rightAxisOf") ) {
+                        plot.getYaxis().setOpposite(true);
+                        dom.getController().bind( underPlot.getXaxis(), "range", plot.getXaxis(), "range"  );
+                        plot.getXaxis().setVisible(false);
+                    } else if ( keywords[i].equals("topAxisOf") ) {
+                        plot.getXaxis().setOpposite(true);
+                        dom.getController().bind( underPlot.getYaxis(), "range", plot.getYaxis(), "range"  );
+                        plot.getYaxis().setVisible(false);
+                    }
                 }
+                
             } else if ( keywords[i].equals("index") ) {
                 int sindex= Integer.parseInt( args[i+nparm].toString() );
                 iplot= sindex;
+            } else if ( keywords[i].equals("reset") ) {
+                reset= args[i+nparm].equals(True);
             } else if ( keywords[i].equals("renderer") ) {
                 renderType="internal";
             }
@@ -313,6 +359,15 @@ public class PlotCommand extends PyObject {
 
         if ( nargs==1 && po0 instanceof PyString ) {
             ScriptContext.plot( iplot, ((PyString) po0).toString());
+        } else if ( nargs==2 && po0 instanceof PyString && args[1] instanceof PyString ) {
+            DatumRange drtr= DatumRangeUtil.parseTimeRangeValid(((PyString)args[1]).toString() );
+            try{
+                String uri= DataSourceUtil.setTimeRange( ((PyString) po0).toString(), drtr, new NullProgressMonitor() );
+                ScriptContext.plot( iplot, uri );          
+            } catch ( IOException | URISyntaxException | ParseException ex ) {
+                throw new RuntimeException(ex);
+            }
+            
         } else {
             for ( int i=0; i<nargs; i++ ) {
                 QDataSet ds= coerceIt(args[i]);
@@ -320,11 +375,11 @@ public class PlotCommand extends PyObject {
             }
 
             if ( nargs==1 ) {  // x
-                ScriptContext.plot( iplot, null, null, qargs[0], renderType );
+                ScriptContext.plot( iplot, null, null, qargs[0], renderType, reset );
             } else if ( nargs==2 ) {  // x, y
-                ScriptContext.plot( iplot, null, qargs[0], qargs[1], renderType );
+                ScriptContext.plot( iplot, null, qargs[0], qargs[1], renderType, reset );
             } else if ( nargs==3 ) {  // x, y, z
-                ScriptContext.plot( iplot, null, qargs[0], qargs[1], qargs[2], renderType );
+                ScriptContext.plot( iplot, null, qargs[0], qargs[1], qargs[2], renderType, reset );
             }
 
         }
@@ -403,8 +458,13 @@ public class PlotCommand extends PyObject {
                     c= JythonOps.color(val);
                     element.getStyle().setFillColor( c );
                 } else if ( kw.equals("colorTable" ) ) { 
-                    DasColorBar.Type t= org.das2.graph.DasColorBar.Type.parse(sval);
-                    element.getStyle().setColortable(t);
+                    if ( val.__tojava__(DasColorBar.Type.class) == Py.NoConversion) {
+                        DasColorBar.Type t= org.das2.graph.DasColorBar.Type.parse(sval);
+                        element.getStyle().setColortable(t);
+                    } else {
+                        DasColorBar.Type t = (DasColorBar.Type) val.__tojava__(DasColorBar.Type.class);
+                        element.getStyle().setColortable( t );
+                    }
                 } else if ( kw.equals("title") ) {
                     plot.setTitle(sval);
                 } else if ( kw.equals("symsize") || kw.equals("symbolSize") ) {
@@ -449,13 +509,26 @@ public class PlotCommand extends PyObject {
                         Renderer oldRenderer= element.getController().getRenderer();
                         String control= oldRenderer.getControl();
                         r = (Renderer) val.__tojava__(Renderer.class);
-                        QDataSet ds= oldRenderer.getDataSet();
+                        QDataSet ds1=null;
+                        switch (nargs) {
+                            case 1:
+                                ds1= qargs[0];
+                                break;
+                            case 2:
+                                ds1= Ops.link( qargs[0], qargs[1] );
+                                break;
+                            case 3:
+                                ds1= Ops.link( qargs[0], qargs[1], qargs[2] );
+                                break;
+                            default:
+                                break;
+                        }
                         PyObject doAuto= val.__findattr__( "doAutorange" );
                         if ( doAuto==null ) {
                             doAuto= val.__findattr__( "autorange" );
                         }
-                        if ( doAuto!=null && doAuto!=Py.None ) {
-                            PyObject range= ((PyMethod)doAuto).__call__(new PyQDataSetAdapter().adapt(ds));
+                        if ( doAuto!=null && doAuto!=Py.None && ds1!=null ) {
+                            PyObject range= ((PyMethod)doAuto).__call__(new PyQDataSetAdapter().adapt(ds1));
                             QDataSet rangeds= (QDataSet) range.__tojava__(QDataSet.class);
                             plot.getXaxis().setRange( DataSetUtil.asDatumRange(rangeds.slice(0) ) );
                             if ( rangeds.length()>1 ) plot.getYaxis().setRange( DataSetUtil.asDatumRange(rangeds.slice(1) ) );
@@ -463,7 +536,8 @@ public class PlotCommand extends PyObject {
                         }
                         plot.getController().getDasPlot().removeRenderer(oldRenderer);
                         plot.getController().getDasPlot().addRenderer(r);
-                        r.setDataSet(ds);
+                        r.setDataSet(ds1);
+                        r.setColorBar((DasColorBar) plot.getZaxis().getController().getDasAxis());
                         element.getController().setRenderer(r);
                         element.setRenderType(RenderType.internal);
                         r.setControl(control);
@@ -482,14 +556,11 @@ public class PlotCommand extends PyObject {
                 } else if ( kw.equals("ydrawTickLabels") ) {
                     plot.getYaxis().setDrawTickLabels( booleanValue(val) );
                 } else if ( kw.equals("xtickValues") ) {
-                    QDataSet vv= JythonOps.dataset(val,plot.getXaxis().getRange().getUnits());
-                    plot.getXaxis().getController().getDasAxis().setTickV( new TickVDescriptor(vv) );
+                    plot.getXaxis().setTickValues(sval);
                 } else if ( kw.equals("ytickValues") ) {
-                    QDataSet vv= JythonOps.dataset(val,plot.getYaxis().getRange().getUnits());
-                    plot.getYaxis().getController().getDasAxis().setTickV( new TickVDescriptor(vv) );
+                    plot.getYaxis().setTickValues(sval);
                 } else if ( kw.equals("ztickValues") ) {
-                    QDataSet vv= JythonOps.dataset(val,plot.getZaxis().getRange().getUnits());
-                    plot.getZaxis().getController().getDasAxis().setTickV( new TickVDescriptor(vv) );
+                    plot.getZaxis().setTickValues(sval);
                 } else if ( kw.equals("xautoRangeHints") ) {
                     plot.getXaxis().setAutoRangeHints( sval );
                 } else if ( kw.equals("yautoRangeHints") ) {

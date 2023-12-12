@@ -1,6 +1,7 @@
 
 package org.autoplot.datasource;
 
+import java.awt.Color;
 import java.awt.event.ActionEvent;
 import java.awt.event.ItemEvent;
 import java.awt.event.ItemListener;
@@ -26,7 +27,7 @@ import org.das2.datum.LoggerManager;
  * decorate a comboBox so that it remembers recent entries.  This listens for ActionEvents from a JComboBox
  * and adds valid items to its droplist.  The recent entries are stored in the bookmarks folder in the file
  * "recent.PREF.txt" where PREF is a string assigned to this object identifying the theme, such as "timerange".
- * Specifically, the event is validated and recorded into the file, then the file is loaded, sorted and saved
+ * Specifically, the event is validated and recorded into the file, then the file is loaded, sorted, and saved
  * again.
  * 
  * @author jbf
@@ -38,10 +39,11 @@ public class RecentComboBox extends JComboBox {
     File bookmarksFolder= new File( AutoplotSettings.settings().resolveProperty( AutoplotSettings.PROP_AUTOPLOTDATA ), "bookmarks" );
     File recentFile;
     String preferenceNode= "";
+    boolean dirty= false;
 
     public static final String PREF_NODE_TIMERANGE="timerange";
     
-    private final static Logger logger= LoggerManager.getLogger("apdss.uri");
+    private final static Logger logger= LoggerManager.getLogger("apdss.uri.recent");
     
     public RecentComboBox() {
         setEditable(true);
@@ -49,7 +51,11 @@ public class RecentComboBox extends JComboBox {
             @Override
             public void itemStateChanged(ItemEvent e) {
                 if ( e.getStateChange()==ItemEvent.SELECTED ) {
-
+                    if ( RecentComboBox.this.preferenceNode.length()>0 ) {
+                        logger.finer("set dirty=true");
+                        dirty= true;
+                        //setBackground( Color.blue );
+                    }
                     //TODO: too bad this doesn't work properly!
 //                    String item= (String) e.getItem();
 //                    List<String> items= new ArrayList( RECENT_SIZE+2 );
@@ -73,6 +79,8 @@ public class RecentComboBox extends JComboBox {
     public void setPreferenceNode( String pref ) {
         this.preferenceNode= pref;
         recentFile= new File( bookmarksFolder, "recent."+pref+".txt" );
+        dirty= false;
+        //setBackground( Color.WHITE );
         Runnable run= new Runnable() {
             @Override
             public void run() {
@@ -97,22 +105,40 @@ public class RecentComboBox extends JComboBox {
     }
 
     /**
+     * check if the human has made modifications to this value.
+     * @return true if modifications have been made.
+     */
+    public boolean isDirty() {
+        return this.dirty;
+    }
+    
+    /**
      * to make it easier to convert GUIs with JTextFields to RecentComboBoxes, setText is available.
      * @param text 
      */
     public void setText( String text ) {
+        logger.log(Level.FINER, "setText({0})", text);
         setSelectedItem(text);
+        this.dirty= false;
+        //setBackground( Color.WHITE );
     }
     
     /**
      * get the string value, which is also the getSelectedItem.
+     * This will also push a changed value to the recent entries.
      * @return 
      */
     public String getText() {
-        if ( getSelectedItem()==null ) {
+        Object o= getSelectedItem();
+        String s= o==null ? "" : o.toString();
+        if ( s==null ) {
             return "";
         } else {
-            return getSelectedItem().toString();
+            if ( dirty ) {
+                addToRecent(s);
+            }
+            logger.log(Level.FINER, "getText()->{0}", s);
+            return s;
         }
     }
     
@@ -121,6 +147,7 @@ public class RecentComboBox extends JComboBox {
      * and should not be called on the event thread.
      */
     private void loadRecent() {
+        logger.log(Level.FINER, "loadRecent()");
         List<String> items= new ArrayList( RECENT_SIZE+2 );
         try {
             if ( recentFile!=null && recentFile.exists() ) {
@@ -171,10 +198,12 @@ public class RecentComboBox extends JComboBox {
     }
 
     /**
-     * save the recent items to the disk.  items.get(0) is the most recent item, and will be saved last on the disk.
+     * save the recent items to the disk.  items.get(0) is the most recent item, 
+     * and will be the last line of the recent file on the disk.
      * @param items
      */
     private void saveRecent( List<String> items ) {
+        logger.log(Level.FINER, "saveRecent({0} items)", items.size());
         if ( recentFile==null || !bookmarksFolder.exists() ) {
             return; //not yet, we're initializing for the first time.
         }
@@ -206,16 +235,32 @@ public class RecentComboBox extends JComboBox {
             }
         }
         
-        if ( !recentFileTemp.renameTo(recentFile) ) {
-            logger.log(Level.WARNING, "unable to overwrite file {0}", recentFile);
+        if ( recentFile.exists() && !recentFile.delete() ) {
+            logger.log(Level.WARNING, "unable to delete recent file {0}", recentFile);
+        } else {
+            if ( !recentFileTemp.renameTo(recentFile) ) {
+                logger.log(Level.WARNING, "unable to overwrite file {0}", recentFile);
+            }
         }
     }
-
+    
     /**
-     * add the item to the list of recent entries.  
+     * add the item to the list of recent entries.  This will reload the
+     * recent file, probably firing events.
      * @param s the item
      */
     public void addToRecent( final String s ) {
+        addToRecent(s,true);
+    }
+    
+    /**
+     * add the item to the list of recent entries. 
+     * The recent file will have the most recent item at the end of the file.
+     * @param s the item
+     * @param reload if true then reload the file.
+     */
+    public void addToRecent( final String s, final boolean reload ) {
+        logger.log(Level.FINE, "addToRecent({0})", s);
         if ( verifier!=null ) {
             if ( !verifier.verify(s) ) {
                 return;
@@ -225,34 +270,21 @@ public class RecentComboBox extends JComboBox {
         Runnable run= new Runnable() {
             @Override
             public void run() {
-                File recentFileTemp;
-                try {
-                    recentFileTemp= File.createTempFile( "recent."+ preferenceNode, ".txt", bookmarksFolder );
-                } catch (IOException ex) {
-                    logger.warning(ex.getMessage());
-                    return;
-                }
-                BufferedWriter w = null;
-                try {
-                    if ( recentFile!=null ) {
-                        w = new BufferedWriter(new FileWriter(recentFileTemp));
-                        w.append(s, 0, s.length());
-                        w.append("\n");
-                        w.close();
-                    }
-                } catch (IOException ex) {
-                    throw new RuntimeException(ex);
-                } finally {
-                    try {
-                        if ( w!=null ) w.close();
-                    } catch (IOException ex) {
-                        logger.log(Level.SEVERE, ex.getMessage(), ex);
+                List<String> items= new ArrayList<>();
+                if ( recentFile!=null ) {
+                    try ( BufferedReader r= new BufferedReader(new FileReader(recentFile)) ) {
+                        String l;
+                        while ( (l=r.readLine())!=null ) {
+                            items.add(items.size(),l);
+                        }
+                    } catch ( IOException ex ) {
+                        logger.log( Level.WARNING, null, ex );
                     }
                 }
-                if ( !recentFileTemp.renameTo(recentFile) ) {
-                   logger.log(Level.WARNING, "unable to overwrite file {0}", recentFile);
-                }
-                loadRecent();        
+                items.add(s); 
+                Collections.reverse(items);
+                saveRecent(items);
+                if ( reload ) loadRecent();        
             }
         };
         if ( SwingUtilities.isEventDispatchThread() ) {

@@ -1,8 +1,3 @@
-/*
- * To change this license header, choose License Headers in Project Properties.
- * To change this template file, choose Tools | Templates
- * and open the template in the editor.
- */
 
 package org.autoplot.pdsppi;
 
@@ -37,6 +32,7 @@ import org.das2.qds.QDataSet;
 import org.autoplot.datasource.DataSetURI;
 import org.autoplot.datasource.DataSourceUtil;
 import org.autoplot.spase.VOTableReader;
+import org.das2.datum.HttpUtil;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
@@ -44,19 +40,20 @@ import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 
 /**
- *
+ * Class containing the logic for communicating with the PDS-PPI database.
  * @author jbf
  */
 public class PDSPPIDB {
     
     private static final Logger logger= LoggerManager.getLogger("apdss.pdsppi");
+    Logger loggerUrl= org.das2.util.LoggerManager.getLogger( "das2.url" );
     
     private static final PDSPPIDB instance= new PDSPPIDB();
     
-    public static final String PDSPPI="http://pds-ppi.igpp.ucla.edu/";
+    public static final String PDSPPI="https://pds-ppi.igpp.ucla.edu/";
     //public static final String PDSPPI="https://ppi.pds.nasa.gov";
     
-    List<String> ids= new ArrayList<String>(1100);
+    List<String> ids= new ArrayList<>(1100);
     
     public static PDSPPIDB getInstance() {
         return instance;
@@ -109,8 +106,10 @@ public class PDSPPIDB {
         List<String> result= new ArrayList();
         BufferedReader reader= null;
         try {
+            loggerUrl.log(Level.FINE, "openConnection {0}", src);
             URLConnection connect= src.openConnection();
             connect.setReadTimeout( FileSystem.settings().getConnectTimeoutMs() );
+            connect= HttpUtil.checkRedirect(connect);
             reader= new BufferedReader( new InputStreamReader( connect.getInputStream() ) );
             String line= reader.readLine();
             while ( line!=null ) {
@@ -142,7 +141,10 @@ public class PDSPPIDB {
         
         try {
             logger.log(Level.FINE, "opening {0}", url);
-            fin= url.openStream();
+            loggerUrl.log(Level.FINE,"GET to get data {0}", url);
+            URLConnection connect= url.openConnection();
+            connect= HttpUtil.checkRedirect(connect);
+            fin= connect.getInputStream();
 
             InputSource source = new InputSource( fin );
             
@@ -162,14 +164,8 @@ public class PDSPPIDB {
                 }
             }
             
-        } catch ( XPathExpressionException ex ) {
+        } catch ( XPathExpressionException | SAXException | ParserConfigurationException ex ) {
             throw new RuntimeException(ex);   
-            
-        } catch ( SAXException ex ) {
-            throw new RuntimeException(ex);   
-            
-        } catch ( ParserConfigurationException ex ) {
-            throw new RuntimeException(ex);
             
         } finally {
             if ( fin!=null ) fin.close();
@@ -195,15 +191,18 @@ public class PDSPPIDB {
     
     /**
      * return true if the name appears to be a plottable id.
-     * @param id name from their filesystem that ends with .lbl, .tab, etc.
+     * @param ds name from their filesystem that ends with .lbl, .tab, etc.
      * @return true if the id appears to be plottable.
      */
     public static boolean isPlottable( String ds ) {
-        if ( ds.endsWith(".lbl") || ds.endsWith(".LBL") || ds.endsWith(".tab" ) || ds.endsWith(".DAT") || ds.endsWith(".dat" ) || ds.endsWith(".TAB") || ds.endsWith(".csv" ) || ds.endsWith(".CSV") ) {
-            return true;
-        } else {
-            return false;
-        }
+        return ds.endsWith(".lbl") 
+            || ds.endsWith(".LBL") 
+            || ds.endsWith(".tab" ) 
+            || ds.endsWith(".DAT") 
+            || ds.endsWith(".dat" ) 
+            || ds.endsWith(".TAB") 
+            || ds.endsWith(".csv" ) 
+            || ds.endsWith(".CSV");
     }
     
     /**
@@ -231,18 +230,14 @@ public class PDSPPIDB {
      * @return null if the file appears to be XML, the first line otherwise.
      * @throws IOException 
      */
-    String checkXML( File f ) throws IOException {
-        BufferedReader read=null;
-        try {
-            read= new BufferedReader( new InputStreamReader( new FileInputStream(f) ) );
+    protected String checkXML( File f ) throws IOException {
+        try (BufferedReader read = new BufferedReader( new InputStreamReader( new FileInputStream(f) ) )) {
             String s= read.readLine();
             if ( s!=null && s.length() >= 6 && s.substring(0,6).equals("<?xml ") ) {
                 return null;
             } else {
                 return s;
             }
-        } finally {
-            if ( read!=null ) read.close();
         }
     }
     

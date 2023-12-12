@@ -4,7 +4,8 @@ package org.autoplot.hapi;
 import java.awt.Component;
 import java.awt.Desktop;
 import java.awt.Dimension;
-import java.awt.Frame;
+import java.awt.Point;
+import java.awt.Rectangle;
 import java.awt.Window;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
@@ -33,13 +34,12 @@ import javax.swing.BoxLayout;
 import javax.swing.DefaultComboBoxModel;
 import javax.swing.DefaultListModel;
 import javax.swing.JCheckBox;
-import javax.swing.JDialog;
 import javax.swing.JEditorPane;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
-import javax.swing.JTextPane;
+import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
 import javax.swing.event.HyperlinkEvent;
 import javax.swing.event.HyperlinkListener;
@@ -56,13 +56,11 @@ import org.das2.util.monitor.ProgressMonitor;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
-import org.autoplot.datasource.DataSetSelector;
 import org.autoplot.datasource.DataSourceEditorPanel;
-import org.autoplot.datasource.DataSourceUtil;
 import org.autoplot.datasource.RecentComboBox;
 import org.autoplot.datasource.TimeRangeTool;
 import org.autoplot.datasource.URISplit;
-import org.das2.util.FileUtil;
+import org.autoplot.datasource.ui.PromptComboBoxEditor;
 
 /**
  * Swing editor for HAPI URIs
@@ -73,10 +71,13 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
     private static final Logger logger= LoggerManager.getLogger("apdss.hapi");
     
     private JSONArray idsJSON;
+    private boolean supportsBinary;
     
     private URL defaultServer;
 	
     private Datum myValidTime;
+    
+    private Component firstParameter=null;
 	
     /**
      * return the range of available data. For example, Polar/Hydra data is available
@@ -106,6 +107,9 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
 				} else {
 					stopDate= null;
 				}
+                if ( stopDate!=null ) {
+                    stopDate= HapiDataSource.parseTime(stopDate).toString();
+                }
                 if ( startDate!=null ) {
                     Datum t1= Units.us2000.parse(startDate);
                     Datum t2= stopDate==null ? myValidTime : Units.us2000.parse(stopDate);
@@ -151,8 +155,13 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         }
         initComponents();
         filtersComboBox.setPreferenceNode("hapi.filters");
+        PromptComboBoxEditor editor= new PromptComboBoxEditor("search regex");
+        filtersComboBox.setEditor( editor );
+        ((JTextField)editor.getEditorComponent()).setColumns(10);
+        filtersComboBox.invalidate();
+        filtersComboBox.revalidate();
         timeRangeComboBox.setPreferenceNode(RecentComboBox.PREF_NODE_TIMERANGE);
-        jScrollPane4.getVerticalScrollBar().setUnitIncrement( parametersPanel.getFont().getSize() );
+        parametersScrollPane.getVerticalScrollBar().setUnitIncrement( parametersPanel.getFont().getSize() );
 
         parametersPanel.setLayout( new BoxLayout( parametersPanel, BoxLayout.Y_AXIS ) );
 
@@ -164,20 +173,31 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
             @Override
             public void valueChanged(ListSelectionEvent e) {
                 if ( !e.getValueIsAdjusting() ) {
-                    if ( idsList2.getSelectedValue()!=null && !idsList2.getSelectedValue().equals(currentId) ) {
+                    String selectedValue= idsList2.getSelectedValue();
+                    if ( selectedValue==null ) {
+                        return;
+                    }
+                    if ( !selectedValue.equals(currentId) ) {
                         currentParameters= null;
                     }
-                    if ( idsList2.getSelectedValue()!=null ) {
-                        currentId= idsList2.getSelectedValue();
-                        if ( currentId.startsWith("Error:" ) ) {
-                            return;
-                        }
+                    if ( currentId!=null && currentId.equals(selectedValue) ) {
+                        return;
                     }
-                    if ( currentId!=null ) {
-                        titleLabel.setText("Retrieving info for "+currentId+"...");
+                    if ( currentServer!=null ) {
+                        currentId= selectedValue;
                     } else {
-                        titleLabel.setText(" ");
+                        currentId= null;
                     }
+                    
+                    if ( currentId==null ) {
+                        titleLabel.setText(" ");
+                        return;
+                    }
+                    if ( currentId.startsWith("Error:" ) ) {
+                        return;
+                    }
+                    titleLabel.setText("Retrieving info for "+currentId+"...");
+
                     parametersPanel.removeAll();
                     parametersPanel.revalidate();
                     parametersPanel.repaint();
@@ -188,14 +208,13 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         filtersComboBox.getEditor().getEditorComponent().addKeyListener( new KeyAdapter() {
             @Override
             public void keyTyped(KeyEvent e) {
-                final String search= (String)filtersComboBox.getEditor().getItem();
                 Runnable run= new Runnable() {
-                    @Override
                     public void run() {
-                        resetServerCatalog( currentServer, search );
+                        final String search= (String)filtersComboBox.getEditor().getItem();
+                        resetServerCatalog( currentServer, search );                        
                     }
                 };
-                new Thread( run,"resetServerCatalog" ).start();
+                SwingUtilities.invokeLater(run);
             }
         } );
     }
@@ -204,9 +223,9 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         @Override
         public void propertyChange(PropertyChangeEvent evt) {
             try {
-                String s= idsList2.getSelectedValue();
-                if ( s!=null ) {
-                    resetVariable( new URL( (String)serversComboBox.getSelectedItem() ), idsList2.getSelectedValue() );  
+                String s= currentId;
+                if ( s!=null && s.trim().length()>0 ) {
+                    resetId(HapiServer.encodeURL( (String)serversComboBox.getSelectedItem() ), s );  
                 } else {
                     parametersPanel.removeAll();
                     parametersPanel.add(new JLabel(" "));
@@ -217,9 +236,9 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
 //                    } catch (IOException ex) {
 //                        Logger.getLogger(HapiDataSourceEditorPanel.class.getName()).log(Level.SEVERE, null, ex);
 //                    }
-                    
+
                     titleLabel.setText(" ");
-                    
+
                 }
             } catch (MalformedURLException ex) {
                 JOptionPane.showMessageDialog( parametersPanel, ex.toString() );
@@ -227,6 +246,10 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         }
     });
             
+    /**
+     * load the known servers and set the GUI.  This should not be called from
+     * the event thread, and a runnable for the event thread will be submitted.
+     */
     public void loadKnownServersImmediately() {
         final String[] servers= HapiServer.listHapiServersArray();
         Runnable run= new Runnable() {
@@ -249,6 +272,11 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         SwingUtilities.invokeLater(run);
     }
     
+    /**
+     * request that the known servers be displayed.  This will spawn an 
+     * asynchronous thread to get the server names, and then will load the GUI 
+     * on the event thread.  This can be called from the event thread.
+     */
     public void loadKnownServersSoon() {
         Runnable run= new Runnable() {
             @Override
@@ -273,7 +301,7 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         jButton1 = new javax.swing.JButton();
         jSplitPane1 = new javax.swing.JSplitPane();
         jPanel3 = new javax.swing.JPanel();
-        jScrollPane4 = new javax.swing.JScrollPane();
+        parametersScrollPane = new javax.swing.JScrollPane();
         parametersPanel = new javax.swing.JPanel();
         clearAllB = new javax.swing.JButton();
         setAllB = new javax.swing.JButton();
@@ -326,7 +354,7 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
             .addGap(0, 195, Short.MAX_VALUE)
         );
 
-        jScrollPane4.setViewportView(parametersPanel);
+        parametersScrollPane.setViewportView(parametersPanel);
 
         clearAllB.setText("Clear All");
         clearAllB.addActionListener(new java.awt.event.ActionListener() {
@@ -362,7 +390,7 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         jPanel3.setLayout(jPanel3Layout);
         jPanel3Layout.setHorizontalGroup(
             jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
-            .addComponent(jScrollPane4, javax.swing.GroupLayout.DEFAULT_SIZE, 486, Short.MAX_VALUE)
+            .addComponent(parametersScrollPane, javax.swing.GroupLayout.DEFAULT_SIZE, 486, Short.MAX_VALUE)
             .addGroup(jPanel3Layout.createSequentialGroup()
                 .addComponent(clearAllB)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
@@ -378,7 +406,7 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
             .addGroup(jPanel3Layout.createSequentialGroup()
                 .addComponent(titleLabel, javax.swing.GroupLayout.PREFERRED_SIZE, 17, javax.swing.GroupLayout.PREFERRED_SIZE)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
-                .addComponent(jScrollPane4, javax.swing.GroupLayout.DEFAULT_SIZE, 188, Short.MAX_VALUE)
+                .addComponent(parametersScrollPane, javax.swing.GroupLayout.DEFAULT_SIZE, 188, Short.MAX_VALUE)
                 .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
                 .addGroup(jPanel3Layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
                     .addComponent(clearAllB)
@@ -403,7 +431,8 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
             }
         });
 
-        filtersComboBox.setToolTipText("search bar");
+        filtersComboBox.setToolTipText("search bar, any id or title containing regular expression (.* matches anything) is shown");
+        filtersComboBox.setMaximumSize(new java.awt.Dimension(1028, 32767));
         filtersComboBox.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
                 filtersComboBoxActionPerformed(evt);
@@ -516,7 +545,12 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
 
     private void serversComboBoxActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_serversComboBoxActionPerformed
         try {
-            final URL url= new URL( (String)serversComboBox.getSelectedItem() );
+            final URL url= HapiServer.encodeURL( (String)serversComboBox.getSelectedItem() );
+            if ( currentServer==null || !url.toExternalForm().equals(currentServer.toExternalForm()) ) {
+                DefaultListModel m= new DefaultListModel() ;
+                m.add(0,"Reading list of available datasets...");
+                idsList2.setModel( m );
+            }
             Runnable run= new Runnable() {
                 @Override
                 public void run() {
@@ -527,12 +561,6 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
                         DefaultListModel m= new DefaultListModel() ;
                         m.add(0,"Error: unable to connect");
                         idsList2.setModel( m );
-                        Runnable run= new Runnable() {
-                            public void run() {
-                                serversComboBox.setSelectedItem("http://datashop.elasticbeanstalk.com/hapi");
-                            }
-                        };
-                        //SwingUtilities.invokeLater(run);
                     }
                 }
             };
@@ -625,6 +653,8 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         String[] params= getParameters(true).split(",");
         Map<String,DatumRange> ff;
         String str= (String)timeRangeComboBox.getSelectedItem();
+        String format= binaryCB.isSelected() ? "binary" : "csv";
+        
         try {
             DatumRange tr;
             if ( str==null ) {
@@ -636,7 +666,8 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
                 JOptionPane.showMessageDialog(this,"id doesn't provide range");
                 return;
             }
-            ff = HapiDataSource.getCacheFiles( this.currentServer, this.currentId, params, tr );
+            ff = HapiDataSource.getCacheFiles( this.currentServer, this.currentId, params, tr, format );
+            
         } catch ( ParseException ex ) {
             JOptionPane.showMessageDialog( this, "Unable to parse timerange: "+str);
             return;
@@ -680,10 +711,10 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
     private javax.swing.JPanel jPanel1;
     private javax.swing.JPanel jPanel3;
     private javax.swing.JScrollPane jScrollPane2;
-    private javax.swing.JScrollPane jScrollPane4;
     private javax.swing.JSplitPane jSplitPane1;
     private javax.swing.JLabel messagesLabel;
     private javax.swing.JPanel parametersPanel;
+    private javax.swing.JScrollPane parametersScrollPane;
     private javax.swing.JComboBox<String> serversComboBox;
     private javax.swing.JButton setAllB;
     private org.autoplot.datasource.RecentComboBox timeRangeComboBox;
@@ -701,7 +732,14 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         if ( split.file==null || split.file.equals("file:///") ) { // use TSDS's one by default.
             split.file= defaultServer.toString();
         }  
+        if ( !split.file.endsWith("/hapi") ) {
+            int i= split.file.lastIndexOf("/hapi");
+            if ( i>-1 ) {
+                split.file= split.file.substring(0,i+5);
+            }
+        }
         try {
+            serversComboBox.setSelectedItem(split.file);
             idsJSON= HapiServer.getCatalog(new URL(split.file));
         } catch ( IOException ex ) {
             messagesLabel.setText("Unable to connect to server");
@@ -721,6 +759,7 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         }
         if ( parameters.length()>0 ) {
             String[] ss= parameters.split(",");
+            int iparam=0;
             for ( Component c: parametersPanel.getComponents() ) {
                 if ( c instanceof JCheckBox ) {
                     String name= ((JCheckBox)c).getName();
@@ -728,8 +767,12 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
                     for (String s : ss) {
                         if (s.equals(name)) {
                             ((JCheckBox)c).setSelected(true);
+                            if ( iparam>0 && firstParameter==null ) {
+                                firstParameter= c;
+                            }
                         }
                     }
+                    iparam++;
                 }
             }
         } else {
@@ -738,6 +781,15 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
                     ((JCheckBox)c).setSelected(true);
                 }
             }
+        }
+        if ( firstParameter!=null ) {
+            SwingUtilities.invokeLater( new Runnable() {
+                public void run() {
+                    Rectangle r= firstParameter.getBounds();
+                    parametersScrollPane.getViewport().setViewPosition( new Point( 0, Math.max( 0, r.y - parametersScrollPane.getHeight()/4 ) ) );
+                }
+            });
+            
         }
     }
 
@@ -771,13 +823,23 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         if ( split.file==null || split.file.equals("file:///") ) { // use TSDS's one by default.
             split.file= defaultServer.toString();
         } else {
+            if ( !split.file.endsWith("/hapi") ) {
+                int i= split.file.lastIndexOf("/hapi");
+                if ( i>-1 ) {
+                    split.file= split.file.substring(0,i+5);
+                }
+            }
             try {
                 currentServer= new URL(split.file);
             } catch (MalformedURLException ex) {
                 logger.log(Level.SEVERE, null, ex);
             }
         }
-        serversComboBox.setSelectedItem( split.file );
+        try {
+            serversComboBox.setSelectedItem(HapiServer.decodeURL( HapiServer.encodeURL(split.file) ) );
+        } catch ( MalformedURLException ex ) {
+            serversComboBox.setSelectedItem( split.file ); // do what we did before.
+        }
         Map<String,String> params= URISplit.parseParams( split.params );
         
         String id= params.get("id");
@@ -799,8 +861,12 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         
         String parameters= params.get("parameters");
         if ( parameters!=null ) {
+            parameters= HapiServer.decodeURLParameters(parameters);
             this.currentParameters= parameters;
             setParameters(this.currentParameters);
+            resetVariableTimer.tickle("initialUpdate");
+        } else {
+            resetVariableTimer.tickle("initialUpdateNoParams");
         }
         if ( HapiSpec.BINARY.equals(params.get("format") ) ) {
             this.binaryCB.setSelected(true);
@@ -814,7 +880,7 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         }
         
         disableCacheCheckBox.setSelected( "F".equals(params.get("cache")) );
-        
+        messagesLabel.setText("Select dataset above");
     }
 
     @Override
@@ -832,14 +898,18 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         String id= idsList2.getSelectedValue();
         if ( id==null ) {
             id= "";
-        } else {           
-            try {
-                id= URLEncoder.encode(id,"UTF-8");
-            } catch (UnsupportedEncodingException ex) {
-                throw new RuntimeException(ex);
-            }
+        } else {
+            id = HapiServer.encodeURLParameters(id);
+            //id= HapiServer.urlEncode(id);
         }
-        String uri= "vap+hapi:" + serversComboBox.getSelectedItem().toString() + "?id=" + id + "&timerange="+timeRangeComboBox.getText().replaceAll(" ","+");
+        String uri= "vap+hapi:";
+        try {
+            // please encode the URLs before making Autoplot URIs, which really should be ASCII.
+            uri = uri + HapiServer.encodeURL( serversComboBox.getSelectedItem().toString() ).toString();
+        } catch ( MalformedURLException ex ) {
+            uri = uri + serversComboBox.getSelectedItem().toString();
+        }
+        uri = uri + "?id=" + id + "&timerange="+timeRangeComboBox.getText().replaceAll(" ","+");
         if ( binaryCB.isSelected() && binaryCB.isEnabled() ) {
             uri+= "&format=binary";
         }
@@ -847,13 +917,46 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
             uri+= "&cache=F";
         }
         if ( parameters.length()>0 ) {
-            return uri + "&parameters="+parameters;
+            return uri + "&parameters="+HapiServer.encodeURLParameters(parameters);
         } else {
             return uri;
         }
     }
     
+    private void loadServerCapabilities( URL server ) throws JSONException {
+        boolean binaryIsEnabled= false;
+        try {
+            JSONObject capabilitiesDoc= HapiServer.getCapabilities(server);
+            if ( capabilitiesDoc.has(HapiSpec.OUTPUT_FORMATS ) ) { // new 2016-11-21.  Other is deprecated.
+                JSONArray outputFormats= capabilitiesDoc.getJSONArray(HapiSpec.OUTPUT_FORMATS );
+                for ( int i=0; i<outputFormats.length(); i++ ) {
+                    if ( outputFormats.getString(i).equals(HapiSpec.BINARY) ) {
+                        binaryIsEnabled= true;
+                    }
+                }                    
+            } else {
+                JSONArray capabilities= capabilitiesDoc.getJSONArray("capabilities"); // deprecated.
+                for ( int i=0; i<capabilities.length(); i++ ) {
+                    JSONObject c= capabilities.getJSONObject(i);
+                    if ( c.has(HapiSpec.FORMATS) ) {
+                        JSONArray formats= c.getJSONArray(HapiSpec.FORMATS);
+                        for ( int j=0; j<formats.length(); j++ ) {
+                            if ( formats.getString(j).equals(HapiSpec.BINARY) ) {
+                                binaryIsEnabled= true;
+                            }
+                        }
+                    }
+                }
+            }
+        } catch ( IOException ex ) {
+            // this is okay, we'll just assume it doesn't support binary.
+            logger.log( Level.WARNING, ex.getMessage(), ex );
+        }
+        this.supportsBinary= binaryIsEnabled;
+    }
+    
     /**
+     * This will load the ids into the GUI.
      * See https://github.com/hapi-server/data-specification#catalog
      * @param filter
      * @throws IOException
@@ -898,36 +1001,8 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
                     idsList2.ensureIndexIsVisible( i==-1 ? 0 : i );
                 }
             }
-            boolean binaryIsEnabled= false;
-            try {
-                JSONObject capabilitiesDoc= HapiServer.getCapabilities(server);
-                if ( capabilitiesDoc.has(HapiSpec.OUTPUT_FORMATS ) ) { // new 2016-11-21.  Other is deprecated.
-                    JSONArray outputFormats= capabilitiesDoc.getJSONArray(HapiSpec.OUTPUT_FORMATS );
-                    for ( int i=0; i<outputFormats.length(); i++ ) {
-                        if ( outputFormats.getString(i).equals(HapiSpec.BINARY) ) {
-                            binaryIsEnabled= true;
-                        }
-                    }                    
-                } else {
-                    JSONArray capabilities= capabilitiesDoc.getJSONArray("capabilities"); // deprecated.
-                    for ( int i=0; i<capabilities.length(); i++ ) {
-                        JSONObject c= capabilities.getJSONObject(i);
-                        if ( c.has(HapiSpec.FORMATS) ) {
-                            JSONArray formats= c.getJSONArray(HapiSpec.FORMATS);
-                            for ( int j=0; j<formats.length(); j++ ) {
-                                if ( formats.getString(j).equals(HapiSpec.BINARY) ) {
-                                    binaryIsEnabled= true;
-                                }
-                            }
-                        }
-                    }
-                }
-            } catch ( IOException ex ) {
-                // this is okay, we'll just assume it doesn't support binary.
-                logger.log( Level.WARNING, ex.getMessage(), ex );
-            }
-            binaryCB.setEnabled(binaryIsEnabled);
-
+            binaryCB.setEnabled(supportsBinary);
+            
         } catch ( JSONException ex ) {
             logger.log(Level.SEVERE, null, ex );
         }
@@ -935,14 +1010,21 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
     }
         
     /**
-     * get the catalog of the server.  
+     * get the catalog of the server.  This should not be called from the event
+     * thread.
      * @param server
      * @throws IOException
      * @throws JSONException 
      */
-    private void resetServer( URL server ) throws IOException, JSONException {
+    private void resetServer( final URL server ) throws IOException, JSONException {
         idsJSON= HapiServer.getCatalog(server);
-        resetServerCatalog(server,"");
+        loadServerCapabilities(server);
+        Runnable run= new Runnable() {
+            public void run() {
+                resetServerCatalog(server,"");
+            }
+        };
+        SwingUtilities.invokeLater(run);
     }
     
     private String getHtmlFor( Object o ) throws JSONException {
@@ -1027,182 +1109,7 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
         }
     }    
     
-    private void resetVariable( URL server, String id ) {
-        try {
-            JSONObject info= HapiServer.getInfo( server, id );
-            for ( JSONObject item : new JSONArrayIterator(idsJSON) ) {
-                if ( item.getString("id").equals(id) ) {
-                    if ( item.has(HapiSpec.TITLE) ) {
-                        String title= item.getString(HapiSpec.TITLE);
-                        titleLabel.setText(title);
-                        titleLabel.setToolTipText(title);
-                        titleLabel.setMinimumSize(new Dimension(100,titleLabel.getFont().getSize()));
-                    } else {
-                        titleLabel.setText(id);
-                    }
-                }
-            }
-            JSONArray parameters= info.getJSONArray("parameters");
-            
-            StringBuilder extra= new StringBuilder();
-            extra.append("<html><table>");
-            Iterator iter= info.keys();
-            String k;
-            for ( ; iter.hasNext(); ) {
-                k=iter.next().toString();
-                //if ( !k.equals("parameters") ) {
-                    Object v= info.get(k);
-                    extra.append("<tr valign=top><td>").append(k).append("</td><td>");
-                    String s= getHtmlFor(v);
-                    if ( v.toString().length()>MAX_LENGTH_CHARACTERS ) {
-                        extra.append("<i>(").append(v.toString().length()).append(" characters)</i>");
-                        //extra.append( s ) ; //v.toString() );
-                    } else {
-                        extra.append( s );
-                    }
-                    extra.append("</td></tr>");
-                //}
-            }
-            extra.append("</table></html>");
-            currentExtra= extra.toString();
-            parametersPanel.removeAll();
-            String[] sparams= new String[parameters.length()];
-            for ( int i=0; i<parameters.length(); i++ ) {
-                JSONObject parameter= parameters.getJSONObject(i);
-//                if ( parameter.has("size") ) {
-//                    Object o= parameter.get("size");
-//                    if ( !( o instanceof JSONArray ) ) {
-//                        logger.log(Level.WARNING, "size is not an array of ints: {0}", o);
-//                        continue;
-//                    }
-//                    JSONArray aa= parameter.getJSONArray("size");
-//                    logger.log(Level.WARNING, "size is array is not supported in Autoplot.");
-//                    continue;
-//                }
-                sparams[i]= parameter.getString("name");
-                JCheckBox cb= new JCheckBox(sparams[i]);
-                
-                String label= sparams[i];
-                if ( parameter.has("size") ) {
-                    label= label+parameter.getString("size");
-                }
-                cb.setName(sparams[i]);
-                
-                cb.setSelected(true);
-                final int fi= i;
-                cb.addActionListener(new ActionListener() {
-                    @Override
-                    public void actionPerformed(ActionEvent e) {
-                        if ( ( e.getModifiers() & ActionEvent.SHIFT_MASK ) == ActionEvent.SHIFT_MASK ) {
-                            if ( lastParamIndex>-1 ) {
-                                if ( lastParamIndex<fi ) {
-                                    for ( int i=lastParamIndex; i<=fi; i++ ) {
-                                        ( (JCheckBox)parametersPanel.getComponent(i) ).setSelected(true);
-                                    } 
-                                } else {
-                                    for ( int i=fi; i<=lastParamIndex; i++ ) {
-                                        ( (JCheckBox)parametersPanel.getComponent(i) ).setSelected(true);
-                                    } 
-                                }
-                            }
-                        }
-                        lastParamIndex= fi;
-                    }
-                    
-                });
-                if ( parameter.has("description") ) {
-                    String d= parameter.getString("description");
-                    //parametersPanel.add( new javax.swing.JLabel( d ) );
-                    cb.setToolTipText(d);
-                    cb.setText( label+": "+d);
-                } else {
-                    cb.setText( label );
-                }
-                parametersPanel.add( cb );
-            }
-            parametersPanel.setToolTipText("shift-click will select range of parameters");
-            parametersPanel.revalidate();
-            parametersPanel.repaint();
-            if ( currentParameters!=null ) {
-                setParameters(currentParameters);
-            }            
-            DatumRange range= getRange(info);
-            if ( range==null ) {
-                logger.warning("server is missing required startDate and stopDate parameters.");
-                messagesLabel.setText( "range is not provided (non-compliant server)" );
-            } else {
-                DatumRange sampleRange=null;
-                if ( info.has("sampleStartDate") && info.has("sampleStopDate") ) {
-                    try {
-                        sampleRange = new DatumRange( Units.us2000.parse(info.getString("sampleStartDate")), Units.us2000.parse(info.getString("sampleStopDate")) );
-                    } catch (JSONException | ParseException ex) {
-                        logger.log(Level.SEVERE, null, ex);
-                    }
-                } 
-                if ( sampleRange==null ) {
-                    Datum cadence= Units.seconds.createDatum(60);  // assume default cadence of 1 minute results in 1 day sample range.
-                    if ( info.has("cadence") ) {
-                        try{
-                            int[] icadence= DatumRangeUtil.parseISO8601Duration(info.getString("cadence"));
-                            cadence= cadenceArrayToDatum(icadence);
-                        } catch ( ParseException ex ) {
-                            logger.log(Level.WARNING, "parse error in cadence: {0}", info.getString("cadence"));
-                        }
-                    }    
-                    if (range.max().ge(myValidTime)) { // Note stopDate is required since 2017-01-17.
-                        logger.warning("server is missing required stopDate parameter.");
-                        messagesLabel.setText(range.min().toString() + " to ?");
-                        sampleRange = new DatumRange(range.min(), range.min().add(1, Units.days));
-                    } else {
-                        messagesLabel.setText(range.toString());
-                        if ( cadence.ge(Units.days.createDatum(1)) ) {
-                            Datum end = TimeUtil.nextMidnight(range.max());
-                            end= end.subtract( 10,Units.days );
-                            if ( range.max().subtract(end).ge( Datum.create(1,Units.days ) ) ) {
-                                sampleRange = new DatumRange( end, end.add(10,Units.days) );
-                            } else {
-                                sampleRange = new DatumRange( end.subtract(10,Units.days), end );
-                            } 
-                        } else if ( cadence.ge(Units.seconds.createDatum(1)) ) {
-                            Datum end = TimeUtil.prevMidnight(range.max());
-                            if ( range.max().subtract(end).ge( Datum.create(1,Units.hours ) ) ) {
-                                sampleRange = new DatumRange( end, end.add(1,Units.days) );
-                            } else {
-                                sampleRange = new DatumRange( end.subtract(1,Units.days), end );
-                            } 
-                        } else {
-                            Datum end = TimeUtil.prev( TimeUtil.HOUR, range.max() );
-                            if ( range.max().subtract(end).ge( Datum.create(1,Units.minutes ) ) ) {
-                                sampleRange = new DatumRange( end, end.add(1,Units.hours) );
-                            } else {
-                                sampleRange = new DatumRange( end.subtract(1,Units.hours), end );
-                            } 
-                        }
-                        if ( !sampleRange.intersects(range) ) {
-                            sampleRange= sampleRange.next();
-                        }
-                    }
-                } else {
-                    String s= range.toString();
-                    if ( info.has("modificationDate") ) {
-                        try {
-                            Datum tmod= Units.us2000.parse(info.getString("modificationDate"));
-                            Datum ago= TimeUtil.now().subtract(tmod);
-                            s += "   last modified " + getDurationForHumans((long)ago.doubleValue(Units.milliseconds) ) + " ago.";
-                        } catch (ParseException ex) {
-                        }
-                        
-                    }
-                    messagesLabel.setText( s );
-                }
-                DefaultComboBoxModel m= new DefaultComboBoxModel(new String[] { "Example Time Ranges",sampleRange.toString() } );
-                exampleTimeRangesCB.setModel(m);
-                
-                if ( providedTimeRange==null ) {
-                    timeRangeComboBox.setText( sampleRange.toString() );
-                }
-            }
-        } catch (IOException | JSONException ex) {
+    private void resetIdReportError( URL server, String id, Exception ex ) {
             logger.log(Level.SEVERE, null, ex);
             parametersPanel.removeAll();
             parametersPanel.add(new javax.swing.JLabel("Error reported on server:"));
@@ -1225,10 +1132,229 @@ public final class HapiDataSourceEditorPanel extends javax.swing.JPanel implemen
                 }
             });
             parametersPanel.add(l);
-            titleLabel.setText("");
-        }
-                
+            titleLabel.setText("");        
     }
+    
+    private void resetIdImmediately(String id,JSONObject info) throws JSONException {
+        for ( JSONObject item : new JSONArrayIterator(idsJSON) ) {
+            if ( item.getString("id").equals(id) ) {
+                if ( item.has(HapiSpec.TITLE) ) {
+                    String title= item.getString(HapiSpec.TITLE);
+                    titleLabel.setText(title);
+                    titleLabel.setToolTipText(title);
+                    titleLabel.setMinimumSize(new Dimension(100,titleLabel.getFont().getSize()));
+                } else {
+                    titleLabel.setText(id);
+                }
+            }
+        }
+        JSONArray parameters= info.getJSONArray("parameters");
+
+        StringBuilder extra= new StringBuilder();
+        extra.append("<html><table>");
+        Iterator iter= info.keys();
+        String k;
+        for ( ; iter.hasNext(); ) {
+            k=iter.next().toString();
+            //if ( !k.equals("parameters") ) {
+                Object v= info.get(k);
+                extra.append("<tr valign=top><td>").append(k).append("</td><td>");
+                String s= getHtmlFor(v);
+                if ( v.toString().length()>MAX_LENGTH_CHARACTERS ) {
+                    extra.append("<i>(").append(v.toString().length()).append(" characters)</i>");
+                    //extra.append( s ) ; //v.toString() );
+                } else {
+                    extra.append( s );
+                }
+                extra.append("</td></tr>");
+            //}
+        }
+        extra.append("</table></html>");
+        currentExtra= extra.toString();
+        parametersPanel.removeAll();
+        String[] sparams= new String[parameters.length()];
+        Boolean startRank2= null;
+        for ( int i=0; i<parameters.length(); i++ ) {
+            JSONObject parameter= parameters.getJSONObject(i);
+//                if ( parameter.has("size") ) {
+//                    Object o= parameter.get("size");
+//                    if ( !( o instanceof JSONArray ) ) {
+//                        logger.log(Level.WARNING, "size is not an array of ints: {0}", o);
+//                        continue;
+//                    }
+//                    JSONArray aa= parameter.getJSONArray("size");
+//                    logger.log(Level.WARNING, "size is array is not supported in Autoplot.");
+//                    continue;
+//                }
+            sparams[i]= parameter.getString("name");
+            JCheckBox cb= new JCheckBox(sparams[i]);
+
+            String label= sparams[i];
+            if ( parameter.has("size") ) {
+                label= label+parameter.getString("size");
+            }
+            cb.setName(sparams[i]);
+            
+            if ( i==0 ) {
+                cb.setSelected(true);
+            } else if ( startRank2==null ) {
+                startRank2= label.contains("[");
+                cb.setSelected(true);
+            } else {
+                boolean otherIsRank2= label.contains("[");
+                cb.setSelected( otherIsRank2 ? false : ( !startRank2 ) );
+            }
+
+            final int fi= i;
+            cb.addActionListener(new ActionListener() {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    if ( ( e.getModifiers() & ActionEvent.SHIFT_MASK ) == ActionEvent.SHIFT_MASK ) {
+                        if ( lastParamIndex>-1 ) {
+                            if ( lastParamIndex<fi ) {
+                                for ( int i=lastParamIndex; i<=fi; i++ ) {
+                                    ( (JCheckBox)parametersPanel.getComponent(i) ).setSelected(true);
+                                } 
+                            } else {
+                                for ( int i=fi; i<=lastParamIndex; i++ ) {
+                                    ( (JCheckBox)parametersPanel.getComponent(i) ).setSelected(true);
+                                } 
+                            }
+                        }
+                    }
+                    lastParamIndex= fi;
+                    String label= ((JCheckBox)parametersPanel.getComponent(fi)).getText();
+                    boolean rank2= label.contains("[");
+                    for ( int i=1; i<parametersPanel.getComponentCount(); i++ ) {
+                        Component c= parametersPanel.getComponent(i);
+                        if ( c instanceof JCheckBox && c!=((JCheckBox)parametersPanel.getComponent(fi)) ) {
+                            boolean otherIsRank2= ((JCheckBox)c).getText().contains("[");
+                            boolean isAlreadySelected= ((JCheckBox)c).isSelected();
+                            ((JCheckBox)c).setSelected( otherIsRank2 ? false : ( isAlreadySelected && !rank2 ) );
+                        }
+                    }
+                }
+
+            });
+            if ( parameter.has("description") ) {
+                String d= parameter.getString("description");
+                //parametersPanel.add( new javax.swing.JLabel( d ) );
+                cb.setToolTipText(d);
+                cb.setText( label+": "+d);
+            } else {
+                cb.setText( label );
+            }
+            parametersPanel.add( cb );
+        }
+        parametersPanel.setToolTipText("shift-click will select range of parameters");
+        parametersPanel.revalidate();
+        parametersPanel.repaint();
+        if ( currentParameters!=null ) {
+            setParameters(currentParameters);
+        }
+        DatumRange range= getRange(info);
+        if ( range==null ) {
+            logger.warning("server is missing required startDate and stopDate parameters.");
+            messagesLabel.setText( "range is not provided (non-compliant server)" );
+        } else {
+            DatumRange sampleRange=null;
+            if ( info.has("sampleStartDate") && info.has("sampleStopDate") ) {
+                try {
+                    sampleRange = new DatumRange( Units.us2000.parse(info.getString("sampleStartDate")), Units.us2000.parse(info.getString("sampleStopDate")) );
+                } catch (JSONException | ParseException ex) {
+                    logger.log(Level.SEVERE, null, ex);
+                }
+            } 
+            if ( sampleRange==null ) {
+                Datum cadence= Units.seconds.createDatum(60);  // assume default cadence of 1 minute results in 1 day sample range.
+                if ( info.has("cadence") ) {
+                    try{
+                        int[] icadence= DatumRangeUtil.parseISO8601Duration(info.getString("cadence"));
+                        cadence= cadenceArrayToDatum(icadence);
+                    } catch ( ParseException ex ) {
+                        logger.log(Level.WARNING, "parse error in cadence: {0}", info.getString("cadence"));
+                    }
+                }    
+                if (range.max().ge(myValidTime)) { // Note stopDate is required since 2017-01-17.
+                    logger.warning("server is missing required stopDate parameter.");
+                    messagesLabel.setText(range.min().toString() + " to ?");
+                    sampleRange = new DatumRange(range.min(), range.min().add(1, Units.days));
+                } else {
+                    messagesLabel.setText(range.toString());
+                    if ( cadence.ge(Units.days.createDatum(1)) ) {
+                        Datum end = TimeUtil.nextMidnight(range.max());
+                        end= end.subtract( 10,Units.days );
+                        if ( range.max().subtract(end).ge( Datum.create(1,Units.days ) ) ) {
+                            sampleRange = new DatumRange( end, end.add(10,Units.days) );
+                        } else {
+                            sampleRange = new DatumRange( end.subtract(10,Units.days), end );
+                        } 
+                    } else if ( cadence.ge(Units.seconds.createDatum(1)) ) {
+                        Datum end = TimeUtil.prevMidnight(range.max());
+                        if ( range.max().subtract(end).ge( Datum.create(1,Units.hours ) ) ) {
+                            sampleRange = new DatumRange( end, end.add(1,Units.days) );
+                        } else {
+                            sampleRange = new DatumRange( end.subtract(1,Units.days), end );
+                        } 
+                    } else {
+                        Datum end = TimeUtil.prev( TimeUtil.HOUR, range.max() );
+                        if ( range.max().subtract(end).ge( Datum.create(1,Units.minutes ) ) ) {
+                            sampleRange = new DatumRange( end, end.add(1,Units.hours) );
+                        } else {
+                            sampleRange = new DatumRange( end.subtract(1,Units.hours), end );
+                        } 
+                    }
+                    if ( !sampleRange.intersects(range) ) {
+                        sampleRange= sampleRange.next();
+                    }
+                }
+            } else {
+                String s= range.toString();
+                if ( info.has("modificationDate") ) {
+                    try {
+                        Datum tmod= Units.us2000.parse(info.getString("modificationDate"));
+                        Datum ago= TimeUtil.now().subtract(tmod);
+                        s += "   last modified " + getDurationForHumans((long)ago.doubleValue(Units.milliseconds) ) + " ago.";
+                    } catch (ParseException ex) {
+                    }
+
+                }
+                messagesLabel.setText( s );
+            }
+            DefaultComboBoxModel m= new DefaultComboBoxModel(new String[] { "Example Time Ranges",sampleRange.toString() } );
+            exampleTimeRangesCB.setModel(m);
+
+            if ( providedTimeRange==null ) {
+                timeRangeComboBox.setText( sampleRange.toString() );
+            }
+        }
+                    
+    }
+    
+    private void resetId( final URL server, final String id ) {
+        
+        final JSONObject info;
+        try {
+            info = HapiServer.getInfo( server, id );
+        } catch (IOException | JSONException ex) {
+            logger.log(Level.SEVERE, null, ex);
+            resetIdReportError(server, id, ex);
+            return;
+        }
+        Runnable run= new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    resetIdImmediately( id, info );
+                } catch ( JSONException ex) {
+                    resetIdReportError(server, id, ex);
+                }
+            }
+        };
+        SwingUtilities.invokeLater(run);
+                            
+    }
+    
     private static final int MAX_LENGTH_CHARACTERS = 100000;
     
     public static void main( String[] args ) {

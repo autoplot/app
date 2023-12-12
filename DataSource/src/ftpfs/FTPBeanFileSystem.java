@@ -33,8 +33,6 @@ import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
 import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
@@ -43,9 +41,11 @@ import java.nio.channels.ReadableByteChannel;
 import java.nio.channels.WritableByteChannel;
 import java.util.ArrayList;
 import java.util.Calendar;
+import java.util.Collections;
 import java.util.Date;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.locks.Lock;
 import org.das2.util.monitor.CancelledOperationException;
 import org.das2.datum.TimeUtil;
@@ -60,7 +60,7 @@ import org.autoplot.datasource.DataSourceUtil;
  * 
  * @author Jeremy
  */
-public class FTPBeanFileSystem extends WebFileSystem {
+public final class FTPBeanFileSystem extends WebFileSystem {
 
     private static final Logger logger= Logger.getLogger("das2.filesystem.ftp");
 
@@ -72,6 +72,9 @@ public class FTPBeanFileSystem extends WebFileSystem {
             logger.log(Level.SEVERE, ex.getMessage(), ex);
         }
         bean.setPassiveModeTransfer(true);
+        if ( getRootURL().getPort()>-1 ) {
+            bean.setPort(  getRootURL().getPort() ); 
+        }
         return bean;
     }
 
@@ -131,6 +134,7 @@ public class FTPBeanFileSystem extends WebFileSystem {
         // pop off the password
         int icolon= userInfoNoPassword==null ? -1 : userInfoNoPassword.indexOf(':');
         if ( icolon>-1 ) {
+            assert userInfoNoPassword!=null;
             userInfoNoPassword= userInfoNoPassword.substring(0,icolon);
         }
 
@@ -147,6 +151,7 @@ public class FTPBeanFileSystem extends WebFileSystem {
     }
 
     /* dumb method looks for / in parent directory's listing */
+    @Override
     public boolean isDirectory(String filename) throws IOException {
         File f = new File(localRoot, filename);
         if (f.exists()) {
@@ -168,8 +173,8 @@ public class FTPBeanFileSystem extends WebFileSystem {
                 } else {
                     lookFor = filename + "/";
                 }
-                for (int i = 0; i < list.length; i++) {
-                    if (list[i].equals(lookFor)) {
+                for (String list1 : list) {
+                    if (list1.equals(lookFor)) {
                         return true;
                     }
                 }
@@ -221,19 +226,15 @@ public class FTPBeanFileSystem extends WebFileSystem {
         logger.log(Level.FINE, "parseLslNew {0}", dir);
 
         FTPFile[] ret=null;
-        List<String> llist= new ArrayList<String>(370);
+        List<String> llist= new ArrayList<>(370);
         
-        BufferedReader reader=new BufferedReader( new FileReader( listing ) );
-        
-        try {
+        try (BufferedReader reader = new BufferedReader( new FileReader( listing ) )) {
             String aline = reader.readLine();
             while ( aline!=null ) {
                 llist.add(aline);
                 aline = reader.readLine();
             }
         
-        } finally {
-            reader.close();
         }
         
         String[] list= llist.toArray( new String[llist.size()] );
@@ -251,22 +252,21 @@ public class FTPBeanFileSystem extends WebFileSystem {
         }
         // Is there an available result?
         if (ret == null) {
-                // Try to parse the list with every available parser.
-                for (Iterator i = listParsers.iterator(); i.hasNext();) {
-                        FTPListParser aux = (FTPListParser) i.next();
-                        try {
-                                // Let's try!
-                                ret = aux.parse(list);
-                                // This parser smells good!
-                                parser = aux;
-                                // Leave the loop.
-                                break;
-                        } catch (FTPListParseException e) {
-                                // Let's try the next one.
-                            //TODO: questionMark in Unix filesystem!
-                                continue;
-                        }
+            // Try to parse the list with every available parser.
+            for (FTPListParser aux : listParsers) {
+                try {
+                    // Let's try!
+                    ret = aux.parse(list);
+                    // This parser smells good!
+                    parser = aux;
+                    // Leave the loop.
+                    break;
+                } catch (FTPListParseException e) {
+                    // Let's try the next one.
+                    //TODO: questionMark in Unix filesystem!
+                    logger.log( Level.FINE, e.getMessage(), e );
                 }
+            }
         }
         // end  it.sauronsoftware.ftp4j.FTPClient.java portion
 
@@ -286,97 +286,7 @@ public class FTPBeanFileSystem extends WebFileSystem {
         return result;
     }
 
-
-    /**
-     * this is the old parser that make all sorts of assumptions.
-     * @param dir
-     * @param listing
-     * @deprecated use parseLslNew
-     * @return
-     * @throws IOException
-     */
-    public DirectoryEntry[] parseLsl(String dir, File listing) throws IOException {
-        InputStream in = new FileInputStream(listing);
-
-        List<DirectoryEntry> result;
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(in,"US-ASCII"))) {
-            String aline = reader.readLine();
-            boolean done = aline == null;
-            String types = "d-";
-            long bytesRead = 0;
-            //long totalSize;
-            //long sumSize=0;
-            result = new ArrayList<>(20);
-            int lineNum = 1;
-            int sizePos= 31;
-            int modifiedPos= 42;
-            while (!done) {
-                //logger.log(Level.FINEST, "{0}: {1}", new Object[]{lineNum, aline});
-                bytesRead = bytesRead + aline.length() + 1;
-                
-                aline = aline.trim();
-                
-                if (aline.length() == 0) {
-                    done = true;
-                } else {
-                    
-                    char type = aline.charAt(0);
-                    if (type == 't') {
-                        //if (aline.indexOf("total") == 0) {
-                            //totalSize= Long.parseLong( aline.substring( 5 ).trim() );
-                        //}
-                    }
-                    
-                    if (types.indexOf(type) != -1) {
-                        int i = aline.lastIndexOf(' ');
-                        //String name = aline.substring(i + 1);
-                        //long size = 0;
-                        //try {
-                        //size= Long.parseLong( aline.substring( 31, 31+11 ) ); // tested on: linux server
-                        //} catch ( NumberFormatException e ) {
-                        //}
-                        
-                        //boolean isFolder = type == 'd';
-                        
-                        DirectoryEntry item = new DirectoryEntry();
-                        item.name = aline.substring(i + 1);
-                        try {
-                            item.size = Long.parseLong(aline.substring(sizePos, sizePos + 11).trim());
-                        } catch ( NumberFormatException ex ) {
-                            try {
-                                item.size = Long.parseLong(aline.substring(sizePos, sizePos + 10).trim());
-                            } catch ( NumberFormatException ex2 ) {
-                                logger.log( Level.WARNING, "unable to parse size in "+aline+" at "+sizePos,ex2 );
-                                item.size = 1; // don't RTE
-                            }
-                        }
-                        item.type = type == 'd' ? 'd' : 'f';
-                        if ( aline.length()>=modifiedPos+12 ) {
-                            item.modified = parseTime1970(aline.substring(modifiedPos, modifiedPos+12), Calendar.getInstance());
-                        } else {
-                            item.modified = 0;
-                        }
-                        
-                        
-                        result.add(item);
-                        
-                        //sumSize= sumSize + size;
-                        
-                    }
-                    
-                    aline = reader.readLine();
-                    lineNum++;
-                    
-                    done = aline == null;
-                    
-                } // if (aline.length)
-            } // while
-            //TODO: finally clause
-        }
-
-        return (DirectoryEntry[]) result.toArray(new DirectoryEntry[result.size()]);
-    }
-
+    @Override
     public synchronized final String[] listDirectory(String directory) throws IOException {
         directory = toCanonicalFolderName(directory);
 
@@ -412,6 +322,13 @@ public class FTPBeanFileSystem extends WebFileSystem {
                 FtpBean bean = getFtpBean();
                 try {
                     userInfo= KeyChain.getDefault().getUserInfo(url);
+                    if ( userInfo==null ) {
+                        String surl= url.toExternalForm();
+                        int i0=surl.indexOf("://")+3;
+                        surl= surl.substring(0,i0)+"user:pass@"+surl.substring(i0);
+                        url= new URL( surl );
+                        userInfo= KeyChain.getDefault().getUserInfo(url);
+                    }
                     if ( userInfo!=null ) {
                         String[] userHostArr= userInfo.split(":");
                         if ( userHostArr.length==1 ) {
@@ -451,7 +368,7 @@ public class FTPBeanFileSystem extends WebFileSystem {
                 if ( ! listingt.renameTo(listing) ) {
                     throw new IllegalArgumentException("unable to rename file "+listingt+ " to "+ listing );
                 }
-                successOrCancel= true;
+                //successOrCancel= true;
                 
                 result = parseLslNew(directory, listing);
 
@@ -463,15 +380,19 @@ public class FTPBeanFileSystem extends WebFileSystem {
                 if ( e.getMessage().startsWith("530" ) ) { // invalid login
                     if ( userInfo==null ) {
                         userInfo="user:pass";
-                        url= new URL( url.getProtocol() + "://"+ userInfo + "@" + url.getHost() + url.getFile() );
+                        if ( url.getPort()>-1 ) {
+                            url= new URL( url.getProtocol() + "://"+ userInfo + "@" + url.getHost() + ":" + url.getPort() + url.getFile() );
+                        } else {
+                            url= new URL( url.getProtocol() + "://"+ userInfo + "@" + url.getHost() + url.getFile() );
+                        }
                     }
                     KeyChain.getDefault().clearUserPassword(url);
                     // loop for them to try again.
                 } else if ( e.getMessage().startsWith("550") ) {
-                    new File(localRoot, directory);
+                    logger.log(Level.FINE, "create directory{0}", new File(localRoot, directory).toString());
                     throw new IOException( e.getMessage()+": "+directory);
                 } else {
-                    throw new IOException(e.getMessage()); //JAVA5
+                    throw new IOException( e ); 
                 }
             }
         }
@@ -567,11 +488,11 @@ public class FTPBeanFileSystem extends WebFileSystem {
     }
 
     @Override
-    protected void downloadFile( String filename, File targetFile, final File partFile, final ProgressMonitor mon) throws java.io.IOException {
+    protected Map<String,String> downloadFile( String filename, File targetFile, final File partFile, final ProgressMonitor mon) throws java.io.IOException {
 
         Lock lock= getDownloadLock( filename, targetFile, mon );
 
-        if ( lock==null ) return;
+        if ( lock==null ) return Collections.EMPTY_MAP;
 
         logger.log(Level.FINE, "ftpfs downloadFile({0})", filename);
         
@@ -581,7 +502,8 @@ public class FTPBeanFileSystem extends WebFileSystem {
 
             String[] ss = FileSystem.splitUrl(url.toString());
 
-
+            boolean isgz= false;
+            
             url= getRootURL();
             String userInfo= null;
             boolean done= false;
@@ -590,6 +512,13 @@ public class FTPBeanFileSystem extends WebFileSystem {
                     final FtpBean bean = getFtpBean();
 
                     userInfo= KeyChain.getDefault().getUserInfo(url);
+                    if ( userInfo==null ) {
+                        String surl= url.toExternalForm();
+                        int i0=surl.indexOf("://")+3;
+                        surl= surl.substring(0,i0)+"user:pass@"+surl.substring(i0);
+                        url= new URL( surl );
+                        userInfo= KeyChain.getDefault().getUserInfo(url);
+                    }
                     if ( userInfo!=null ) {
                         String[] userHostArr= userInfo.split(":");
                         if ( userHostArr.length==1 ) {
@@ -642,7 +571,13 @@ public class FTPBeanFileSystem extends WebFileSystem {
                             return true;
                         }
                     };
-                    bean.getBinaryFile(ss[3].substring(ss[2].length()), partFile.toString(), observer);
+                    try {
+                        bean.getBinaryFile(ss[3].substring(ss[2].length()), partFile.toString(), observer);
+                    } catch ( FtpException ex ) {
+                        bean.getBinaryFile(ss[3].substring(ss[2].length())+".gz", partFile.toString(), observer);
+                        FileSystemUtil.gunzip( partFile, targetFile );
+                        isgz= true;
+                    }
                     bean.close();
                     done= true;
                     
@@ -674,13 +609,17 @@ public class FTPBeanFileSystem extends WebFileSystem {
                 }
             }
 
+            if ( isgz ) {
+                return Collections.EMPTY_MAP;
+            }
+            
             if ( targetFile.length()==partFile.length() ) {
                 if ( OsUtil.contentEquals(targetFile, partFile ) ) {
                     logger.fine("another thread must have downloaded file.");
                     if ( !partFile.delete() ) {
                         throw new IllegalArgumentException("unable to delete "+partFile );
                     }
-                    return;
+                    return Collections.EMPTY_MAP;
                 }
             }
             
@@ -706,6 +645,7 @@ public class FTPBeanFileSystem extends WebFileSystem {
             mon.finished();
             lock.unlock();
         }
+        return Collections.EMPTY_MAP;
         
     }
 
@@ -763,14 +703,7 @@ public class FTPBeanFileSystem extends WebFileSystem {
             bean.fileDelete(ss[3].substring(ss[2].length()));
             bean.close();
             return true;
-        } catch (IOException iOException) {
-            try {
-                bean.close();
-            } catch (FtpException ex) {
-                logger.log(Level.SEVERE, ex.getMessage(), ex);
-            }
-            return false;
-        } catch (FtpException ftpException) {
+        } catch (IOException | FtpException iOException) {
             try {
                 bean.close();
             } catch (FtpException ex) {

@@ -1,7 +1,4 @@
-/*
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
- */
+
 package org.autoplot.dom;
 
 import java.awt.Color;
@@ -9,12 +6,14 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.logging.Level;
 import org.autoplot.MouseModuleType;
+import org.das2.graph.DasColorBar;
 
 /**
- * Bean for holding AP configuration options.  Note there are a few AutoplotUI prefs here that shouldn't be.
+ * Bean for holding Autoplot configuration options.  Note there are a few AutoplotUI prefs here that shouldn't be,
+ * like scriptVisible which indicates if the script tab is shown.
  * @author jbf
  */
-public class Options extends DomNode {
+public final class Options extends DomNode {
 
     public static final String PROP_COLOR = "color";
     public static final String PROP_FILLCOLOR = "fillColor";
@@ -26,7 +25,7 @@ public class Options extends DomNode {
     public static final String VALUE_AUTORANGE_TYPE_RELUCTANT="reluctant";
 
     public Options() {
-
+        logger.fine("creating new Options node");
     }
 
     protected boolean scriptVisible = false;
@@ -72,7 +71,6 @@ public class Options extends DomNode {
         propertyChangeSupport.firePropertyChange(PROP_DATAVISIBLE, oldDataVisible, dataVisible);
     }
 
-
     /**
      * true when the layout tab is visible.
      */
@@ -117,6 +115,42 @@ public class Options extends DomNode {
         propertyChangeSupport.firePropertyChange(PROP_CANVASFONT, oldCanvasFont, canvasFont);
     }
 
+    protected int width = 640;
+
+    public static final String PROP_WIDTH = "width";
+
+    public int getWidth() {
+        return width;
+    }
+
+    /**
+     * set the initial width of the canvases in pixels
+     * @param width 
+     */
+    public void setWidth(int width) {
+        int oldWidth = this.width;
+        this.width = width;
+        propertyChangeSupport.firePropertyChange(PROP_WIDTH, oldWidth, width);
+    }
+
+    protected int height = 480;
+
+    public static final String PROP_HEIGHT = "height";
+
+    public int getHeight() {
+        return height;
+    }
+
+    /**
+     * set the initial height of the canvases in pixels
+     * @param height 
+     */
+    public void setHeight(int height) {
+        int oldHeight = this.height;
+        this.height = height;
+        propertyChangeSupport.firePropertyChange(PROP_HEIGHT, oldHeight, height);
+    }
+
     protected Color foreground = Color.black;
     public static final String PROP_FOREGROUND = "foreground";
 
@@ -140,10 +174,6 @@ public class Options extends DomNode {
     public void setBackground(Color background) {
         Color oldBackground = this.background;
         this.background = new Color(background.getRGB()); //otherwise can't serialize
-        //TODO: The red flash comes through here. https://sourceforge.net/p/autoplot/bugs/1055/
-        if ( background.getRGB()==-65536 ) {
-            logger.fine("strange red flash caused by setting icon...");
-        }
         propertyChangeSupport.firePropertyChange(PROP_BACKGROUND, oldBackground, background);
     }
 
@@ -193,7 +223,34 @@ public class Options extends DomNode {
         propertyChangeSupport.firePropertyChange(PROP_FILLCOLOR, oldFillColor, fillColor);
     }
 
+    public final static String PROP_COLORTABLE= "colortable";
+    
+    protected DasColorBar.Type colortable= DasColorBar.Type.COLOR_WEDGE;
+    
+    public DasColorBar.Type getColortable() {
+        return this.colortable;
+    }
+    
+    public void setColortable(DasColorBar.Type colortable) {
+        Object oldVal= this.colortable;
+        this.colortable = colortable;
+        propertyChangeSupport.firePropertyChange( PROP_COLORTABLE, oldVal, this.colortable );
+    }    
 
+    protected boolean oppositeAxisVisible = false;
+
+    public static final String PROP_OPPOSITEAXISVISIBLE = "oppositeAxisVisible";
+
+    public boolean isOppositeAxisVisible() {
+        return oppositeAxisVisible;
+    }
+
+    public void setOppositeAxisVisible(boolean oppositeAxisVisible) {
+        boolean oldOppositeAxisVisible = this.oppositeAxisVisible;
+        this.oppositeAxisVisible = oppositeAxisVisible;
+        propertyChangeSupport.firePropertyChange(PROP_OPPOSITEAXISVISIBLE, oldOppositeAxisVisible, oppositeAxisVisible);
+    }
+    
     protected String ticklen = "0.66em";
     public static final String PROP_TICKLEN = "ticklen";
 
@@ -207,6 +264,24 @@ public class Options extends DomNode {
         propertyChangeSupport.firePropertyChange(PROP_TICKLEN, oldTicklen, ticklen);
     }
     
+    protected String lineThickness = "1px";
+
+    public static final String PROP_LINE_THICKNESS = "lineThickness";
+
+    public String getLineThickness() {
+        return lineThickness;
+    }
+
+    /**
+     * lineThickness is the thickness of axes and ticks.
+     * @param lineThickness 
+     */
+    public void setLineThickness(String lineThickness) {
+        String oldLineThickness = this.lineThickness;
+        this.lineThickness = lineThickness;
+        propertyChangeSupport.firePropertyChange(PROP_LINE_THICKNESS, oldLineThickness, lineThickness);
+    }
+
     /**
      * for multiline labels, the alignment, where 0 is left, 0.5 is center, and 1.0 is right.
      */
@@ -577,7 +652,7 @@ public class Options extends DomNode {
         if ( !exclude.contains(PROP_OVERRENDERING) ) this.setOverRendering( that.isOverRendering() );
         if ( !exclude.contains(PROP_TEXTANTIALIAS) ) this.setTextAntiAlias( that.isTextAntiAlias() );
         if ( !exclude.contains(PROP_PRINTINGLOGLEVEL) ) this.setPrintingLogLevel( that.getPrintingLogLevel() );
-        if ( !exclude.contains(PROP_DISPLAYLOGLEVEL) ) this.setPrintingLogLevel( that.getDisplayLogLevel() );
+        if ( !exclude.contains(PROP_DISPLAYLOGLEVEL) ) this.setDisplayLogLevel( that.getDisplayLogLevel() );
         if ( !exclude.contains(PROP_DAY_OF_YEAR) ) this.setDayOfYear( that.isDayOfYear() );
     }
 
@@ -592,6 +667,7 @@ public class Options extends DomNode {
      * will provide a usable display.  These include the colors and the fonts,
      * and the timeRange editor mode, flip colorbar label, the ticklen, and last
      * scanEnabled.  
+     * @see https://sourceforge.net/p/autoplot/bugs/2175/
      * @param n the node
      * @param exclude the properties to exclude.
      */
@@ -604,10 +680,13 @@ public class Options extends DomNode {
         if ( !exclude.contains(PROP_FOREGROUND) ) this.setForeground(that.getForeground());
         if ( !exclude.contains(PROP_COLOR) )this.setColor(that.getColor());
         if ( !exclude.contains(PROP_FILLCOLOR) )this.setFillColor(that.getFillColor());
+        if ( !exclude.contains(PROP_COLORTABLE) )this.setColortable(that.getColortable());
         if ( !exclude.contains(PROP_CANVASFONT) )this.setCanvasFont(that.getCanvasFont());
         if ( !exclude.contains(PROP_USE_TIME_RANGE_EDITOR) ) this.setUseTimeRangeEditor(that.isUseTimeRangeEditor());
         if ( !exclude.contains(PROP_FLIPCOLORBARLABEL) ) this.setFlipColorbarLabel(that.isFlipColorbarLabel());
         if ( !exclude.contains(PROP_TICKLEN) ) this.setTicklen( that.getTicklen() );
+        if ( !exclude.contains(PROP_OPPOSITEAXISVISIBLE ) ) this.setOppositeAxisVisible( that.isOppositeAxisVisible() );
+        if ( !exclude.contains(PROP_LINE_THICKNESS) ) this.setLineThickness( that.getLineThickness() );
         if ( !exclude.contains(PROP_SCANENABLED) ) this.setScanEnabled( that.isScanEnabled() );
     }
 
@@ -633,6 +712,8 @@ public class Options extends DomNode {
         if (!b) result.add(new PropertyChangeDiff(PROP_COLOR, that.getColor(), this.getColor()));
         b = that.getFillColor().equals(this.getFillColor());
         if (!b) result.add(new PropertyChangeDiff(PROP_FILLCOLOR, that.getFillColor(), this.getFillColor()));
+        b = that.getColortable().equals(this.getColortable());
+        if (!b) result.add(new PropertyChangeDiff(PROP_COLORTABLE, that.getColortable(), this.getColortable()));
         b = that.getCanvasFont().equals(this.getCanvasFont());
         if (!b) result.add(new PropertyChangeDiff(PROP_CANVASFONT, that.getCanvasFont(), this.getCanvasFont()));
         b = that.isUseTimeRangeEditor() == this.isUseTimeRangeEditor();
@@ -641,11 +722,32 @@ public class Options extends DomNode {
         if (!b) result.add(new PropertyChangeDiff(PROP_FLIPCOLORBARLABEL, that.isFlipColorbarLabel(), this.isFlipColorbarLabel() ));
         b = that.getTicklen().equals(this.getTicklen() );
         if (!b) result.add(new PropertyChangeDiff(PROP_TICKLEN, that.getTicklen(), this.getTicklen()));
+        b = that.getLineThickness().equals(this.getLineThickness() );
+        if (!b) result.add(new PropertyChangeDiff(PROP_OPPOSITEAXISVISIBLE, that.isOppositeAxisVisible(), this.isOppositeAxisVisible() ));
+        b = that.getLineThickness().equals(this.getLineThickness() );
+        if (!b) result.add(new PropertyChangeDiff(PROP_LINE_THICKNESS, that.getLineThickness(), this.getLineThickness()));
         b = that.isScanEnabled()== this.isScanEnabled();
         if (!b) result.add(new PropertyChangeDiff(PROP_SCANENABLED, that.isScanEnabled(), this.isScanEnabled() ));
         return result;
     }
 
+    private OptionsPrefsController controller=null;
+    
+    public OptionsPrefsController getController() {
+        return this.controller;
+    }
+    
+    /**
+     * set the controller for this node.  This can only be called once.
+     * @param controller 
+     */
+    protected void setController( OptionsPrefsController controller ) {
+        if ( this.controller!=null ) {
+            throw new IllegalArgumentException("controller has already been set");
+        }
+        this.controller= controller;
+    }
+    
     @Override
     public DomNode copy() {
         Options that= new Options();
@@ -653,10 +755,13 @@ public class Options extends DomNode {
         that.setForeground( this.getForeground() );
         that.setColor( this.getColor() );
         that.setFillColor( this.getFillColor() );
+        that.setColortable( this.getColortable() );
         that.setCanvasFont( this.getCanvasFont() );
         that.setUseTimeRangeEditor( this.isUseTimeRangeEditor() );
         that.setFlipColorbarLabel( this.isFlipColorbarLabel() );
         that.setTicklen( this.getTicklen() );
+        that.setOppositeAxisVisible( this.isOppositeAxisVisible() );
+        that.setLineThickness( this.getLineThickness() );
         that.setScanEnabled( this.isScanEnabled() );
         return that;
     }

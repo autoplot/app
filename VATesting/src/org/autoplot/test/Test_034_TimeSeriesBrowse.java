@@ -49,7 +49,7 @@ public class Test_034_TimeSeriesBrowse implements Scenario {
             JFrameOperator mainFrame = new JFrameOperator(app);
             ScriptContext.waitUntilIdle();
 
-            new JTextFieldOperator(app.getDataSetSelector().getEditor()).setText("http://cdaweb.gsfc.nasa.gov/istp_public/data/polar/hydra/hyd_h0/$Y/po_h0_hyd_$Y$m$d_v01.cdf?ELECTRON_DIFFERENTIAL_ENERGY_FLUX&timerange=20000109"); 
+            new JTextFieldOperator(app.getDataSetSelector().getEditor()).setText("https://cdaweb.gsfc.nasa.gov/istp_public/data/polar/hydra/hyd_h0/$Y/po_h0_hyd_$Y$m$d_v01.cdf?ELECTRON_DIFFERENTIAL_ENERGY_FLUX&timerange=20000109"); 
             new JButtonOperator(app.getDataSetSelector().getGoButton()).clickMouse();
             
             final DasAxis xaxis = ScriptContext.getDocumentModel().getPlots(0).getXaxis().getController().getDasAxis();
@@ -64,7 +64,7 @@ public class Test_034_TimeSeriesBrowse implements Scenario {
                 }
             });
             
-            System.err.println("TODO: There should be a way to make sure the app has recieved the update.");
+            System.err.println("TODO: There should be a way to make sure the app has received the update.");
             Thread.sleep(1500);
             
             ScriptContext.waitUntilIdle();
@@ -79,7 +79,7 @@ public class Test_034_TimeSeriesBrowse implements Scenario {
             xaxis.scanNext(); // no gui test, but that's okay...
             System.err.println( "4: "+xaxis.getDatumRange() );
             
-            new JButtonOperator( mainFrame, new NameComponentChooser("browse") ).clickMouse();
+            new JButtonOperator( mainFrame, new NameComponentChooser("inspect") ).clickMouse();
                     //app.getDataSetSelector().getBrowseButton()).clickMouse();
 
             DialogOperator diaFrame = new DialogOperator( new RegexComponentChooser( "Editing .*") );

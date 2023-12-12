@@ -36,6 +36,10 @@ import org.das2.qds.util.DataSetBuilder;
 import org.autoplot.jythonsupport.JythonOps;
 import org.autoplot.jythonsupport.JythonUtil;
 import org.autoplot.jythonsupport.Util;
+import org.das2.datum.Datum;
+import org.das2.datum.DatumUtil;
+import org.das2.datum.InconvertibleUnitsException;
+import org.das2.qds.examples.Schemes;
 
 /**
  * Data source used mostly for demonstrations and quick modifications
@@ -67,12 +71,12 @@ public class InlineDataSource extends AbstractDataSource {
     
     /**
      * execute the expression.  This can be a command, presumably, or an variable
-     * name.
+     * name or an expression.
      * @param c expression or variable name.
      * @return the dataset resolved.
      * @throws Exception 
      */
-    private MutablePropertyDataSet jyCommand( String c ) throws Exception {
+    private MutablePropertyDataSet handleJythonExpression( String c ) throws Exception {
         logger.finest(c);
         
         PyObject result= evalCommand( interp,c );
@@ -107,12 +111,13 @@ public class InlineDataSource extends AbstractDataSource {
     }
 
     /**
-     * s formatted ds with only commas delineating datums.  If all elements are parseable as a
+     * parse the string which contains a comma-delineated sequence of 
+     * data.  If all elements are parseable as a
      * double, the result is a dimensionless array.  If parseable as
      * times, the result is a time array.  Otherwise the result is a
      * result has enumeration units for the ordinal values.
      * @param s formatted ds with only commas delineating datums
-     * @return
+     * @return rank 1 dataset, or rank 0 if there are no commas.
      */
     private MutablePropertyDataSet parseInlineDsSimple( String s ) {
         logger.log(Level.FINEST, "parseInlineDsSimple {0}", s);
@@ -128,7 +133,12 @@ public class InlineDataSource extends AbstractDataSource {
         for (String ss21 : ss2) {
             try {
                 if (!isTime && !isEnum) {
-                    u.parse(ss21);
+                    try {
+                        u.parse(ss21);
+                    } catch ( InconvertibleUnitsException ex3 ) {
+                        Datum d= DatumUtil.lookupDatum(ss21);
+                        u= d.getUnits();
+                    }
                 }
             } catch (ParseException e) {
                 isTime= true;
@@ -136,7 +146,13 @@ public class InlineDataSource extends AbstractDataSource {
                     try {
                         tu.parse(ss21);
                     }catch (ParseException ex) {
-                        isEnum= true;
+                        try {
+                            Datum d= DatumUtil.lookupDatum(ss21);
+                            u= d.getUnits();
+                            isTime= false;
+                        } catch ( ParseException ex2 ) {
+                            isEnum= true;
+                        }
                     }
                 }
             }
@@ -154,6 +170,7 @@ public class InlineDataSource extends AbstractDataSource {
                     if ( j==0 ) result.putProperty( QDataSet.UNITS, tu );
                 } else {
                     result.putValue(j, u.parse(ss).value() );
+                    if ( j==0 && u!=Units.dimensionless ) result.putProperty( QDataSet.UNITS, u );
                 }
             }
         } catch ( ParseException ex ) {
@@ -167,13 +184,21 @@ public class InlineDataSource extends AbstractDataSource {
         }
     }
 
+    /**
+     * handle line of inline ds which can take one of three forms:<ul>
+     * <li>a list of variables like "aa,bb,cc" which means link the three together to make a dataset.
+     * <li>an expression like "aa+bb" or "pow(aa,10)"
+     * <li>a literal like "1,2,3,2,3,2,1" or "2000-02-02T02:02,2000-02-02T02:03,2000-02-02T02:04"
+     * </ul>
+     * @param s the line of code
+     * @return the QDataSet
+     * @throws Exception when the line cannot be interpreted.
+     */
     private MutablePropertyDataSet parseInlineDs( String s ) throws Exception {
         logger.log(Level.FINEST, "parseInlineDs {0}", s);
 
         if ( s.equals("None") || s.equals("null") || s.equals("") ) return null;
             
-        boolean isCommand= s.length()>0 && s.charAt(0)>='a' && s.charAt(0)<='z';
-
         String linkCommand=null;
         
         try {    
@@ -194,11 +219,11 @@ public class InlineDataSource extends AbstractDataSource {
             logger.log( Level.FINE, ex.getMessage(), ex );
         }
 
-
-        if ( isCommand ) {  // we'll use a jython interpretter in the future
-            try {
-                return jyCommand(s);
-            } catch ( Exception ex ) {
+        try {
+            return handleJythonExpression(s);
+        } catch ( Exception ex ) {
+            boolean isNotList= s.length()>0 && ( ( s.charAt(0)>='a' && s.charAt(0)<='z' ) || s.charAt(0)=='(' );
+            if ( isNotList ) {
                 throw new IllegalArgumentException( "inline jython code raises exception: "+ex, ex );
             }
         }
@@ -368,7 +393,7 @@ public class InlineDataSource extends AbstractDataSource {
             throw new IllegalArgumentException("URI don't contain anything to plot");
         }
         
-        for ( int idep=0; idep<4; idep++ ) {
+        for ( int idep=0; idep<QDataSet.MAX_RANK; idep++ ) {
             Map<String,String> depp= deppropn[idep];
             if ( depp==null ) continue;
             for ( Entry<String,String> ent: depp.entrySet() ) {
@@ -420,6 +445,8 @@ public class InlineDataSource extends AbstractDataSource {
                     if ( ds.property(QDataSet.RENDER_TYPE)!=null ) zz.putProperty(QDataSet.RENDER_TYPE,ds.property(QDataSet.RENDER_TYPE)); // vap+inline:0,0,100,100,0,0; 0,0,0,100,100,0&RENDER_TYPE=scatter
                     zz.putProperty( QDataSet.DEPEND_0, xx );
                     ds= zz;
+                } else if ( Schemes.isBoundingBox(ds) ) {
+                    // do nothing
                 } else {
                     MutablePropertyDataSet xx= DDataSet.copy(DataSetOps.slice1(ds,0));
                     MutablePropertyDataSet zz= DDataSet.copy(DataSetOps.slice1(ds,ds.length(0)-1));

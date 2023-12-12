@@ -1,6 +1,7 @@
 
 package org.autoplot.idlsupport;
 
+import java.io.IOException;
 import java.net.URI;
 import java.security.KeyManagementException;
 import java.security.NoSuchAlgorithmException;
@@ -22,6 +23,7 @@ import org.das2.qds.QDataSet;
 import org.autoplot.datasource.DataSetURI;
 import org.autoplot.datasource.DataSource;
 import org.autoplot.datasource.DataSourceFactory;
+import org.das2.util.AboutUtil;
 
 /**
  * Extension to QDataSetBridge, which supports reading in data from Autoplot URIs.
@@ -42,14 +44,21 @@ public class APDataSet extends QDataSetBridge {
 
     /**
      * 1.4.1 clean up Das2Server source so that monitor is only called once.
+     * It is so common that certificates are mis-configured in our field just disable them for now.
      */
     public APDataSet() {
         super();
-        System.err.println("APDataSet v1.6.1");
-        String j= System.getProperty("java.version");
-        System.err.println("Java Version "+j);
-
-        logger.fine("disabling HTTP certificate checks.");
+        if ( logger.isLoggable(Level.INFO) ) {
+            System.err.println("APDataSet v1.8.0");
+            try {
+                System.err.println("Autoplot Version "+ AboutUtil.getReleaseTag() );
+            } catch ( IOException ex ) {
+                System.err.println("unable to determine Autoplot version." );
+            }
+            String j= System.getProperty("java.version");
+            System.err.println("Java Version "+j);
+            System.err.println("disabling HTTP certificate checks.");
+        }
         try {
             TrustManager[] trustAllCerts = new TrustManager[]{
                 new X509TrustManager() {
@@ -155,19 +164,25 @@ public class APDataSet extends QDataSetBridge {
         }
         URI uri= DataSetURI.getURI(surl);
         DataSourceFactory f= DataSetURI.getDataSourceFactory( uri, new NullProgressMonitor());
-
+        if ( f==null ) {
+            System.err.println("Unable to find DataSource for handling URI: "+uri);
+            throw new IllegalArgumentException("Unable to find DataSource for handling URI: "+uri);
+        }
         List<String> problems= new ArrayList();
-        if ( f.reject( surl, problems, mon ) ) {
+        if ( f.reject( surl, problems, mon.getSubtaskMonitor("check reject") ) ) {
             throw new Exception("URI was rejected by the datasource: "+surl +" rejected by "+ f );
         }
 
         DataSource dsource = f.getDataSource(uri);
 
-        QDataSet result = dsource.getDataSet( mon);
+        QDataSet result = dsource.getDataSet( mon.getSubtaskMonitor("getDataSet") );
 
         if ( result==null ) {
+            mon.finished();
             throw new Exception("getDataSet did not result in dataset: "+surl );
         }
+        
+        mon.finished();
         return result;
     }
 

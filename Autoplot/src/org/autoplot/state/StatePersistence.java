@@ -1,11 +1,3 @@
-/*
- * StatePersistence.java
- *
- * Created on August 8, 2007, 10:47 AM
- *
- * To change this template, choose Tools | Template Manager
- * and open the template in the editor.
- */
 
 package org.autoplot.state;
 
@@ -28,6 +20,8 @@ import java.lang.reflect.InvocationTargetException;
 import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Formatter;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -67,6 +61,7 @@ import org.jdesktop.beansbinding.Bindings;
 import org.autoplot.dom.Axis;
 import org.autoplot.dom.BindingModel;
 import org.autoplot.dom.Canvas;
+import org.autoplot.dom.Column;
 import org.autoplot.dom.DomUtil;
 import org.autoplot.dom.Plot;
 import org.autoplot.dom.Row;
@@ -74,7 +69,7 @@ import org.das2.qstream.SerializeDelegate;
 import org.das2.qstream.SerializeRegistry;
 
 /**
- *
+ * Class for serializing and deserializing application configuration.
  * @author jbf
  */
 public class StatePersistence {
@@ -93,7 +88,7 @@ public class StatePersistence {
     }
 
     public static void saveState( File f, Object state ) throws IOException {
-        saveState( f, state, "" );
+        saveState( new FileOutputStream(f), state, "" );
     }
 
     /**
@@ -104,30 +99,9 @@ public class StatePersistence {
      * @throws IOException
      */
     public static void saveState( File f, Object state, String sscheme ) throws IOException {
-        /* XMLEncoder e = new XMLEncoder( new BufferedOutputStream( new FileOutputStream(f) ) );
-        
-        e.setPersistenceDelegate( DatumRange.class, new DatumRangePersistenceDelegate() );
-        e.setPersistenceDelegate( Units.class, new UnitsPersistenceDelegate() );
-        e.setPersistenceDelegate( Datum.class, new DatumPersistenceDelegate() );
-        e.setPersistenceDelegate( Datum.Double.class, new DatumPersistenceDelegate() );
-        e.setPersistenceDelegate( DasColorBar.Type.class, new TypeSafeEnumPersistenceDelegate() );
-        e.setPersistenceDelegate( DefaultPlotSymbol.class, new TypeSafeEnumPersistenceDelegate() );
-        e.setPersistenceDelegate( BindingModel.class, new BindingPersistenceDelegate() );
-        e.setPersistenceDelegate( Connector.class, new ConnectorPersistenceDelegate() );
-
-        //e.setPersistenceDelegate( ApplicationModel.RenderType.class, new TypeSafeEnumPersistenceDelegate() );
-        
-        e.setExceptionListener( new ExceptionListener() {
-            public void exceptionThrown(Exception e) {
-                e.printStackTrace();
-            }
-        } );
-        e.writeObject(state);
-        e.close();
-        */
         saveState( new FileOutputStream(f), state, sscheme );
     }
-        
+    
     /**
      * Save the Object (DOM application) to a file.
      * @param out the output stream.
@@ -147,30 +121,40 @@ public class StatePersistence {
         VapScheme currentScheme= new Vap1_09Scheme();
 
         VapScheme scheme;
-        if ( sscheme.equals("") ) {
-            scheme= new Vap1_08Scheme();
-        } else if ( sscheme.equals("1.09") ) {
-            scheme= new Vap1_09Scheme();
-        } else if ( sscheme.equals("1.08") ) {
-            scheme= new Vap1_08Scheme();
-        } else if ( sscheme.equals("1.07") ) {
-            scheme= new Vap1_07Scheme();
-        } else if ( sscheme.equals("1.06") ) {
-            scheme= new Vap1_06Scheme();
-        } else {
-            throw new IllegalArgumentException("output scheme not supported: "+sscheme);
+        switch (sscheme) {
+            case "":
+                scheme= new Vap1_08Scheme();
+                break;
+            case "1.09":
+                scheme= new Vap1_09Scheme();
+                break;
+            case "1.08":
+                scheme= new Vap1_08Scheme();
+                break;
+            case "1.07":
+                scheme= new Vap1_07Scheme();
+                break;
+            case "1.06":
+                scheme= new Vap1_06Scheme();
+                break;
+            default:
+                throw new IllegalArgumentException("output scheme not supported: "+sscheme);
         }
         
         if ( scheme.getId().equals( "1.08" ) && currentScheme.getId().equals("1.09") ) {
-            logger.warning("removing all bindings to scale to support old versions");
+            boolean removedBindings= false;
             Application app= (Application)state;
             List<BindingModel> newbms= new ArrayList( Arrays.asList( app.getBindings() ) );
             for ( int i=app.getBindings().length-1; i>=0; i-- ) {
                 if ( app.getBindings(i).getSrcProperty().equals("scale") ||app.getBindings(i).getDstProperty().equals("scale") )  {
                     newbms.remove(i);
+                    removedBindings= true;
                 }
             }
-            app.setBindings(newbms.toArray( new BindingModel[newbms.size()] ) );
+            if ( removedBindings ) {
+                logger.warning("removing all bindings to scale to support old versions");
+                app.setBindings(newbms.toArray( new BindingModel[newbms.size()] ) );
+            }
         }
         
         Element element = SerializeUtil.getDomElement( document, (DomNode)state, scheme, true );
@@ -193,8 +177,6 @@ public class StatePersistence {
                 throw result;
             }
         }
-        
-        
 
         writeDocument( out, document);
     }
@@ -204,7 +186,6 @@ public class StatePersistence {
      * write the document out to the file, hiding the details of the serializer.
      * @param out outputStream
      * @param document XML document object
-     * @return
      * @throws LSException
      * @throws DOMException
      * @throws FileNotFoundException
@@ -234,9 +215,8 @@ public class StatePersistence {
     }
     /**
      * write the document out to the file, hiding the details of the serializer.
-     * @param f
-     * @param document
-     * @return
+     * @param f the file
+     * @param document the XML document model.
      * @throws LSException
      * @throws DOMException
      * @throws FileNotFoundException
@@ -249,8 +229,8 @@ public class StatePersistence {
 
     /**
      * return the first child, if any, with the given tag name.
-     * @param parent
-     * @param tagName
+     * @param parent the node of the tree.
+     * @param tagName the node to look for.
      * @return return the child or null if no such child exists.
      */
     public static Element getChildElement( Element parent, String tagName ) {
@@ -266,7 +246,7 @@ public class StatePersistence {
 
     /**
      * restore the XML file, possibly promoting it.
-     * @param f
+     * @param f the xml vap file.
      * @return the dom object.
      * @throws IOException
      */
@@ -274,7 +254,10 @@ public class StatePersistence {
         InputStream in =new FileInputStream( f );
         Object result;
         try {
-            result= restoreState( in );
+            LinkedHashMap<String,String> macros= new LinkedHashMap<>();
+            String pwd= "file:"+f.getParent()+"/";
+            macros.put("PWD", pwd );
+            result= restoreState( in, macros );
         } finally {
             in.close();
         }
@@ -365,8 +348,8 @@ public class StatePersistence {
      * we need to way to implement bindings, since we may mutate the state
      * before syncing to it.  This makes the state more valid and avoids
      * bugs like 
-     * https://sourceforge.net/tracker/?func=detail&aid=3017554&group_id=199733&atid=970682
-     * @param state
+     * https://sourceforge.net/p/autoplot/bugs/362/
+     * @param state the application model
      */
     private static void doBindings( Application state ) {
         for ( BindingModel m: state.getBindings() ) {
@@ -389,7 +372,8 @@ public class StatePersistence {
      * since it's tied to classes in the running JRE.  It would be non-trivial
      * to implement this.  So we do this for now.
      * 
-     * @param state
+     * @param state the application model
+     * @see DomUtil#deleteDuplicateIds(org.autoplot.dom.Application) 
      */
     private static void makeValid( Application state ) {
         if ( state.getController()!=null ) throw new IllegalArgumentException("state must not have controller");
@@ -399,6 +383,13 @@ public class StatePersistence {
         if ( c.getMarginRow().getId().equals("") ) c.getMarginRow().setId("marginRow_0");
         if ( c.getMarginColumn().getId().equals("") ) c.getMarginColumn().setId("marginColumn_0");
 
+        // There was a bug where addPlots(3,3) would incorrectly set the parent, but it still worked, oddly.
+        for ( Column col: state.getCanvases(0).getColumns() ) {
+            if ( col.getParent().equals( c.getMarginRow().getId() ) ) {
+                col.setParent( c.getMarginColumn().getId() );
+            }
+        }
+        
         if ( state.getPlots(0).getRowId().equals("") ) {
             int n= state.getPlots().length;
             Row[] rows= new Row[n];
@@ -455,6 +446,9 @@ public class StatePersistence {
                 BeanProperty.create(m.getDstProperty()).setValue(dst,srcVal);
             }
         }
+        
+        DomUtil.deleteDuplicateIds(state);
+        
     }
 
     
@@ -465,10 +459,19 @@ public class StatePersistence {
      *   DOM after it's loaded.  
      * @return the DOM.
      * @throws IOException 
+     * @see #restoreState(java.io.InputStream) which just restores the state.
      */
     public static Application restoreState(InputStream in, LinkedHashMap<String, String> deltas) throws IOException {
         
         Application state = (Application) StatePersistence.restoreState(in);
+        
+        List<String> problems= DomUtil.checkUniqueIdsAndReferences( state, new ArrayList<>() );
+        if ( problems.size()>0 ) {
+            for ( String s: problems ) {
+                logger.warning(s);
+            }
+        }
+        
         makeValid( state );
         
         if (deltas != null) {
@@ -492,13 +495,7 @@ public class StatePersistence {
                     Class c;
                     try {
                         c = DomUtil.getPropertyType(state, node);
-                    } catch (IllegalAccessException ex) {
-                        logger.log(Level.SEVERE, ex.getMessage(), ex);
-                        continue;
-                    } catch (IllegalArgumentException ex) {
-                        logger.log(Level.SEVERE, ex.getMessage(), ex);
-                        continue;
-                    } catch (InvocationTargetException ex) {
+                    } catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException ex) {
                         logger.log(Level.SEVERE, ex.getMessage(), ex);
                         continue;
                     }
@@ -515,11 +512,7 @@ public class StatePersistence {
                         val = sd.parse(sd.typeId(c), sval);
                         //                    prop.setValue(state, val);
                         DomUtil.setPropertyValue(state, node, val);
-                    } catch (IllegalAccessException ex) {
-                        logger.log(Level.SEVERE, ex.getMessage(), ex);
-                    } catch (IllegalArgumentException ex) {
-                        logger.log(Level.SEVERE, ex.getMessage(), ex);
-                    } catch (InvocationTargetException ex) {
+                    } catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException ex) {
                         logger.log(Level.SEVERE, ex.getMessage(), ex);
                     } catch (ParseException ex) {
                         IOException ioex= new IOException( ex.getMessage() );
@@ -537,15 +530,21 @@ public class StatePersistence {
      * @param in, an input stream that starts with the xml.  This will be left open.  
      * @return the Application object.
      * @throws IOException
+     * @throws IllegalArgumentException if the stream is not a .vap.
+     * @see #restoreState(java.io.InputStream, java.util.LinkedHashMap) see restoreState which has macros like "PWD"
      */
     public static Object restoreState( InputStream in )  throws IOException {
         PushbackInputStream pbin= new PushbackInputStream(in,10);
-
-        if ( pbin.available()<5 ) {
-            System.err.println("less than 5 chars available, can't check");
+        int available= pbin.available();
+        logger.log(Level.FINER, "available bytes in stream: {0}", available);
+        if ( available<5 ) {
+            throw new IllegalArgumentException("expected to find file that contained at least 5 characters");
         } else {
             byte[] five= new byte[5];
-            pbin.read(five);
+            int bytesRead= pbin.read(five);
+            while ( bytesRead<5 ) {
+                bytesRead+= pbin.read(five,bytesRead,5-bytesRead);
+            }
             String magic= new String( five );
             if ( !( magic.equals("<?xml") || magic.equals("<vap ") || magic.equals("<java") ) ) {
                 throw new IllegalArgumentException("expected to find document that started with \"<?xml\" , this starts with \""+magic+"\"." );
@@ -553,7 +552,8 @@ public class StatePersistence {
             pbin.unread(five);
         }
         
-        InputStreamReader isr= new InputStreamReader( pbin );
+        InputStreamReader isr= new InputStreamReader( pbin, "UTF-8" );
+
         Application state;
         String domVersion;
 
@@ -576,6 +576,9 @@ public class StatePersistence {
                     } else {
                         throw new IllegalArgumentException("exception report doesn't have vap node");
                     }
+                } else if ( !root.getNodeName().equals("vap") ) {
+                    throw new IllegalArgumentException("content should be a .vap file, an xml file with vap for the root node.");
+                    
                 }
                 
                 domVersion= root.getAttribute("domVersion");
@@ -606,7 +609,8 @@ public class StatePersistence {
                             InputStream xsl = StatePersistence.class.getResourceAsStream(fname);
                             if ( xsl==null ) {                            
                                 // Unable to find the file 'fname'
-                                throw new RuntimeException("Unable to read .vap file version "+String.format("%.2f",srcVersion)+".  Upgrade to a newer version of Autoplot.");
+                                String vv= new Formatter().format( Locale.US, "%.2f",srcVersion ).toString() ;
+                                throw new RuntimeException("Unable to read .vap file version "+vv+".  Upgrade to a newer version of Autoplot.");
                             }
                             TransformerFactory factory = TransformerFactory.newInstance();
                             Transformer tr = factory.newTransformer(new StreamSource(xsl));
@@ -675,15 +679,10 @@ public class StatePersistence {
             
             return state;
 
-        } catch (ParseException ex) {
+        } catch (ParseException | TransformerException ex) {
             logger.log(Level.SEVERE, ex.getMessage(), ex);
             throw new RuntimeException(ex);
-        } catch (TransformerException ex) {
-            logger.log(Level.SEVERE, ex.getMessage(), ex);
-            throw new RuntimeException(ex);
-        } catch (SAXException ex) {
-            throw new RuntimeException(ex);
-        } catch (ParserConfigurationException ex) {
+        } catch (SAXException | ParserConfigurationException ex) {
             throw new RuntimeException(ex);
         }
 
@@ -697,39 +696,45 @@ public class StatePersistence {
         NodeList nl= element.getChildNodes();
         for ( int i=0; i<nl.getLength(); i++ ) {
             Node n= nl.item(i);
-            if ( n.getNodeName().equals("void") ) {
-                NamedNodeMap nn= n.getAttributes();
-                Node prop= nn.getNamedItem("property");
-                if ( prop!=null ) {
-                    if ( prop.getNodeValue().equals("autorange") ) prop.setNodeValue("autoRange");
-                    if ( prop.getNodeValue().equals("autolabel") ) prop.setNodeValue("autoLabel");
-                    if ( prop.getNodeValue().equals("panels") ) prop.setNodeValue("plotElements");
-                    if ( prop.getNodeValue().equals("parentPanel") ) prop.setNodeValue("parent");
-                }
-            } else if ( n.getNodeName().equals("object") ) {
-                NamedNodeMap nn= n.getAttributes();
-
-                Node prop= nn.getNamedItem("class");
-                if ( prop==null ) {
-                    continue;
-                }
-                if ( prop.getNodeValue().equals("org.virbo.autoplot.dom.Panel") ) {
-                    prop.setNodeValue("org.virbo.autoplot.dom.PlotElement");
-                } else if ( prop.getNodeValue().equals("org.virbo.autoplot.dom.PanelStyle") ) {
-                    prop.setNodeValue("org.virbo.autoplot.dom.PlotElementStyle");
-                }
-            } else if ( n.getNodeName().equals("array") ) {
-                NamedNodeMap nn= n.getAttributes();
-
-                Node prop= nn.getNamedItem("class");
-                if ( prop==null ) {
-                    continue;
-                }
-                if ( prop.getNodeValue().equals("org.virbo.autoplot.dom.Panel") ) {
-                    prop.setNodeValue("org.virbo.autoplot.dom.PlotElement");
-                } else if ( prop.getNodeValue().equals("org.virbo.autoplot.dom.PanelStyle") ) {
-                    prop.setNodeValue("org.virbo.autoplot.dom.PlotElementStyle");
-                }
+            NamedNodeMap nn;
+            Node prop;
+            switch (n.getNodeName()) {
+                case "void":
+                    nn= n.getAttributes();
+                    prop= nn.getNamedItem("property");
+                    if ( prop!=null ) {
+                        if ( prop.getNodeValue().equals("autorange") ) prop.setNodeValue("autoRange");
+                        if ( prop.getNodeValue().equals("autolabel") ) prop.setNodeValue("autoLabel");
+                        if ( prop.getNodeValue().equals("panels") ) prop.setNodeValue("plotElements");
+                        if ( prop.getNodeValue().equals("parentPanel") ) prop.setNodeValue("parent");
+                    }       
+                    break;
+                case "object":
+                    nn= n.getAttributes();
+                    prop= nn.getNamedItem("class");
+                    if ( prop==null ) {
+                        continue;
+                    } 
+                    if ( prop.getNodeValue().equals("org.virbo.autoplot.dom.Panel") ) {
+                        prop.setNodeValue("org.virbo.autoplot.dom.PlotElement");
+                    } else if ( prop.getNodeValue().equals("org.virbo.autoplot.dom.PanelStyle") ) {
+                        prop.setNodeValue("org.virbo.autoplot.dom.PlotElementStyle");
+                    }       
+                    break;
+                case "array":
+                    nn= n.getAttributes();
+                    prop= nn.getNamedItem("class");
+                    if ( prop==null ) {
+                        continue;
+                    }       
+                    if ( prop.getNodeValue().equals("org.virbo.autoplot.dom.Panel") ) {
+                        prop.setNodeValue("org.virbo.autoplot.dom.PlotElement");
+                    } else if ( prop.getNodeValue().equals("org.virbo.autoplot.dom.PanelStyle") ) {
+                        prop.setNodeValue("org.virbo.autoplot.dom.PlotElementStyle");
+                    }       
+                    break;
+                default:
+                    break;
             }
 
             if ( n.hasChildNodes() && n instanceof Element ) {

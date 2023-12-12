@@ -12,7 +12,6 @@ import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.util.Calendar;
-import java.util.Iterator;
 import java.util.TimeZone;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -28,6 +27,7 @@ import org.json.JSONObject;
 
 /**
  * Info servlet returns information about parameters.
+ * @see https://github.com/hapi-server/data-specification/blob/master/hapi-2.0.0/HAPI-data-access-spec-2.0.0.md#info
  * @author jbf
  */
 public class InfoServlet extends HttpServlet {
@@ -51,12 +51,16 @@ public class InfoServlet extends HttpServlet {
         JSONArray parameters= new JSONArray();
 
         File infoFileHome= new File( Util.getHapiHome(), "info" );
-        File infoFile= new File( infoFileHome, id+".json" );
+        File infoFile= new File( infoFileHome, Util.fileSystemSafeName(id)+".json" );
+        
+        if ( !infoFile.exists() ) {
+            throw new FileNotFoundException("Server misconfiguration, expected to find file for "+id+" ("+Util.fileSystemSafeName(id)+")" );
+        }
         
         JSONObject o= HapiServerSupport.readJSON(infoFile);
         
         o.put("HAPI",Util.hapiVersion());
-        o.put("createdAt",String.format("%tFT%<tRZ",Calendar.getInstance(TimeZone.getTimeZone("Z"))));
+        o.put("x_createdAt",String.format("%tFT%<tRZ",Calendar.getInstance(TimeZone.getTimeZone("Z"))));
         
         JSONArray parametersRead= o.getJSONArray("parameters");
         for ( int i=0; i<parametersRead.length(); i++ ) {
@@ -102,7 +106,7 @@ public class InfoServlet extends HttpServlet {
         status.put( "message", "OK request successful");
                 
         o.put( "status", status );
-        o.put("__infoVersion__", "20171201.1" );
+        o.put( "x_infoVersion__", "20210715.1" );
         return o;
 
     }
@@ -144,7 +148,9 @@ public class InfoServlet extends HttpServlet {
                String s= jo.toString(4);
                out.write(s);
            } catch ( IllegalArgumentException ex ) {
-                Util.raiseBadId(id, response, out);
+               Util.raiseBadId(id, response, out);
+           } catch ( FileNotFoundException ex ) {
+               Util.raiseMisconfiguration( id, ex, response, out );
            }
         } catch ( JSONException ex ) {
             throw new ServletException(ex);
@@ -195,7 +201,7 @@ public class InfoServlet extends HttpServlet {
         }
         
         File dataFileHome= new File( Util.getHapiHome(), "info" );
-        File dataFile= new File( dataFileHome, id+".json" );
+        File dataFile= new File( dataFileHome, Util.fileSystemSafeName(id)+".json" );
         
         ByteArrayOutputStream out= new ByteArrayOutputStream(2000);
         

@@ -1,10 +1,19 @@
 
 package org.autoplot.scriptconsole;
 
+import com.github.difflib.UnifiedDiffUtils;
+import com.github.difflib.patch.AbstractDelta;
+import com.github.difflib.patch.ChangeDelta;
+import com.github.difflib.patch.Chunk;
+import com.github.difflib.patch.DeleteDelta;
+import com.github.difflib.patch.InsertDelta;
+import com.github.difflib.patch.Patch;
 import java.awt.BorderLayout;
+import java.awt.Color;
 import java.awt.Dimension;
 import java.awt.Event;
 import java.awt.HeadlessException;
+import java.awt.event.KeyEvent;
 import java.beans.ExceptionListener;
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
@@ -19,18 +28,24 @@ import java.io.FilterOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.io.LineNumberReader;
 import java.io.OutputStream;
+import java.io.StringReader;
+import java.lang.reflect.InvocationTargetException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.nio.file.ClosedWatchServiceException;
 import java.nio.file.FileSystems;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardWatchEventKinds;
 import java.nio.file.WatchEvent;
 import java.nio.file.WatchKey;
 import java.nio.file.WatchService;
 import java.text.ParseException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -52,8 +67,7 @@ import javax.swing.JPanel;
 import javax.swing.JScrollPane;
 import javax.swing.SwingUtilities;
 import javax.swing.event.ListSelectionEvent;
-import javax.swing.event.ListSelectionListener;
-import javax.swing.filechooser.FileFilter;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import javax.swing.text.BadLocationException;
 import javax.swing.text.Document;
 import javax.swing.text.Element;
@@ -84,9 +98,17 @@ import org.autoplot.datasource.DataSetSelector;
 import org.autoplot.datasource.DataSetURI;
 import org.autoplot.datasource.FileSystemUtil;
 import org.autoplot.datasource.URISplit;
+import org.autoplot.datasource.jython.JythonDataSource;
 import org.autoplot.datasource.jython.JythonDataSourceFactory;
 import org.autoplot.jythonsupport.ui.EditorAnnotationsSupport;
 import org.autoplot.jythonsupport.ui.ParametersFormPanel;
+import org.das2.util.ColorUtil;
+import org.das2.util.filesystem.GitCommand;
+import org.python.parser.Node;
+import org.python.parser.ast.Expr;
+import org.python.parser.ast.Str;
+import org.python.parser.ast.TryExcept;
+import org.python.parser.ast.stmtType;
 
 /**
  * Error annotations, saveAs, etc.
@@ -116,43 +138,47 @@ public class ScriptPanelSupport {
         this.panel = panel;
         this.annotationsSupport = panel.getEditorPanel().getEditorAnnotationsSupport();
 
-        applicationController.addPropertyChangeListener(ApplicationController.PROP_FOCUSURI, new PropertyChangeListener() {
-            @Override
-            public void propertyChange(PropertyChangeEvent evt) {
-                if ( panel.runningScript==null ) {
-                    maybeDisplayDataSourceScript();
-                }
+        applicationController.addPropertyChangeListener(ApplicationController.PROP_FOCUSURI, (PropertyChangeEvent evt) -> {
+            if ( panel.runningScript==null ) {
+                maybeDisplayDataSourceScript();
             }
         });
 
     }
 
-    /**
-     * @return true if the source was displayed.
-     * @throws java.awt.HeadlessException
-     * @throws java.lang.NullPointerException
-     */
-    private boolean maybeDisplayDataSourceScript() throws HeadlessException, NullPointerException {
+    private boolean canDisplayDataSourceScript( String sfile ) {
         URISplit split;
+        if (sfile == null) {
+            return false;
+        }
+        split = URISplit.parse(sfile);
+        if (!( URISplit.implicitVapScheme(split).endsWith("jyds") ) ) {
+            return false;
+        }
+        if (panel.isDirty()) {
+            logger.fine("editor is dirty, not showing script.");
+            return false;
+        }
+
+        if ( this.panel.getRunningScript()!=null ) {
+            logger.fine("editor is busy running a script.");
+            return false;
+        }
+        String existingFile=this.panel.getFilename(); 
+        if ( existingFile!=null ) {
+            URISplit split2= URISplit.parse(existingFile);
+            if ( split2.ext.equals(".jy") ) {
+                return false;
+            }
+        }
+
+        return true;
+
+    }
+    
+    private boolean scriptIsAlreadyShowing( String sfile ) {
         try {
-            String sfile = applicationController.getFocusUri();
-            if (sfile == null) {
-                return false;
-            }
-            split = URISplit.parse(sfile);
-            if (!( URISplit.implicitVapScheme(split).endsWith("jyds") ) ) {
-                return false;
-            }
-            if (panel.isDirty()) {
-                logger.fine("editor is dirty, not showing script.");
-                return false;
-            }
-            
-            if ( this.panel.getRunningScript()!=null ) {
-                logger.fine("editor is busy running a script.");
-                return false;
-            }
-            
+            URISplit split=  URISplit.parse(sfile);
             if ( split.params!=null ) {
                 Map<String,String> params= URISplit.parseParams(split.params);
                 if ( params.containsKey("script") ) {
@@ -184,35 +210,75 @@ public class ScriptPanelSupport {
                     }
                 }
             }
+        } catch (URISyntaxException ex) {
+            logger.log(Level.SEVERE, null, ex);
+        }
+        return false;
+    }
+    
+    /**
+     * @return true if the source is displayed.
+     * @throws java.awt.HeadlessException
+     */
+    private boolean maybeDisplayDataSourceScript() throws HeadlessException {
+        
+        try {
+            final String sfile=  applicationController.getFocusUri();
+            if ( sfile.trim().isEmpty() ) return false;
+            
+            final String fsfile;
+            URISplit split= URISplit.parse(sfile);
+            Map<String,String> params= URISplit.parseParams(split.params);
+            String script= params.get(JythonDataSource.PARAM_SCRIPT);
+            if ( script!=null && script.trim().length()>0 ) {
+                fsfile= script;
+            } else {
+                fsfile= split.file;
+            }
+            
+            if ( canDisplayDataSourceScript( fsfile )==false ) {
+                return false;
+            }
+            
+            if ( scriptIsAlreadyShowing( fsfile )==true ) {
+                return true;
+            }
             
             //TODO: why can't we have a DasProgressPanel on any component?
-            Runnable run= new Runnable() {
-                public void run() {
-                    try {
-                        file = DataSetURI.getFile( fsfile, new NullProgressMonitor() );
-                        loadFile(file);
-                        panel.setContext(JythonScriptPanel.CONTEXT_DATA_SOURCE);
-                        panel.setFilename(file.toString());    
-                    } catch (IOException ex) {
-                        logger.log(Level.SEVERE, ex.getMessage(), ex);
-                    }
+            Runnable swrun= () -> {
+                try {
+                    panel.getEditorPanel().getEditorKit();
+                    MutableAttributeSet att= new SimpleAttributeSet();
+                    StyleConstants.setItalic( att, true);
+                    ScriptPanelSupport.this.file= null;
+                    panel.getEditorPanel().getDocument().remove( 0, panel.getEditorPanel().getDocument().getLength() );
+                    panel.getEditorPanel().getDocument().insertString( 0, "loading "+fsfile, att );
+                } catch ( BadLocationException ex ) {
+                    logger.log(Level.SEVERE, null, ex);
                 }
             };
-            try {
-                panel.getEditorPanel().getEditorKit();
-                MutableAttributeSet att= new SimpleAttributeSet();
-                StyleConstants.setItalic( att, true);
-                panel.getEditorPanel().getDocument().remove( 0, panel.getEditorPanel().getDocument().getLength() );
-                panel.getEditorPanel().getDocument().insertString( 0, "loading "+fsfile, att );
-            } catch ( BadLocationException ex ) {
-                
+            if ( SwingUtilities.isEventDispatchThread() ) {
+                swrun.run(); 
+            } else {
+                try {
+                    SwingUtilities.invokeAndWait(swrun);
+                } catch (InterruptedException | InvocationTargetException ex) {
+                    logger.log(Level.SEVERE, null, ex);
+                }
             }
+            Runnable run= () -> {
+                try {
+                    file = DataSetURI.getFile( fsfile, new NullProgressMonitor() );
+                    loadFile(file);
+                    panel.setContext(JythonScriptPanel.CONTEXT_DATA_SOURCE);
+                    panel.setFilename(file.toString());
+                } catch (IOException ex) {
+                    logger.log(Level.SEVERE, ex.getMessage(), ex);
+                }
+            };
             new Thread( run, "load script thread" ).start();
             
         } catch (NullPointerException ex) {
-            logger.log(Level.SEVERE, ex.getMessage(), ex);
-            return false;
-        } catch (URISyntaxException ex ) {
             logger.log(Level.SEVERE, ex.getMessage(), ex);
             return false;
         }
@@ -228,7 +294,7 @@ public class ScriptPanelSupport {
      */
     public int getSaveFile() throws IOException {
         JFileChooser chooser = new JFileChooser();
-        chooser.setFileFilter(getFileFilter());
+        chooser.setFileFilter(new FileNameExtensionFilter( "python and jython scripts", new String [] { "jy", "py", "jyds" } ));
         final JCheckBox cb= new JCheckBox("rename");
         cb.setEnabled(true);
         cb.setToolTipText("rename file, deleting old name \""+file+"\"");
@@ -254,7 +320,7 @@ public class ScriptPanelSupport {
             } else {
                 chooser.setSelectedFile(file);
             }
-            Preferences prefs = AutoplotSettings.settings().getPreferences(ScriptPanelSupport.class);
+            Preferences prefs = AutoplotSettings.getPreferences(ScriptPanelSupport.class);
             String openFile= prefs.get(PREFERENCE_OPEN_FILE, "");
             if ( !openFile.equals("") && !FileSystemUtil.isChildOf( FileSystem.settings().getLocalCacheDir(), new File(openFile) )  ) {
                 File dir= new File(openFile).getParentFile();
@@ -262,7 +328,7 @@ public class ScriptPanelSupport {
             }
         }
         if ( file==null ) {
-            Preferences prefs = AutoplotSettings.settings().getPreferences(ScriptPanelSupport.class);
+            Preferences prefs = AutoplotSettings.getPreferences(ScriptPanelSupport.class);
             String openFile = prefs.get(PREFERENCE_OPEN_FILE, "");
             if ( !openFile.equals("") ) {
                 chooser.setCurrentDirectory( new File(openFile).getParentFile() );
@@ -323,20 +389,18 @@ public class ScriptPanelSupport {
             panel.setDirty(false);
             
             final File ffile= file;
-            Runnable run= new Runnable() {
-                public void run() {
-                    try {
-                        logger.fine("pausing before restarting watcher");
-                        Thread.sleep(10000);
-                    } catch (InterruptedException ex) {
-                        Logger.getLogger(ScriptPanelSupport.class.getName()).log(Level.SEVERE, null, ex);
-                    }
-                    try {
-                        logger.fine("restarting watcher");
-                        restartWatcher(ffile);
-                    } catch (IOException ex) {
-                        Logger.getLogger(ScriptPanelSupport.class.getName()).log(Level.SEVERE, null, ex);
-                    }
+            Runnable run= () -> {
+                try {
+                    logger.fine("pausing before restarting watcher");
+                    Thread.sleep(10000);
+                } catch (InterruptedException ex) {
+                    Logger.getLogger(ScriptPanelSupport.class.getName()).log(Level.SEVERE, null, ex);
+                }
+                try {
+                    logger.fine("restarting watcher");
+                    restartWatcher(ffile);
+                } catch (IOException ex) {
+                    Logger.getLogger(ScriptPanelSupport.class.getName()).log(Level.SEVERE, null, ex);
                 }
             };
             new Thread(run).start();
@@ -350,42 +414,51 @@ public class ScriptPanelSupport {
     WatchService watcher;
     
     private void watcherRunnable( final WatchService watch, final Path fpath ) {
-        Runnable run= new Runnable() {
-            @Override
-            public void run() {
-                Path parent= fpath.getParent();
-                logger.log(Level.FINER, "start watch event loop on {0}", new Object[]{parent});
-                while ( true ) {
-                    try {
-                        WatchKey key= watcher.take();
-                        for ( WatchEvent e : key.pollEvents() ) {
+        Runnable run= () -> {
+            Path parent= fpath.getParent();
+            logger.log(Level.FINER, "start watch event loop on {0}", new Object[]{parent});
+            while ( true ) {
+                try {
+                    WatchKey key= watcher.take();
+                    for ( WatchEvent e : key.pollEvents() ) {
+                        
+                        WatchEvent<Path> ev = (WatchEvent<Path>) e;
+                        Path name = ev.context();
+                        logger.log(Level.FINER, "watch event {0} {1}", new Object[]{ev.kind(), ev.context()});
+                        if ( parent.resolve(name).equals(fpath) ) {
                             
-                            WatchEvent<Path> ev = (WatchEvent<Path>) e;
-                            Path name = ev.context();
-                            logger.log(Level.FINER, "watch event {0} {1}", new Object[]{ev.kind(), ev.context()});
-                            if ( parent.resolve(name).equals(fpath) ) {
-                                
-                                String newContents;
-                                
-                                try ( InputStream in = new FileInputStream( ScriptPanelSupport.this.file ) ) {
-                                    newContents= new String( FileUtil.readBytes( in ) );
-                                    String currentf= panel.getEditorPanel().getText();
-                                    currentf= currentf.trim(); // there's a strange bug where newContents has a newline at the end that current doesn't.
-                                    newContents= newContents.trim();
-                                    if ( currentf.equals(newContents) ) {
-                                        logger.fine("timestamp changed but contents are the same.");
-                                        break;
-                                    }
-                                    
-                                } catch ( IOException ex ) {
+                            String newContents;
+                            
+                            try ( InputStream in = new FileInputStream( ScriptPanelSupport.this.file ) ) {
+                                newContents= new String( FileUtil.readBytes( in ) );
+                                String currentf= panel.getEditorPanel().getText();
+                                currentf= currentf.trim(); // there's a strange bug where newContents has a newline at the end that current doesn't.
+                                newContents= newContents.trim();
+                                if ( currentf.equals(newContents) ) {
+                                    logger.fine("timestamp changed but contents are the same.");
                                     break;
                                 }
                                 
-                                if ( JOptionPane.OK_OPTION== 
-                                    JOptionPane.showConfirmDialog( panel, 
-                                    "File changed on disk.  Do you want to reload?", 
-                                    "File Changed on Disk",
-                                    JOptionPane.OK_CANCEL_OPTION ) ) {
+                            } catch ( IOException ex ) {
+                                break;
+                            }
+                            
+                            if ( !ScriptPanelSupport.this.panel.isDirty() ) {
+                                try {
+                                    Color color= ScriptPanelSupport.this.panel.getBackground();
+                                    ScriptPanelSupport.this.panel.setBackground(ColorUtil.DODGER_BLUE);
+                                    Thread.sleep(300);
+                                    ScriptPanelSupport.this.panel.setBackground(color);
+                                    loadFile( ScriptPanelSupport.this.file );
+                                } catch ( IOException ex ) {
+                                    ScriptPanelSupport.this.panel.setDirty(true);
+                                }
+                            } else {
+                                if ( JOptionPane.OK_OPTION==
+                                    JOptionPane.showConfirmDialog( panel,
+                                            "File changed on disk.  Do you want to reload?",
+                                            "File Changed on Disk",
+                                            JOptionPane.OK_CANCEL_OPTION ) ) {
                                     try {
                                         loadFile( ScriptPanelSupport.this.file );
                                     } catch (IOException ex) {
@@ -394,19 +467,19 @@ public class ScriptPanelSupport {
                                 } else {
                                     ScriptPanelSupport.this.panel.setDirty(true);
                                 }
-                            }
-                        }   
-                        if ( !key.reset() ) {
-                            logger.log(Level.FINER, "watch key could not be reset: {0}", key);
-                            return;
+                            }                            
                         }
-                    } catch ( ClosedWatchServiceException ex ) {
-                        logger.log(Level.FINER, "watch service was closed: {0}", watch);
-                        return;
-                        
-                    } catch (InterruptedException ex) {
-                        logger.log(Level.SEVERE, null, ex);
                     }
+                    if ( !key.reset() ) {
+                        logger.log(Level.FINER, "watch key could not be reset: {0}", key);
+                        return;
+                    }
+                } catch ( ClosedWatchServiceException ex ) {
+                    logger.log(Level.FINER, "watch service was closed: {0}", watch);
+                    return;
+                    
+                } catch (InterruptedException ex) {
+                    logger.log(Level.SEVERE, null, ex);
                 }
             }            
         };
@@ -421,6 +494,7 @@ public class ScriptPanelSupport {
         watcher = FileSystems.getDefault().newWatchService();
         Path fpath= file.toPath();
         Path parent= fpath.getParent();
+        if ( parent==null ) return;
         try {
             parent.register( watcher, StandardWatchEventKinds.ENTRY_MODIFY,
                 StandardWatchEventKinds.ENTRY_CREATE,
@@ -470,27 +544,25 @@ public class ScriptPanelSupport {
                 lineNum++;
             }
             final String fs= buf.toString();
-            Runnable run= new Runnable() {
-                @Override
-                public void run() {
+            Runnable run= () -> {
+                try {
+                    annotationsSupport.clearAnnotations();
+                    Document d = panel.getEditorPanel().getDocument();
+                    d.remove(0, d.getLength());
+                    d.insertString(0, fs, null);
+                    panel.setDirty(false);
+                    panel.resetUndo();
+                } catch ( NullPointerException ex ) {
                     try {
-                        annotationsSupport.clearAnnotations();
                         Document d = panel.getEditorPanel().getDocument();
                         d.remove(0, d.getLength());
                         d.insertString(0, fs, null);
                         panel.setDirty(false);
-                    } catch ( NullPointerException ex ) {
-                        try {
-                            Document d = panel.getEditorPanel().getDocument();
-                            d.remove(0, d.getLength());
-                            d.insertString(0, fs, null);
-                            panel.setDirty(false);
-                        } catch ( BadLocationException ex2 ) {
-                            
-                        }
-                    } catch ( BadLocationException ex ) {
+                    } catch ( BadLocationException ex2 ) {
                         
                     }
+                } catch ( BadLocationException ex ) {
+                    
                 }
             };
             SwingUtilities.invokeLater(run);
@@ -538,20 +610,25 @@ public class ScriptPanelSupport {
      * @param interp null or the interp for further queries.
      */
     public void annotateError(PyException ex, int offset, final PythonInterpreter interp) {
+        PyObject otraceback= ex.traceback;
+        int line=0;
+        final int STACK_LIMIT=7;
+        int count=0; // just in case limit to STACK_LIMIT, because of recursion, etc.
+
         if (ex instanceof PySyntaxError) {
             logger.log(Level.SEVERE, ex.getMessage(), ex);
             int lineno = offset + ((PyInteger) ex.value.__getitem__(1).__getitem__(1)).getValue();
             //String filename= String.valueOf( (ex.value.__getitem__(1).__getitem__(3)) );
             //int col = ((PyInteger) ex.value.__getitem__(1).__getitem__(2)).getValue();
-            annotationsSupport.annotateLine(lineno, "error", ex.toString(),interp);
-        } else {
-            //logger.log(Level.SEVERE, ex.getMessage(), ex);
-            PyObject otraceback= ex.traceback;
-            int line=0;
-            int count=0; // just in case limit to three, because of recursion, etc.
-            //PyFrame theFrame= null;
-            while ( otraceback instanceof PyTraceback && count<3 ) {
-                PyTraceback traceback= ((PyTraceback)otraceback);
+            annotationsSupport.annotateLine(lineno, EditorAnnotationsSupport.ANNO_MAYBE_ERROR, ex.toString(),interp);
+        } 
+        //else {
+        //logger.log(Level.SEVERE, ex.getMessage(), ex);
+
+        
+        //PyFrame theFrame= null;
+        while ( otraceback instanceof PyTraceback && count<STACK_LIMIT ) {
+            PyTraceback traceback= ((PyTraceback)otraceback);
 //                if ( theFrame==null ) { //TODO: check that we don't switch files.  this code doesn't work...
 //                    theFrame= traceback.tb_frame;
 //                } else {
@@ -559,49 +636,45 @@ public class ScriptPanelSupport {
 //                        break;
 //                    }
 //                }
-                if ( traceback.tb_frame==null ) { // this happens with invokeLater and Java exception
-                    PyObject o= ex.value;
-                    if ( o!=null ) {
-                        if ( o instanceof PyObject ) {
-                            // error popup should follow.
-                        } else {
-                            Exception e= (Exception)o.__tojava__(Exception.class);
-                            if ( e!=null ) {
-                                annotateError(e);
-                            }
-                        }
-                    }
+            if ( traceback.tb_frame==null ) { // this happens with invokeLater and Java exception
+                PyObject o= ex.value;
+                if ( o!=null ) {
+                    //findbugs pointed out the absurd code I had here.
+                    logger.info("when does 574 happen?");
+                }
+                otraceback= traceback.tb_next;
+            } else { // typical
+                String fn= traceback.tb_frame.f_code.co_filename;
+                if ( fn!=null && ( fn.equals("<iostream>") || ( fn.equals("<string>") && file==null ) || ( file!=null && fn.equals( file.getName() ) ) ) ) { 
+                    annotationsSupport.annotateLine(offset + traceback.tb_lineno, "error", ex.toString(),interp);
+                    line=  traceback.tb_lineno-1;
                     otraceback= traceback.tb_next;
-                } else { // typical
-                    String fn= traceback.tb_frame.f_code.co_filename;
-                    if ( fn!=null && ( fn.equals("<iostream>") || fn.equals("<string>") || ( file!=null && fn.equals( file.getName() ) ) ) ) { 
-                        annotationsSupport.annotateLine(offset + traceback.tb_lineno, "error", ex.toString(),interp);
-                        line=  traceback.tb_lineno-1;
-                        otraceback= traceback.tb_next;
-                        count++;
-                    } else {
-                        otraceback= traceback.tb_next;
-                    }
+                    count++;
+                } else {
+                    otraceback= traceback.tb_next;
                 }
             }
-            //System.err.println("***");
-            //System.err.println("line="+line);
-            
-            if ( line<0 ) {
-                logger.warning("no trace information available for error "+ex.getMessage());
-                line=0;
-            }
-            final int fline= line;
-            final JEditorPane textArea= panel.getEditorPanel();
-            SwingUtilities.invokeLater( new Runnable() { public void run() {
-                Element element= textArea.getDocument().getDefaultRootElement().getElement(Math.max(0,fline-5)); // 5 lines of context.
-                if ( element!=null ) textArea.setCaretPosition(element.getStartOffset()); 
-                SwingUtilities.invokeLater( new Runnable() { public void run() {
-                    Element element= textArea.getDocument().getDefaultRootElement().getElement(fline); // 5 lines of context.
-                    if ( element!=null ) textArea.setCaretPosition(element.getStartOffset()); 
-                } } );
-            } } );
         }
+        //System.err.println("***");
+        //System.err.println("line="+line);
+
+        if ( line<0 ) {
+            logger.log(Level.WARNING, "no trace information available for error {0}", ex.getMessage());
+            line=0;
+        }
+        final int fline= line;
+        final JEditorPane textArea= panel.getEditorPanel();
+        SwingUtilities.invokeLater(() -> {
+            Element element= textArea.getDocument().getDefaultRootElement().getElement(Math.max(0,fline-5)); // 5 lines of context.
+            if ( element!=null ) textArea.setCaretPosition(element.getStartOffset());
+            SwingUtilities.invokeLater(() -> {
+                Element element1 = textArea.getDocument().getDefaultRootElement().getElement(fline); // 5 lines of context.
+                if (element1 != null) {
+                    textArea.setCaretPosition(element1.getStartOffset());
+                }
+            });
+        });
+        
     }
 
     protected void executeScript() {
@@ -617,7 +690,300 @@ public class ScriptPanelSupport {
     }
 
     /**
+     * clear the annotations and replace lint-type annotations.
+     */
+    private void clearAnnotations() {
+        annotationsSupport.clearAnnotations();
+                    
+        List<String> errs= new ArrayList();
+        try {
+            boolean lintWarning;
+            if ( file==null ) {
+                String text = panel.getEditorPanel().getText();
+                try ( LineNumberReader r= new LineNumberReader( new BufferedReader( new StringReader(text) ) ) ) {
+                    lintWarning= org.autoplot.jythonsupport.JythonUtil.pythonLint( r, errs);
+                }
+            } else {
+                lintWarning= org.autoplot.jythonsupport.JythonUtil.pythonLint( file.toURI(), errs);
+            }
+            
+            if ( lintWarning ) {
+                EditorAnnotationsSupport esa= panel.getEditorPanel().getEditorAnnotationsSupport();
+                for ( String s: errs ) {
+                    String[] ss= s.split(":",2);
+                    try {
+                        String doc= ss[1];
+                        doc= doc.replaceAll("<", "&lt;");
+                        doc= doc.replaceAll(">", "&gt;");
+                        esa.annotateLine(Integer.parseInt(ss[0]), EditorAnnotationsSupport.ANNO_CODE_HINT, "Variable name is already used before execution: " + doc + "<br>Consider using a different name");
+                    } catch (BadLocationException ex) {
+                        logger.log(Level.SEVERE, ex.getMessage(), ex);
+                    }
+                }
+            }   
+        } catch (IOException ex) {
+            logger.log(Level.SEVERE, null, ex);
+        }
+    }
+
+    /**
+     * Execute the script in the current thread.  For context data source, 
+     * this means putting the URI in the data set selector and telling it to 
+     * plot.  "mode" controls how the script is run, for example by bringing up 
+     * the parameters GUI first, or by tracing execution.  The bit array is:<ul>
+     * <li>0 normal
+     * <li>1 parameters GUI (SHIFT is pressed)
+     * <li>2 trace (CRTL is pressed)
+     * <li>8 enter editor (ALT is pressed)
+     * </ul>
+     * @param mode bit array controlling execution.
+     * @throws RuntimeException
+     * @throws Error 
+     */
+    private void executeScriptImmediately( int mode ) throws RuntimeException, Error {
+        int offset = 0;
+        int lineOffset= 0;
+
+        applicationController.setStatus("busy: running application script");
+        
+        //ProgressMonitor mon= //DasProgressPanel.createComponentPanel(model.getCanvas(),"running script");
+        ProgressMonitor mon= DasProgressPanel.createFramed( SwingUtilities.getWindowAncestor(panel), "running script");
+
+        try {
+            try {
+                if (file != null && ( file.exists() && file.canWrite() || file.getParentFile().canWrite() ) ) {
+                    if ( panel.isDirty() ) {
+                        save();
+                    }
+                }
+            } catch ( SecurityException ex ) {
+                // this is fine, we just can't save a modified version.
+            } finally {
+                if ( file!=null ) {
+                    applicationController.getApplicationModel().addRecent("script:"+file.toURI().toString());
+                }
+            }
+            InteractiveInterpreter interp = null;
+            try {
+                interp= JythonUtil.createInterpreter(true, false);
+
+                EditorAnnotationsSupport.setExpressionLookup(annotationsSupport.getForInterp(interp));
+
+                interp.set("dom", model.getDocumentModel() );
+                interp.set("monitor", mon );
+                if ( file!=null ) {
+                    URISplit split= URISplit.parse(file.toString());
+                    interp.set( "PWD", split.path );   
+                }
+                setInterruptible( interp );
+                ts= Py.getThreadState();
+                boolean dirty0 = panel.isDirty();
+
+                clearAnnotations();
+
+                panel.setDirty(dirty0);
+                if ( ( ( mode & Event.CTRL_MASK ) == Event.CTRL_MASK ) ) { // trace
+                    String script = panel.getEditorPanel().getText();
+                    
+                    org.python.parser.ast.Module n = (org.python.parser.ast.Module) org.python.core.parser.parse(script, "exec");
+                    
+                    String[] sscript= script.split("\n");
+                    
+                    for ( int iline=0; iline<n.body.length; iline++ )  {
+                        long t0= System.currentTimeMillis();
+                        
+                        stmtType stmt = n.body[iline];
+                        int l0 = stmt.beginLine;
+                        int l1= ( iline<n.body.length-1 ) ? n.body[iline+1].beginLine : sscript.length;
+
+                        if ( stmt instanceof TryExcept ) {  //  we need to kludge because try-except
+                            TryExcept te= (TryExcept)stmt;
+                            l0= te.body[0].beginLine -1;
+                        } else if ( stmt instanceof Expr ) {
+                            Expr exp= (Expr) stmt;
+                            if ( exp.value instanceof Str ) {
+                                Str s= (Str)exp.value;
+                                l0= s.beginLine;
+                            }
+                        }
+                        if ( iline<n.body.length-1 ) { 
+                            if ( n.body[iline+1] instanceof TryExcept ) {// we need to kludge because try-except
+                                TryExcept te= (TryExcept)n.body[iline+1];
+                                l1= te.body[0].beginLine -1; 
+                            } else if ( n.body[iline+1] instanceof Expr ) { // multi-line strings cause problems
+                                Expr exp= (Expr) n.body[iline+1];
+                                if ( exp.value instanceof Str ) {
+                                    Str s= (Str)exp.value;
+                                    l1= s.beginLine;
+                                }
+                            }
+                        }
+                        
+                        for ( int i= lineOffset; i<l0-1; i++ ) {
+                            offset= offset + sscript[i].length() + 1;
+                        }
+                        lineOffset= l1;
+                        
+                        int i0= offset; // start character of the line
+                        int i1= i0;     // end character of the line
+                        for ( int itn2= l0-1; itn2<l1-1; itn2++ ) {
+                            i1= i1 + sscript[itn2].length() + 1;
+                        }
+                        
+                        String s= script.substring( i0, i1 );
+                           
+                        try {
+                            clearAnnotations();
+                            annotationsSupport.annotateChars( i0, i1, "programCounter", "pc", interp );
+                            try {
+                                annotationsSupport.scrollToOffset( i0);
+                            } catch (BadLocationException ex) {
+                                logger.log(Level.SEVERE, null, ex);
+                            }
+
+                            logger.finest("add Netbeans breakpoint here to debug jython code line-by-line without GDB");
+
+                            interp.exec(JythonRefactory.fixImports(s));
+                        } catch (PyException ex) {
+                            throw ex;
+                        }
+                        offset += s.length();
+                        
+                        if ( logger.isLoggable(Level.FINE) ) {
+                            long elapsedTime= System.currentTimeMillis()-t0;
+                            int i= s.indexOf("\n");
+                            if ( s.length()>i ) {
+                                if ( i>-1 ) {
+                                    s= s.substring(0,i)+"...";
+                                }
+                            } else {
+                                s= s.substring(0,i);
+                            }
+                            logger.log( Level.FINE, String.format( "%4d %.3f %4d # %s", l0, elapsedTime/1000., l1-l0, s ) );
+                        }
+                        
+                    }
+                    clearAnnotations();
+                } else if ( ( ( mode & Event.SHIFT_MASK ) == Event.SHIFT_MASK ) || ( ( mode & Event.ALT_MASK ) == Event.ALT_MASK ) ) {
+                    JPanel p= new JPanel();
+                    p.setLayout( new BorderLayout() );
+                    Map<String,String> vars= new HashMap();
+                    ParametersFormPanel pfp= new org.autoplot.jythonsupport.ui.ParametersFormPanel();
+                    Map<String,Object> env= new HashMap();
+                    env.put("dom",interp.get("dom") );
+                    env.put("PWD",interp.get("PWD") );
+                    ParametersFormPanel.FormData fd=  pfp.doVariables( env, panel.getEditorPanel().getText(), vars, p );
+                    if ( fd.count>0 ) {
+                        JScrollPane pane= new JScrollPane(p);
+
+                        if ( AutoplotUtil.showConfirmDialog2( panel, pane, "edit parameters", JOptionPane.OK_CANCEL_OPTION )==JOptionPane.OK_OPTION ) {
+                            ParametersFormPanel.resetVariables( fd, vars );
+                            String parseExcept= null;
+                            for ( Entry<String,String> v: vars.entrySet() ) {
+                                try {
+                                    fd.implement( interp, v.getKey(), v.getValue() );
+                                } catch ( ParseException ex ) {
+                                    parseExcept= v.getKey();
+                                }
+                            }
+                            if ( parseExcept!=null ) {
+                                JOptionPane.showMessageDialog( panel, "ParseException in parameter "+parseExcept );
+                            } else {
+                                interp.exec(JythonRefactory.fixImports(panel.getEditorPanel().getText()));
+                            }
+                        }
+                    } else {
+                        // no parameters
+                        interp.exec(JythonRefactory.fixImports(panel.getEditorPanel().getText()));
+                    }
+                } else {
+                    boolean experiment= System.getProperty("jythonDebugger","false").equals("true");
+                    if ( experiment ) {
+                        final DebuggerConsole dc= DebuggerConsole.getInstance(panel);
+                        dc.setInterp(interp);
+                        interp.setOut(getOutput(dc));
+                        EditorAnnotationsSupport.setExpressionLookup( 
+                            (final String expr) -> dc.setEval(expr) //return dc.getEval();
+                        );
+                    }
+                    String code= panel.getEditorPanel().getText();
+                    if ( file!=null ) {
+                        char[] cc= code.toCharArray();
+                        boolean warning= false;
+                        int ioffs=0;
+                        for ( char c: cc ) {
+                            ioffs++;
+                            if ( c>128 ) {
+                                int ic= (int)c;
+                                logger.log(Level.INFO, "non-ASCII character ({0}) at character offset {1}", new Object[] { ic, ioffs });
+                                warning= true;
+                            }
+                        }
+                        if ( warning ) {
+                            System.err.println("code contains data that will not be represented properly!");
+                        }
+                        //experiment with writing to a temporary file and executing it.
+                        if ( experiment ) {
+                            String fixedCode= JythonRefactory.fixImports( code );
+                            if ( fixedCode.equals(code) ) {
+                                interp.execfile( file.getAbsolutePath() );
+                            } else {
+                                File tempFile= new File( file.getAbsolutePath() + ".t" );
+                                Files.copy( new ByteArrayInputStream( fixedCode.getBytes() ), 
+                                        tempFile.toPath(), StandardCopyOption.REPLACE_EXISTING );
+                                interp.execfile( tempFile.getAbsolutePath() );
+                            }
+                        } else {
+                            try (InputStream in = new ByteArrayInputStream( code.getBytes() )) {
+                                interp.execfile(JythonRefactory.fixImports(in,file.getName()),file.getName());
+                            }
+                        }
+                    } else {
+                        interp.exec(JythonRefactory.fixImports(code));
+                    }
+                }
+                setInterruptible( null );
+                if ( !mon.isFinished() ) mon.finished(); // bug1251: in case script didn't call finished
+                if ( applicationController.getStatusAgeMillis()>100 ) {
+                    applicationController.setStatus("done executing script");
+                } else {
+                    applicationController.setStatus(applicationController.getStatus()+" (done executing script)");
+                }
+            } catch (IOException ex) {
+                if ( !mon.isFinished() ) mon.finished();
+                logger.log(Level.WARNING, ex.getMessage(), ex);
+                applicationController.setStatus("error: I/O exception: " + ex.toString());
+            } catch (PyException ex) {
+                if ( !mon.isFinished() ) mon.finished();
+                annotateError(ex, offset, interp );
+                //logger.log(Level.WARNING, ex.getMessage(), ex );
+                applicationController.setStatus("error: " + ex.toString());
+            }
+        } catch (IOException ex) {
+            throw new RuntimeException(ex);
+        } catch ( Error ex ) {
+            if ( !ex.getMessage().contains("Python interrupt") ) {
+                throw ex;
+            } else {
+                applicationController.setStatus("script interrupted");
+            }
+        } finally {
+            if ( !mon.isFinished() ) mon.finished();  // bug1251: in case script didn't call finished
+            setInterruptible( null );
+            panel.setRunningScript(null);
+        }
+    }
+                    
+    /**
      * Execute the script.  For context data source, this means putting the URI in the data set selector and telling it to plot.
+     * "mode" controls how the script is run, for example by bringing up the parameters GUI first, or by tracing execution.
+     * The bit array is:<ul>
+     * <li>0 normal
+     * <li>1 parameters GUI (SHIFT is pressed)
+     * <li>2 trace (CRTL is pressed)
+     * <li>8 enter editor (ALT is pressed)
+     * </ul>
+     * TODO: what's the difference between ALT and SHIFT?
      * @param mode =0 normal.  =2=CTRL_MASK= trace.  ALT_MASK is enter editor.  SHIFT_MASK brings up parameters GUI.
      */
     protected void executeScript(final int mode) {
@@ -630,13 +996,10 @@ public class ScriptPanelSupport {
                         uri = new URI("vap+jyds:" + file.toURI().toString()); // bug 3055130 okay
                         JythonDataSourceFactory factory = (JythonDataSourceFactory) DataSetURI.getDataSourceFactory( uri, new NullProgressMonitor());
                         if (factory != null) {
-                            factory.addExeceptionListener(new ExceptionListener() {
-                                @Override
-                                public void exceptionThrown(Exception e) {
-                                    if (e instanceof PyException) {
-                                        PyException ex= (PyException)e;
-                                        annotateError(ex, 0, null );
-                                    }
+                            factory.addExeceptionListener((Exception e) -> {
+                                if (e instanceof PyException) {
+                                    PyException ex= (PyException)e;
+                                    annotateError(ex, 0, null );
                                 }
                             });
                         }
@@ -672,8 +1035,14 @@ public class ScriptPanelSupport {
                         selector.setValue("vap+jyds:"+file.toURI().toString());
                     }
 
-                    annotationsSupport.clearAnnotations();
-                    selector.maybePlot(mode);
+                    clearAnnotations();
+            
+                    if ( ( mode & KeyEvent.ALT_MASK ) == KeyEvent.ALT_MASK
+                            || ( mode & KeyEvent.SHIFT_MASK )== KeyEvent.SHIFT_MASK ) {
+                        selector.maybePlot(KeyEvent.ALT_MASK); //TODO: no editor panel!
+                    } else {
+                        selector.maybePlot(false);
+                    }
 
                     if ( updateSurl ) {
                         panel.setFilename(file.toString());
@@ -683,153 +1052,8 @@ public class ScriptPanelSupport {
                 panel.setRunningScript(null);
 
             } else if (panel.getContext() == JythonScriptPanel.CONTEXT_APPLICATION) {
-                applicationController.setStatus("busy: executing application script");
-                Runnable run = new Runnable() {
-                    @Override
-                    public void run() {
-                        int offset = 0;
-                        //ProgressMonitor mon= //DasProgressPanel.createComponentPanel(model.getCanvas(),"running script");
-                        ProgressMonitor mon= DasProgressPanel.createFramed( SwingUtilities.getWindowAncestor(panel), "running script");
-                        
-                        try {
-                            if (file != null && ( file.exists() && file.canWrite() || file.getParentFile().canWrite() ) ) {
-                                save();
-                                applicationController.getApplicationModel().addRecent("script:"+file.toURI().toString());
-                            }
-                            InteractiveInterpreter interp = null;
-                            try {
-                                interp= JythonUtil.createInterpreter(true, false);
-                                
-                                EditorAnnotationsSupport.setExpressionLookup(annotationsSupport.getForInterp(interp));
-                
-                                interp.set("dom", model.getDocumentModel() );
-                                interp.set("monitor", mon );
-                                if ( file!=null ) {
-                                    URISplit split= URISplit.parse(file.toString());
-                                    interp.set( "PWD", split.path );   
-                                }
-                                setInterruptible( interp );
-                                ts= Py.getThreadState();
-                                boolean dirty0 = panel.isDirty();
-                                annotationsSupport.clearAnnotations();
-                                panel.setDirty(dirty0);
-                                if ( ( ( mode & Event.CTRL_MASK ) == Event.CTRL_MASK ) ) { // trace
-                                    String text = panel.getEditorPanel().getText();
-                                    int i0 = 0;
-                                    while (i0 < text.length()) {
-                                        int i1 = text.indexOf("\n", i0);
-                                        while (i1 < text.length() - 1 && Character.isWhitespace(text.charAt(i1 + 1))) {
-                                            i1 = text.indexOf("\n", i1 + 1);
-                                        }
-                                        String s;
-                                        if (i1 != -1) {
-                                            i1 = i1 + 1;
-                                            s = text.substring(i0, i1);
-                                        } else {
-                                            s = text.substring(i0);
-                                        }
-                                        try {
-                                            annotationsSupport.clearAnnotations();
-                                            annotationsSupport.annotateChars( i0, i1, "programCounter", "pc", interp );
-                                            interp.exec(JythonRefactory.fixImports(s));
-                                        } catch (PyException ex) {
-                                            throw ex;
-                                        }
-                                        i0 = i1;
-                                        offset += 1;
-                                        System.err.println(s);
-                                    }
-                                    annotationsSupport.clearAnnotations();
-                                } else if ( ( ( mode & Event.SHIFT_MASK ) == Event.SHIFT_MASK ) || ( ( mode & Event.ALT_MASK ) == Event.ALT_MASK ) ) {
-                                    JPanel p= new JPanel();
-                                    Map<String,String> vars= new HashMap();
-                                    ParametersFormPanel pfp= new org.autoplot.jythonsupport.ui.ParametersFormPanel();
-                                    Map<String,Object> env= new HashMap();
-                                    env.put("dom",interp.get("dom") );
-                                    env.put("PWD",interp.get("PWD") );
-                                    ParametersFormPanel.FormData fd=  pfp.doVariables( env, panel.getEditorPanel().getText(), vars, p );
-                                    if ( fd.count>0 ) {
-                                        JScrollPane pane= new JScrollPane(p);
-                                        
-                                        if ( AutoplotUtil.showConfirmDialog2( panel, pane, "edit parameters", JOptionPane.OK_CANCEL_OPTION )==JOptionPane.OK_OPTION ) {
-                                            ParametersFormPanel.resetVariables( fd, vars );
-                                            String parseExcept= null;
-                                            for ( Entry<String,String> v: vars.entrySet() ) {
-                                                try {
-                                                    fd.implement( interp, v.getKey(), v.getValue() );
-                                                } catch ( ParseException ex ) {
-                                                    parseExcept= v.getKey();
-                                                }
-                                            }
-                                            if ( parseExcept!=null ) {
-                                                JOptionPane.showMessageDialog( panel, "ParseException in parameter "+parseExcept );
-                                            } else {
-                                                interp.exec(JythonRefactory.fixImports(panel.getEditorPanel().getText()));
-                                            }
-                                        }
-                                    } else {
-                                        // no parameters
-                                        interp.exec(JythonRefactory.fixImports(panel.getEditorPanel().getText()));
-                                    }
-                                } else {
-                                    boolean experiment= System.getProperty("jythonDebugger","false").equals("true");
-                                    if ( experiment ) {
-                                        final DebuggerConsole dc= DebuggerConsole.getInstance(panel);
-                                        dc.setInterp(interp);
-                                        interp.setOut(getOutput(dc));
-                                        EditorAnnotationsSupport.setExpressionLookup( new EditorAnnotationsSupport.ExpressionLookup() {
-                                            @Override
-                                            public PyObject lookup( final String expr ) {
-                                                return dc.setEval(expr);
-                                                //return dc.getEval();                                                
-                                            }
-                                        });
-                                    }
-                                    String code= panel.getEditorPanel().getText();
-                                    if ( file!=null ) {
-                                        char[] cc= code.toCharArray();
-                                        boolean warning= false;
-                                        for ( char c: cc ) {
-                                            if ( c>128 ) warning= true;
-                                        }
-                                        if ( warning ) {
-                                            System.err.println("code contains data that will not be represented properly!");
-                                        }
-                                        try (InputStream in = new ByteArrayInputStream( code.getBytes() )) {
-                                            interp.execfile(JythonRefactory.fixImports(in),file.getName());
-                                        }
-                                    } else {
-                                        interp.exec(JythonRefactory.fixImports(code));
-                                    }
-                                }
-                                setInterruptible( null );
-                                if ( !mon.isFinished() ) mon.finished(); // bug1251: in case script didn't call finished
-                                applicationController.setStatus("done executing script");
-                            } catch (IOException ex) {
-                                if ( !mon.isFinished() ) mon.finished();
-                                logger.log(Level.WARNING, ex.getMessage(), ex);
-                                applicationController.setStatus("error: I/O exception: " + ex.toString());
-                            } catch (PyException ex) {
-                                if ( !mon.isFinished() ) mon.finished();
-                                annotateError(ex, offset, interp );
-                                //logger.log(Level.WARNING, ex.getMessage(), ex );
-                                applicationController.setStatus("error: " + ex.toString());
-                            }
-                        } catch (IOException ex) {
-                            throw new RuntimeException(ex);
-                        } catch ( Error ex ) {
-                            if ( !ex.getMessage().contains("Python interrupt") ) {
-                                throw ex;
-                            } else {
-                                applicationController.setStatus("script interrupted");
-                            }
-                        } finally {
-                            if ( !mon.isFinished() ) mon.finished();  // bug1251: in case script didn't call finished
-                            setInterruptible( null );
-                            panel.setRunningScript(null);
-                        }
-
-                    }
+                Runnable run = () -> {
+                    executeScriptImmediately(mode);
                 };
                 new Thread(run,"sessionRunScriptThread").start();
             }
@@ -856,6 +1080,19 @@ public class ScriptPanelSupport {
         StringBuilder currentLine= new StringBuilder();
         
         /**
+         * PDB has just returned from a routine, so don't close the debugging session.
+         */
+        boolean returnFlag= false;
+        
+        /**
+         * PDB has just returned from a routine, so don't close the debugging session.
+         * @return 
+         */
+        public boolean getReturnFlag() {
+            return this.returnFlag;
+        }
+        
+        /**
          * standard mode output.
          */
         private final Object STATE_OPEN="OPEN";
@@ -878,25 +1115,26 @@ public class ScriptPanelSupport {
         protected final Object STATE_FORM_PDB_RESPONSE="RESPONSE";
         
         Object state= STATE_OPEN;
-        
-        
-        @Override
-        public void write(byte[] b) throws IOException {
-            for ( int i=0; i<b.length; i++ ) {
-               this.write(b[i]);
+       
+        public void checkState(int b) throws IOException {
+            try {
+                Thread.sleep(10);
+            } catch (InterruptedException ex) {
+                Logger.getLogger(ScriptPanelSupport.class.getName()).log(Level.SEVERE, null, ex);
             }
-        }
 
-        public void writeNew( int b ) throws IOException {
-            if ( dc!=null ) dc.print(String.valueOf((char)b));
+            if ( dc!=null ) dc.print(String.valueOf((char)b),state);
+            
             if ( state==STATE_OPEN ) {
                 if ( b>=0 ) currentLine.append((char)b);
                 if ( currentLine.length()==1 && currentLine.substring(0,1).equals("(") ) {
                     state= STATE_FORM_PDB_PROMPT;
                 } else if ( currentLine.length()==1 && currentLine.substring(0,1).equals(">") ) {
-                    state= STATE_FORM_PDB_RESPONSE;
+                    state= STATE_FORM_PDB_RESPONSE;                    
                 } else if ( currentLine.length()>10 && currentLine.substring(0,10).equals("--Return--") ) {
                     state= STATE_RETURN_INIT_PROMPT;
+                    dc.started();
+                    dc.next();  // jump out of pdb
                 } else if ( currentLine.length()>0 && ( b==10 || b==13 ) ) {
                     currentLine= new StringBuilder();
                 }
@@ -909,9 +1147,10 @@ public class ScriptPanelSupport {
                 }
             } else if ( state==STATE_FORM_PDB_PROMPT ) {
                 if ( b>=0 ) currentLine.append((char)b);
-                if ( currentLine.length()>=6 ) {
-                    if ( currentLine.substring(0,5).equals("(Pdb) ") ) {
+                if ( currentLine.length()>=5 ) {
+                    if ( currentLine.substring(0,5).equals("(Pdb)") ) {
                         state= STATE_PDB;
+                        dc.started();
                     } else {
                         sink.write(currentLine.toString().getBytes());
                         state= STATE_OPEN;
@@ -941,86 +1180,7 @@ public class ScriptPanelSupport {
                         currentLine= new StringBuilder();
                         
                     }
-                }
-                
-            } else if ( state==STATE_PDB ) { // the beginning of the currentLine is (Pdb) and we want a terminator
-                Pattern p= Pattern.compile("\\(Pdb\\) (.*)>? <string>\\((\\d+)\\)\\?\\(\\)\\s*");
-                Pattern p2= Pattern.compile("\\(Pdb\\) (.*)--Return--.*>? <string>\\((\\d+)\\)\\?\\(\\)\\s*.*");
-                
-                int l= currentLine.length();
-                if ( b>=0 && b!=10 && b!=13 ) currentLine.append((char)b);  //TODO: why is my regex not working when newlines get in there?
-                if ( l>2 && currentLine.substring(l-2,l).equals("()") ) {
-                    Matcher m= p.matcher(currentLine);
-                    if ( m.matches() ) {
-                        String linenum= m.group(2);
-                        annotationsSupport.clearAnnotations();
-                        int[] pos= annotationsSupport.getLinePosition(Integer.parseInt(linenum));
-                        annotationsSupport.annotateChars( pos[0], pos[1], "programCounter", "pc", interruptible );
-                        String userOutput= m.group(1);
-                        if ( userOutput.length()>0 ) {
-                            sink.write(userOutput.getBytes());
-                            sink.write("\n".getBytes());
-                        }
-                        state= STATE_OPEN;
-                        currentLine= new StringBuilder();
-                    } else {
-                        Matcher m2= p2.matcher(currentLine);
-                        if ( m2.matches() ) {
-                            annotationsSupport.clearAnnotations();
-                            String userOutput= m2.group(1);
-                            if ( userOutput.length()>0 ) {
-                                sink.write(userOutput.getBytes());
-                                sink.write("\n".getBytes());
-                            }
-                            state= STATE_OPEN;
-                            currentLine= new StringBuilder();
-                        } else {
-                            state= STATE_OPEN;
-                            currentLine= new StringBuilder();
-                        }
-                    }
-                }
-            }
-            
-        }
-       
-        @Override
-        public void write(int b) throws IOException {
-
-            if ( dc!=null ) dc.print(String.valueOf((char)b),state);
-            
-            if ( state==STATE_OPEN ) {
-                if ( b>=0 ) currentLine.append((char)b);
-                if ( currentLine.length()==1 && currentLine.substring(0,1).equals("(") ) {
-                    state= STATE_FORM_PDB_PROMPT;
-                } else if ( currentLine.length()>10 && currentLine.substring(0,10).equals("--Return--") ) {
-                    state= STATE_RETURN_INIT_PROMPT;
-                    dc.started();
-                    dc.next();  // jump out of pdb
-                } else if ( currentLine.length()>0 && ( b==10 || b==13 ) ) {
-                    currentLine= new StringBuilder();
-                }
-            } else if ( state==STATE_RETURN_INIT_PROMPT ) {
-                if ( b>=0 ) currentLine.append((char)b);
-                if ( currentLine.length()==1 && currentLine.substring(0,1).equals("(") ) {
-                    state= STATE_FORM_PDB_PROMPT;
-                } else if ( currentLine.length()>0 && ( b==10 || b==13 ) ) {
-                    currentLine= new StringBuilder();
-                }
-            } else if ( state==STATE_FORM_PDB_PROMPT ) {
-                if ( b>=0 ) currentLine.append((char)b);
-                if ( currentLine.length()>=5 ) {
-                    if ( currentLine.substring(0,5).equals("(Pdb)") ) {
-                        state= STATE_PDB;
-                    } else {
-                        sink.write(currentLine.toString().getBytes());
-                        state= STATE_OPEN;
-                    }
-                } else if ( currentLine.length()>0 && ( b==10 || b==13 ) ) { // newlines should clear the currentLine
-                    sink.write(currentLine.toString().getBytes());
-                    currentLine= new StringBuilder();
-                    state= STATE_OPEN;
-                }
+                }                
             } else if ( state==STATE_PDB ) { // the beginning of the currentLine is (Pdb) and we want a terminator
                 Pattern p= Pattern.compile("\\(Pdb\\) (.*)> .*\\.jy\\((\\d+)\\).*\\(\\)\\s*"); // TODO: replace ).* with more precise value.
                 Pattern p2= Pattern.compile("\\(Pdb\\) (.*)--Return--.*");
@@ -1053,6 +1213,7 @@ public class ScriptPanelSupport {
                             state= STATE_OPEN;
                             currentLine= new StringBuilder();
                             dc.finished();
+                            returnFlag= true;
                             dc.next();
                         } else {
                             state= STATE_OPEN;
@@ -1060,6 +1221,18 @@ public class ScriptPanelSupport {
                         }
                     }
                 }
+            }
+        }
+
+        @Override
+        public void write(int b) throws IOException {
+            this.checkState(b); 
+        }
+        
+        @Override
+        public void write(byte[] b) throws IOException {
+            for ( int i=0; i<b.length; i++ ) {
+               this.write(b[i]);
             }
         }
 
@@ -1081,22 +1254,6 @@ public class ScriptPanelSupport {
         return new MyOutputStream(System.out, dc);
     }
     
-    private FileFilter getFileFilter() {
-        return new FileFilter() {
-
-            @Override
-            public boolean accept(File f) {
-                if ( f.toString()==null ) return false; //file.toString sometimes returns null on Windows.
-                return (f.isDirectory() || f.toString().endsWith(".jy") || f.toString().endsWith(".py") || f.toString().endsWith(".jyds"));
-            }
-
-            @Override
-            public String getDescription() {
-                return "python and jython scripts";
-            }
-        };
-    }
-
     /**
      * returns JFileChooser.APPROVE_OPTION or JFileChooser.CANCEL_OPTION
      * @return JFileChooser.APPROVE_OPTION or JFileChooser.CANCEL_OPTION
@@ -1121,7 +1278,7 @@ public class ScriptPanelSupport {
                 panel.setFilename(file.toString());
                 restartWatcher(file);
                 
-                Preferences prefs = AutoplotSettings.settings().getPreferences(ScriptPanelSupport.class);
+                Preferences prefs = AutoplotSettings.getPreferences(ScriptPanelSupport.class);
                 prefs.put(PREFERENCE_OPEN_FILE, file.toString() );
                 
                 if ( file.toString().endsWith(".jyds") ) {
@@ -1130,6 +1287,7 @@ public class ScriptPanelSupport {
                     panel.setContext( JythonScriptPanel.CONTEXT_APPLICATION );
                 }
 
+                this.model.addRecent( file.toString() );
             }
 
         } catch (IOException iOException) {
@@ -1187,64 +1345,52 @@ public class ScriptPanelSupport {
         final JList p= new JList(waitModel);
         p.setFont( p.getFont().deriveFont(10.f) );
         
-        Runnable run= new Runnable() {
-            @Override
-            public void run() {
-                Map<String,String> recent= model.getRecent(filter,10*limit);
-
-                final DefaultListModel mm= new DefaultListModel();
-                
-                List<String> ss= new ArrayList( recent.keySet() );
-                int count=0;
-                for ( int i=ss.size()-1; i>0; i-- ) {
-                    String s= ss.get(i);
-                    if ( s.startsWith("script:") ) s= s.substring(7);
-                    if ( s.startsWith("vap+jyds:") ) s= s.substring(9);
-                    if ( s.startsWith("vap+jy:") ) s= s.substring(7);
-                    int iscript= s.indexOf("script=");
-                    if ( iscript>-1 ) {
-                        s= s.substring(iscript+"script=".length());
-                    }
-                    if ( s.startsWith("file:") ) {
-                        if ( s.startsWith("file://") ) s= s.substring(7);
-                        if ( s.startsWith("file:") ) s= s.substring(5);
-                        int iq= s.indexOf('?');
-                        if ( iq>-1 ) {
-                            s= s.substring(0,iq);
-                        }
-                        if ( mm.contains(s) ) {
-                            mm.removeElement(s);
-                        }
-                        mm.addElement(s);
-                        count++;
-                        if ( count==limit ) break;
-                    }
+        Runnable run= () -> {
+            Map<String,String> recent= model.getRecent(filter,10*limit);
+            final DefaultListModel mm= new DefaultListModel();
+            List<String> ss= new ArrayList( recent.keySet() );
+            int count=0;
+            for ( int i=ss.size()-1; i>=0; i-- ) {
+                String s= ss.get(i);
+                if ( s.startsWith("script:") ) s= s.substring(7);
+                if ( s.startsWith("vap+jyds:") ) s= s.substring(9);
+                if ( s.startsWith("vap+jy:") ) s= s.substring(7);
+                int iscript= s.indexOf("script=");
+                if ( iscript>-1 ) {
+                    s= s.substring(iscript+"script=".length());
                 }
-                
-                Runnable run= new Runnable() {
-                    @Override
-                    public void run() {
-                        p.setModel( mm );
+                if ( s.startsWith("file:") ) {
+                    if ( s.startsWith("file://") ) s= s.substring(7);
+                    if ( s.startsWith("file:") ) s= s.substring(5);
+                    int iq= s.indexOf('?');
+                    if ( iq>-1 ) {
+                        s= s.substring(0,iq);
                     }
-                };
-                SwingUtilities.invokeLater(run);
+                    if ( mm.contains(s) ) {
+                        continue;
+                    }
+                    mm.addElement(s);
+                    count++;
+                    if ( count==limit ) break;
+                }
             }
+            Runnable run1 = () -> {
+                p.setModel( mm );
+            };
+            SwingUtilities.invokeLater(run1);
         } ;
         new Thread(run).start();
-        p.addListSelectionListener( new ListSelectionListener() {
-            @Override
-            public void valueChanged(ListSelectionEvent e) {
-                if ( !e.getValueIsAdjusting() ){
-                    if ( p.getSelectedValue().equals(msgWait) ) {
-                        
-                    } else {
-                        String s=  (String)p.getSelectedValue();
-                        File ff= new File(s); //TODO: still can't figure out mac bug where select doesn't work
-                        c.setSelectedFile( ff );
-                    }
+        p.addListSelectionListener((ListSelectionEvent e) -> {
+            if ( !e.getValueIsAdjusting() ){
+                if ( p.getSelectedValue().equals(msgWait) ) {
+                    
+                } else {
+                    String s=  (String)p.getSelectedValue();
+                    File ff= new File(s); //TODO: still can't figure out mac bug where select doesn't work
+                    c.setSelectedFile( ff );
                 }
             }
-        } );
+        });
         
         
         JScrollPane scrollPane= new JScrollPane(p);
@@ -1259,6 +1405,62 @@ public class ScriptPanelSupport {
         return recentPanel;
     }
 
+    /**
+     * mark the changes git indicates.
+     * @param support
+     * @param fln
+     * @return the number of changes identified.
+     * @throws IOException
+     * @throws InterruptedException 
+     */
+    public static int markChanges( EditorAnnotationsSupport support, File fln ) throws IOException, InterruptedException {
+
+        GitCommand.GitResponse diffOutput = new GitCommand(fln.getParentFile()).diff(fln);
+        if ( diffOutput.getExitCode()!=0 ) {
+            JOptionPane.showMessageDialog( null, diffOutput.getErrorResponse() );
+            return 0;
+        }
+                
+        Patch<String> deltas = UnifiedDiffUtils.parseUnifiedDiff( Arrays.asList( diffOutput.getResponse().split("\n") ) );
+
+        support.clearAnnotations();
+        
+        List<AbstractDelta<String>> dd= deltas.getDeltas();
+                
+        dd.forEach((d) -> {
+            Chunk<String> source = d.getSource();
+            List<Integer> ll = source.getChangePosition();
+            List<Integer> ss = d.getTarget().getChangePosition();
+            int[] lp0,lp1;
+            String sourceText = String.join( "\n", d.getSource().getLines() );
+            if ( d instanceof ChangeDelta ) {
+                for ( int i : ss ) {
+                    lp0 = support.getLinePosition(i);
+                    lp1 = support.getLinePosition(i); 
+                    System.err.println( String.format("change characters %d through %d", lp0[0], lp1[1] ) );
+                    support.annotateChars(lp0[0],lp1[1],EditorAnnotationsSupport.ANNO_CHANGE,sourceText,null);
+                }
+            } else if ( d instanceof DeleteDelta ) {
+                for ( int i : ll ) {
+                    lp0 = support.getLinePosition(i);
+                    lp1 = support.getLinePosition(i); 
+                    support.annotateChars(lp0[0],lp1[1],EditorAnnotationsSupport.ANNO_DELETE,sourceText,null);
+                }
+            } else if ( d instanceof InsertDelta ) {
+                for ( int i : ss ) {
+                    lp0 = support.getLinePosition(i);
+                    lp1 = support.getLinePosition(i);    
+                    System.err.println(String.format("insert characters %d through %d", lp0[0], lp1[1] ) );
+                    support.annotateChars(lp0[0],lp1[1],EditorAnnotationsSupport.ANNO_INSERT,sourceText,null);
+                }
+            }
+        });
+        
+        return dd.size();
+                
+    }
+
+    
     protected void open() {
         try {
             if (this.file == null) {
@@ -1272,19 +1474,19 @@ public class ScriptPanelSupport {
                 } else {
                     try {
                         file = DataSetURI.getFile(DataSetURI.getURL(sfile), new NullProgressMonitor());
-                    } catch ( IOException ex ) {
+                    } catch ( IOException | IllegalArgumentException ex ) {
                         logger.fine("old file reference from data set selector is ignored");
                         file= null;
                     }
                 }
             }
 
-            Preferences prefs = AutoplotSettings.settings().getPreferences(ScriptPanelSupport.class);
+            Preferences prefs = AutoplotSettings.getPreferences(ScriptPanelSupport.class);
             String openFile = prefs.get(PREFERENCE_OPEN_FILE, "");
 
             JFileChooser chooser = new JFileChooser();
             chooser.setFileSelectionMode( JFileChooser.FILES_ONLY );
-            chooser.setFileFilter(getFileFilter());
+            chooser.setFileFilter(new FileNameExtensionFilter( "python and jython scripts", new String [] { "jy", "py", "jyds" } ));
             if (file != null) {
                 chooser.setSelectedFile(file);
             }
@@ -1301,6 +1503,14 @@ public class ScriptPanelSupport {
             
             int r = chooser.showOpenDialog(panel);
             if (r == JFileChooser.APPROVE_OPTION) {
+                if ( panel.isDirty() ) {
+                    int option= JOptionPane.showConfirmDialog( panel, "Save edits first?", "Save Current Editor", JOptionPane.YES_NO_CANCEL_OPTION );
+                    if ( option==JOptionPane.YES_OPTION ) {
+                        saveAs();
+                    } else if ( option==JOptionPane.CANCEL_OPTION ) {
+                        return;
+                    }
+                }
                 file = chooser.getSelectedFile();
                 prefs.put(PREFERENCE_OPEN_FILE, file.toString());
                 loadFile(file);

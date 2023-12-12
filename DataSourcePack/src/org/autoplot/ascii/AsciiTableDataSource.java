@@ -47,7 +47,7 @@ import org.das2.qds.DataSetUtil;
 import org.das2.qds.MutablePropertyDataSet;
 import org.das2.qds.SemanticOps;
 import org.autoplot.datasource.DataSourceUtil;
-//import org.virbo.datasource.ReferenceCache;
+import org.das2.qds.SparseDataSetBuilder;
 import org.das2.qds.ops.Ops;
 import org.das2.qds.util.AsciiHeadersParser;
 import org.das2.qds.util.AsciiParser.FieldParser;
@@ -57,7 +57,14 @@ import org.das2.qds.util.AsciiParser.FieldParser;
  * one line of the file, and each record has the same number of fields.  
  * This reads in each record and splits on the delimiter, which is typically
  * guessed by examining the first 5 viable records.  This also supports
- * synthesizing times that are in several fields.  
+ * combining times that are in several fields.  
+ * 
+ * This also handles true CSV files, where a quoted field may contain a 
+ * newline character.  
+ * 
+ * Last, a three or four column ASCII file containing two ISO8601 strings 
+ * for the first two columns is automatically treated as an "events list",
+ * a list of named intervals.
  * 
  * @author jbf
  */
@@ -83,7 +90,7 @@ public class AsciiTableDataSource extends AbstractDataSource {
      */
     String[] timeFormats;
     /**
-     * the column containing times, or -1.
+     * the column containing times, or -1.  This will be the first column when the times span multiple columns.
      */
     int timeColumn = -1;
     DDataSet ds = null;
@@ -134,6 +141,55 @@ public class AsciiTableDataSource extends AbstractDataSource {
 
     }
  
+    /**
+     * return a list of column names, supporting:<ul>
+     * <li>field1,field3,field5
+     * <li>field1,field3-field5
+     * <li>field1,field3:field5  exclusive
+     * </ul>
+     * @param s
+     * @param fieldCount 
+     * @return 
+     * @see #parseRangeStr(java.lang.String, int) 
+     */
+    public int[] parseColumns( String s, int fieldCount ) {
+        String[] ss= s.split(",");
+        ArrayList<Integer> r= new ArrayList<>();
+        for ( String sss: ss ) {
+            if ( sss.contains("-") ) {
+                String[] sss4= sss.split("-");
+                if ( sss4.length!=2 ) {
+                    throw new IllegalArgumentException("must be name-name");
+                }
+                int i1= columnIndex( sss4[0], fieldCount );
+                int i2= columnIndex( sss4[1], fieldCount );
+                if ( i2<i1 ) {
+                    throw new IllegalArgumentException("start column must be before end column");
+                }
+                for ( int i=i1; i<=i2; i++ ) {
+                    r.add(i);
+                }
+            } else if ( sss.contains(":") ) {
+                String[] sss4= sss.split(":");
+                int i1= columnIndex( sss4[0], fieldCount );
+                int i2= columnIndex( sss4[1], fieldCount );
+                int st= sss4.length==3 ? Integer.parseInt(sss4[2]) : 1;
+                if ( sss4.length==3 ) {                    
+                    for ( int i=i1; i<i2; i+=st ) {
+                        r.add( i );
+                    }
+                }
+            } else {
+                r.add( columnIndex( sss, fieldCount ) );
+            }
+        }
+        int[] result= new int[r.size()];
+        for ( int i=0; i<r.size(); i++ ) {
+            result[i]= r.get(i);
+        }
+        return result;
+    }
+    
     @Override
     public QDataSet getDataSet(ProgressMonitor mon) throws IOException, CancelledOperationException, NoDataInIntervalException {
        
@@ -194,6 +250,17 @@ public class AsciiTableDataSource extends AbstractDataSource {
 
         QDataSet bundleDescriptor= (QDataSet) ds.property(QDataSet.BUNDLE_1);
 
+        //auto-detect event lists
+        if ( eventListColumn==null ) { 
+            if ( ds.length(0)>2 && ds.length(0)<5 ) {
+                Units u0= parser.getUnits(0);
+                Units u1= parser.getUnits(1);
+                if ( UnitsUtil.isTimeLocation(u0) && ( u1==u0 ) ) {
+                    eventListColumn= "field"+(ds.length(0)-1);
+                }
+            }
+        }
+        
         if ( eventListColumn!=null ) {
             dep0= ArrayDataSet.maybeCopy( DataSetOps.leafTrim( ds, 0, 2) );
             Units u0= parser.getUnits(0);
@@ -203,7 +270,8 @@ public class AsciiTableDataSource extends AbstractDataSource {
                     throw new IllegalArgumentException("somehow the parser was misconfigured to have two different time units.");
                 }
                 if ( !u1.isConvertibleTo(u0.getOffsetUnits()) ) { // allow "s" to go with UTC
-                    throw new IllegalArgumentException("first two columns should have the same units, or second column should be offset (e.g. seconds) from first");
+                    throw new IllegalArgumentException("first two columns should have the same units, or "+
+                            "second column should be offset (e.g. seconds) from first");
                 }
             }
             dep0.putProperty( QDataSet.UNITS, parser.getUnits(0) );
@@ -220,34 +288,52 @@ public class AsciiTableDataSource extends AbstractDataSource {
             // this may raise an exception in a future version.
             throw new NoDataInIntervalException("no records found");
         }
-
+        
         String group= getParam( "group", null );
         if ( group!=null ) {
             vds= ArrayDataSet.copy( DataSetOps.unbundle( ds, group ) );
 
         } else if (column != null) {
             if ( bundleDescriptor!=null ) {
-                //vds = ArrayDataSet.copy(DataSetOps.slice1(ds, icol));
-                try {
-                    vds= ArrayDataSet.copy(DataSetOps.unbundle(ds,column));
-                } catch ( IllegalArgumentException ex ) {
-                    int icol = parser.getFieldIndex(column);
-                    if ( icol!=-1 ) {
-                        vds = ArrayDataSet.copy(DataSetOps.slice1(ds, icol));
-                        vds.putProperty( QDataSet.CONTEXT_0, null );
-                        vds.putProperty(QDataSet.UNITS, parser.getUnits(icol));
-                        if ( column.length()>1 ) vds.putProperty( QDataSet.NAME, column );
-                        vds.putProperty( QDataSet.LABEL, parser.getFieldNames()[icol] );
-                    } else {
-                        QDataSet _vds= AsciiHeadersParser.getInlineDataSet( bundleDescriptor, column );
-                        if ( _vds==null ) {
-                            throw new IllegalArgumentException("No such dataset: " +column );
+                int[] columns= parseColumns( column, parser.getFieldCount() );
+
+                QDataSet vdss=null;
+                for ( int c: columns ) {
+                    try {
+                        if ( c==-1 ) {
+                            vdss= Ops.bundle( vdss, ArrayDataSet.copy( Ops.unbundle( ds, column ) ) );
                         } else {
-                            vds= ArrayDataSet.maybeCopy(_vds);
+                            vdss= Ops.bundle( vdss, ArrayDataSet.copy(DataSetOps.unbundle(ds,c)) );
+                        }
+                    } catch ( IllegalArgumentException ex ) {
+                        int icol = parser.getFieldIndex(column);
+                        if ( icol!=-1 ) {
+                            MutablePropertyDataSet vds1 = ArrayDataSet.copy(DataSetOps.slice1(ds, icol));
+                            vds1.putProperty( QDataSet.CONTEXT_0, null );
+                            vds1.putProperty(QDataSet.UNITS, parser.getUnits(icol));
+                            if ( column.length()>1 ) vds1.putProperty( QDataSet.NAME, column );
+                            vds1.putProperty( QDataSet.LABEL, parser.getFieldNames()[icol] );
+                        } else {
+                            //BUG2000: bundleDescriptor is supposed to be a AsciiHeadersParser.BundleDescriptor.  Message is poor 
+                            //when wrong column name is used.  https://sourceforge.net/p/autoplot/bugs/1999/
+                            if ( bundleDescriptor instanceof AsciiHeadersParser.BundleDescriptor ) {
+                                QDataSet _vds= AsciiHeadersParser.getInlineDataSet( bundleDescriptor, column );
+                                if ( _vds==null ) {
+                                    throw new IllegalArgumentException("No such dataset: " +column );
+                                } else {
+                                    vdss= Ops.bundle( vdss, ArrayDataSet.maybeCopy(_vds) );
+                                }
+                            } else {
+                                throw new IllegalArgumentException("No such dataset: " +column );
+                            }
                         }
                     }
                 }
-
+                if ( columns.length==1 ) {
+                    vds= (MutablePropertyDataSet) Ops.unbundle( vdss, 0 );
+                } else {
+                    vds= Ops.maybeCopy( vdss );
+                }
             } else {
                 int icol = parser.getFieldIndex(column);
                 if (icol == -1) {
@@ -296,7 +382,8 @@ public class AsciiTableDataSource extends AbstractDataSource {
                 QDataSet cadence= DataSetUtil.guessCadenceNew( dep0, null );
                 if ( cadence!=null && !"log".equals( cadence.property(QDataSet.SCALE_TYPE) ) ) {
                     double add= cadence.value()/2; //DANGER--should really check units.
-                    logger.log( Level.FINE, "adding half-interval width to dep0 because of %s: %s", new Object[] { PARAM_INTERVAL_TAG, cadence } );
+                    logger.log( Level.FINE, "adding half-interval width to dep0 because of %s: %s", 
+                            new Object[] { PARAM_INTERVAL_TAG, cadence } );
                     for ( int i=0; i<dep0.length(); i++ ) {
                         dep0.putValue( i, dep0.value(i)+add );
                     }
@@ -356,10 +443,26 @@ public class AsciiTableDataSource extends AbstractDataSource {
                 }
             }
             vds= (MutablePropertyDataSet)Ops.bundle( xds, yds, zds );
-        }
+        } else if ( y!=null ) {
+            QDataSet yds= ArrayDataSet.copy( DataSetOps.unbundle( ds, parser.getFieldIndex(y) ) );
+            QDataSet xds;
+            if ( x!=null ) {
+                xds= ArrayDataSet.copy( DataSetOps.unbundle( ds, parser.getFieldIndex(x) ) );
+            } else {
+                if ( dep0!=null ) {
+                    xds= dep0;
+                } else {
+                    throw new IllegalArgumentException("expected param X"); 
+                }
+            }
+            vds= (MutablePropertyDataSet)Ops.link( xds, yds );
+        } 
         
         
         if ( bundle!=null ) {
+            if ( bundle[0]==-1 ) {
+                throw new IllegalArgumentException("bad parameter: bundle");
+            }
             rank2= bundle;
         }
 
@@ -395,9 +498,30 @@ public class AsciiTableDataSource extends AbstractDataSource {
             }
 
             if ( bundle!=null ) {
-                QDataSet labels = Ops.labelsDataset(parser.getFieldLabels());
-                labels = labels.trim( bundle[0], bundle[1]);
-                mds.putProperty(QDataSet.DEPEND_1, labels);
+                QDataSet labelsds = Ops.labelsDataset(parser.getFieldLabels());
+                labelsds = labelsds.trim( bundle[0], bundle[1]);
+                mds.putProperty(QDataSet.DEPEND_1, labelsds);
+                SparseDataSetBuilder sdsb= new SparseDataSetBuilder(2);
+                sdsb.setLength( bundle[1]-bundle[0] );
+                sdsb.setQube( new int[] { bundle[1]-bundle[0], 0 } );
+                String[] names= parser.getFieldNames();
+                String[] labels= parser.getFieldLabels();
+                String[] sunits= parser.getFieldUnits();
+                boolean nothingAdded= true;
+                for ( int i=0; nothingAdded && i<names.length; i++ ) {
+                    if ( !("field"+i).equals(names[i]) ) nothingAdded= false;
+                    if ( !("field"+i).equals(labels[i]) ) nothingAdded= false;
+                    if ( sunits[i]!=null ) nothingAdded= false;
+                }
+                nothingAdded= false;
+                logger.log(Level.FINER, "nothing added={0}", nothingAdded);
+                for ( int i=bundle[0]; i<bundle[1]; i++ ) {
+                    int index= i-bundle[0];
+                    sdsb.putProperty( QDataSet.NAME, index, names[i] );
+                    sdsb.putProperty( QDataSet.LABEL, index, labels[i] );
+                    sdsb.putProperty( QDataSet.UNITS, index, parser.getUnits(i) );
+                }
+                mds.putProperty(QDataSet.BUNDLE_1, sdsb.getDataSet() );
             }
 
             if ( depend1Label!=null ) {
@@ -443,10 +567,11 @@ public class AsciiTableDataSource extends AbstractDataSource {
                 }
             }
             
-            if ( !parser.isRichHeader() ) {
+            if ( bundle==null && rank2!=null && !parser.isRichHeader() ) { 
                 //http://autoplot.org/data/autoplot.xml, test005_demo6
                 mds.putProperty( QDataSet.BUNDLE_1, null );
             }
+            
             
             String label= getParam( "label", null );
             if ( label!=null ) {
@@ -462,7 +587,12 @@ public class AsciiTableDataSource extends AbstractDataSource {
 
         } else {
             if (vds == null) {
-                throw new IllegalArgumentException("didn't find column: " + column);
+                if ( column==null ) {
+                    throw new IllegalArgumentException("column was not specified.  "+
+                            "Use column, rank2, or bundle to specify data to plot.");
+                } else {
+                    throw new IllegalArgumentException("didn't find column: " + column);
+                }
             }
 
             String label= getParam( "label", null );
@@ -477,7 +607,9 @@ public class AsciiTableDataSource extends AbstractDataSource {
        
 
             if (dep0 != null) {
-                vds.putProperty(QDataSet.DEPEND_0, dep0);
+                if ( x==null ) {
+                    vds.putProperty(QDataSet.DEPEND_0, dep0);
+                }
             }
             if ( eventListColumn!=null && dep0!=null ) {
                 Units u0= parser.getUnits(0);
@@ -518,7 +650,7 @@ public class AsciiTableDataSource extends AbstractDataSource {
     }
 
     /**
-     * returns the rank 2 dataset produced by the ascii table reader.
+     * returns the rank 2 dataset produced by the ASCII table reader.
      * @param mon note monitor is used twice, so the progress bar jumps back.
      * @return
      * @throws java.lang.NumberFormatException
@@ -564,6 +696,11 @@ public class AsciiTableDataSource extends AbstractDataSource {
         if (o != null) {
             parser.setRecordCountLimit(Integer.parseInt(o));
         }
+        
+        o= params.get("recStart");
+        if ( o!=null ) {
+            parser.setRecordStart(Integer.parseInt(o));
+        }
 
         parser.setKeepFileHeader(true);
 
@@ -582,24 +719,35 @@ public class AsciiTableDataSource extends AbstractDataSource {
         }
 
         delim = params.get("delim");
+        
+        String spattern= params.get("pattern");
+        String format= params.get("format");
+        if ( format!=null ) {
+            spattern= AsciiParser.getRegexForFormat( format );
+        }
+        
         String sFixedColumns = params.get("fixedColumns");
-        if (sFixedColumns == null) {
-            String format= params.get("format");
-            if ( format!=null ) {
-                AsciiParser.RegexParser p= parser.getRegexParserForFormat( format );
-                columnCount = p.fieldCount();
-                parser.setRecordParser(p);
-                delim= " "; // this is because timeformats needs a delimiter
-            } else if (delim == null) {
+        
+        if ( spattern!=null )  {
+            AsciiParser.RegexParser p = new AsciiParser.RegexParser(parser,spattern);
+            parser.setRecordParser( p );
+            parser.setCommentPrefix(null);
+            columnCount= p.fieldCount();
+            delim= " "; // this is because timeformats needs a delimiter
+            
+        } else if (sFixedColumns == null) {
+            if (delim == null) {
                 AsciiParser.DelimParser p = parser.guessSkipAndDelimParser(file.toString());
                 if ( p == null) {
-                    throw new IllegalArgumentException("no records found in "+file);
+                    String cc= params.get("columnCount");
+                    columnCount= ( cc==null ) ? 2 : Integer.parseInt(cc);
+                    p= parser.getDelimParser( columnCount, "\\s+" );
                 }
                 columnCount = p.fieldCount();
                 delim = p.getDelim();
-                p.setShowException(true);
+                p.setShowException(true); 
+                parser.setRecordParser( p );
             } else {
-                if ( delim.equals(",") ) delim="COMMA";
                 delim= delim.replaceAll("WHITESPACE", "\\s+");
                 delim= delim.replaceAll("SPACE", " ");
                 delim= delim.replaceAll("COMMA", ",");
@@ -694,7 +842,11 @@ public class AsciiTableDataSource extends AbstractDataSource {
                 timeFormat= timeFormat.replaceAll("\\+",",");
             }
             if ( !timeFormat.contains(" ") ) {
-                timeFormat = timeFormat.replaceAll("\\+", " ");
+                if ( "\t".equals(delim) || ";".equals(delim) ) {
+                    timeFormat = timeFormat.replaceAll("\\+", delim);
+                } else {
+                    timeFormat = timeFormat.replaceAll("\\+", " ");
+                }
             }
             timeFormat = timeFormat.replaceAll("\\%", "\\$");
             timeFormat = timeFormat.replaceAll("\\{", "(");
@@ -719,10 +871,7 @@ public class AsciiTableDataSource extends AbstractDataSource {
             String timeFormatDelim= delim;
             if ( delim==null ) timeFormatDelim= " ";
             timeFormats= timeFormat.split(timeFormatDelim,-2);
-            if ( timeFormats.length==1 ) {
-                timeFormatDelim= " ";
-                timeFormats= timeFormat.split(timeFormatDelim,-2);
-            }
+
             if (timeFormat.equals("ISO8601")) {
                 String line = parser.readFirstParseableRecord(file.toString());
                 if (line == null) {
@@ -762,6 +911,10 @@ public class AsciiTableDataSource extends AbstractDataSource {
                     parser.setFieldParser( i, timeFieldParser );
                     parser.setUnits( i, Units.dimensionless );
                 }
+                
+                if ( parser.getRecordParser() instanceof AsciiParser.DelimParser ) {
+                    ((AsciiParser.DelimParser)parser.getRecordParser()).setGuessUnits(false);
+                }
 
                 timeColumn= timeColumn + timeFormats.length - 1;
                 if ( params.get("time")!=null )  {
@@ -787,12 +940,14 @@ public class AsciiTableDataSource extends AbstractDataSource {
         }
 
         o = params.get( "arg_0" );
-        if ( o!=null && !o.equals("rank2") ) {
+        if ( o!=null && o.length()>0 && !o.equals("rank2") ) {
             column = o;
-            timeColumn= 0;
-            final Units u = AsciiParser.UNIT_UTC;
-            parser.setUnits(0, u);
-            depend0= "0";
+            if ( parser.getFieldIndex(column)!=0 ) {
+                timeColumn= 0;
+                final Units u = AsciiParser.UNIT_UTC;
+                parser.setUnits(0, u);
+                depend0= "0";
+            }
         } 
 
         o = params.get("column");
@@ -828,8 +983,13 @@ public class AsciiTableDataSource extends AbstractDataSource {
 
         o = params.get("bundle");
         if (o != null) {
-            bundle = parseRangeStr(o, columnCount);
-            column = null;
+            if ( o.contains(",") || o.split(":",-2).length==3 ) {
+                column= o;
+                bundle= null;
+            } else {
+                bundle = parseRangeStr(o, columnCount);
+                column = null;
+            }
         }
 
         o = params.get("arg_0");
@@ -850,7 +1010,7 @@ public class AsciiTableDataSource extends AbstractDataSource {
                 depend0 = parser.getFieldNames()[0];
                 column = parser.getFieldNames()[1];
             } else {
-                column = parser.getFieldNames()[0];
+                column = parser.getFieldNames()[parser.getFieldNames().length-1];
             }
         }
 
@@ -871,7 +1031,10 @@ public class AsciiTableDataSource extends AbstractDataSource {
         eventListColumn= params.get("eventListColumn");
         
         // rfe https://sourceforge.net/p/autoplot/bugs/1425/: create events list automatically.
-        if ( parser.getFieldLabels().length>=2 && parser.getFieldLabels().length <= 5 && UnitsUtil.isTimeLocation(parser.getUnits(0)) && UnitsUtil.isTimeLocation(parser.getUnits(1)) && !haveColumn ) {
+        if ( parser.getFieldLabels().length>=2 
+                && parser.getFieldLabels().length <= 5 
+                && UnitsUtil.isTimeLocation(parser.getUnits(0)) 
+                && UnitsUtil.isTimeLocation(parser.getUnits(1)) && !haveColumn ) {
             if ( parser.getFieldCount()>2 ) {
                 eventListColumn= "field"+(parser.getFieldLabels().length-1);
             } else {
@@ -881,11 +1044,11 @@ public class AsciiTableDataSource extends AbstractDataSource {
             }
         }
         
-        // rfe https://sourceforge.net/p/autoplot/feature-requests/256: add support for HDMC's simple event list format, where the first two columns are start and stop times.
+        // rfe https://sourceforge.net/p/autoplot/feature-requests/256: add support for HDMC's simple event list format, where 
+        // the first two columns are start and stop times.
         if ( eventListColumn!=null ) {
             parser.setUnits( 0, AsciiParser.UNIT_UTC );
             parser.setUnits( 1, AsciiParser.UNIT_UTC );
-            //if ( UnitsUtil.isTimeLocation( parser.getUnits(1) ) ) parser.setUnits(1,Units.us2000); // enough of a guess that this will find a good record.
             parser.setFieldParser(0, parser.UNITS_PARSER);
             parser.setFieldParser(1, parser.UNITS_PARSER);
             if ( !eventListColumn.equals("") ) { //"" means it is just two columns: st,en.
@@ -897,13 +1060,13 @@ public class AsciiTableDataSource extends AbstractDataSource {
                     String[] fields = new String[parser.getRecordParser().fieldCount()];
                     String s= parser.readFirstParseableRecord(file.toString());
                     parser.getRecordParser().splitRecord(s,fields);
-                    if ( fields[2].startsWith("x") || fields[2].startsWith("0x" ) ) { // kludge for RGB color third column starts with x
+                    if ( fields[2].startsWith("x") || fields[2].startsWith("0x" ) ) { // RGB color third column starts with x or 0x
                         parser.setUnits(2,Units.dimensionless);
                         parser.setFieldParser( 2, new FieldParser() {
                             @Override
                             public double parseField(String field, int columnIndex) throws ParseException {
                                 if ( field.startsWith("x") ) {
-                                    return Integer.decode( "0"+field ); // kludge for Scott
+                                    return Integer.decode( "0"+field ); 
                                 } else {
                                     return Integer.decode( field );
                                 }
@@ -994,9 +1157,11 @@ public class AsciiTableDataSource extends AbstractDataSource {
         if (o!=null ) {
             String sunits = o;
             EnumerationUnits u = EnumerationUnits.create("default");
-            String[] ss= sunits.split(",");
-            for ( String s : ss ) {
-                u.createDatum(s);
+            if ( sunits.trim().length()>0 ) {
+                String[] ss= sunits.split(",");
+                for ( String s : ss ) {
+                    u.createDatum(s);
+                }
             }
             if (column != null) {
                 int icol = parser.getFieldIndex(column);
@@ -1098,7 +1263,14 @@ public class AsciiTableDataSource extends AbstractDataSource {
             String k= e.getKey();
             Object v= e.getValue();
             if ( v==null ) continue;
-            if ( !( v instanceof Number || v instanceof String || v instanceof org.das2.datum.Datum ) ) remove.add(k);
+            boolean isAllowed= v instanceof Number 
+                || v instanceof String
+                || v instanceof org.das2.datum.Datum 
+                || v.getClass().isArray();
+            if ( ! isAllowed ) {
+                logger.log(Level.FINE, "removing user property because of type: {0}", k);
+                remove.add(k);
+            }
         }
         for ( String k: remove ) {
             props.remove(k);
@@ -1139,6 +1311,7 @@ public class AsciiTableDataSource extends AbstractDataSource {
      * @param columnCount
      * @return two-element int array of the first and last indeces+1.
      * @throws java.lang.NumberFormatException
+     * @see #parseColumns(java.lang.String) 
      */
     private int[] parseRangeStr(String o, int columnCount) throws NumberFormatException {
         String s = o;

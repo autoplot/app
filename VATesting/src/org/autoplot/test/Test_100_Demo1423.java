@@ -45,11 +45,19 @@ public class Test_100_Demo1423 {
         DialogOperator popup = new DialogOperator( new RegexComponentChooser( "Run Script demo1423.jy") );           
         new JButtonOperator(popup,"OK").clickMouse();      
         
-        ScriptContext.sleep(1000);
+        ScriptContext.setStatus("waiting 4 more seconds.");
+        ScriptContext.sleep(4000);
+        ScriptContext.setStatus("done waiting 4 seconds.");
         
         ScriptContext.waitUntilIdle();
         
-        ScriptContext.sleep(10000);
+        ScriptContext.setStatus("waiting 12 more seconds.");
+        ScriptContext.sleep(12000);
+        ScriptContext.setStatus("done waiting 12 seconds.");
+        
+        ScriptContext.setStatus("waiting another 5 seconds.");
+        ScriptContext.sleep(5000);
+        ScriptContext.setStatus("done waiting 5 seconds.");
         
         ScriptContext.waitUntilIdle();
         

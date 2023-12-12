@@ -66,4 +66,22 @@ public interface DataSourceFactory {
      * @return true if the data source factory supports discovery.
      */
     public boolean supportsDiscovery();
+    
+    /**
+     * true if the data source is based on files.  For example, a CDF file
+     * is true, since the URIs contain cdf file names, and while vap+cdaweb 
+     * uses files to move data, it is not file based.  This is initially used
+     * to limit the entries in file choosers.
+     * @return true if the data source is based on files.
+     */
+    public boolean isFileResource();
+    
+    /**
+     * return a short description of the factory, or empty string.  For example,
+     * "NASA Common Data Format (CDF) Files" or "NASA CDAWeb".  This will 
+     * be used to identify files or discovery sources.
+     * @return a short description of the factory.
+     */
+    public String getDescription();
+    
 }

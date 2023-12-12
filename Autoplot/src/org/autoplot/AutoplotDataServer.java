@@ -3,6 +3,7 @@ package org.autoplot;
 
 import java.io.File;
 import java.io.FileInputStream;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.OutputStream;
 import java.io.PrintStream;
@@ -34,7 +35,6 @@ import org.das2.util.monitor.AbstractProgressMonitor;
 import org.das2.util.monitor.NullProgressMonitor;
 import org.das2.util.monitor.ProgressMonitor;
 import org.das2.util.monitor.SubTaskMonitor;
-import org.das2.qds.ArrayDataSet;
 import org.das2.qds.DataSetOps;
 import org.das2.qds.MutablePropertyDataSet;
 import org.das2.qds.QDataSet;
@@ -48,6 +48,7 @@ import org.autoplot.datasource.URISplit;
 import org.autoplot.datasource.capability.TimeSeriesBrowse;
 import org.das2.qds.ops.Ops;
 import org.das2.qstream.SimpleStreamFormatter;
+import org.das2.util.FileUtil;
 
 /**
  * Data server for U. Iowa P.W. Group converts URIs into streams of data.  These would typically
@@ -61,20 +62,22 @@ public class AutoplotDataServer {
     private static final String FORM_D2S = "d2s";
     private static final String FORM_QDS = "qds";
     private static final String FORM_HAPI_INFO = "hapi-info";
-    private static final String FORM_HAPI_DATA = "hapi-data";
-    private static final String FORM_HAPI_DATA_BINARY = "hapi-data-binary";
-
+    private static final String FORM_HAPI_DATA = "hapi-data"; // deprecated
+    private static final String FORM_HAPI_CSV = "hapi-csv";
+    private static final String FORM_HAPI_DATA_BINARY = "hapi-data-binary"; // deprecated
+    private static final String FORM_HAPI_BINARY = "hapi-binary";
+    
     private static final Logger logger= LoggerManager.getLogger("autoplot.server");
 
     /**
      * Perform the data service.
-     * @param timeRange the time range to send out, such as "May 2003"
+     * @param timeRange the time range to send out, such as "May 2003", or "" for none, or null for none.
      * @param suri the data source to read in.  If this has TimeSeriesBrowse, then we can stream the data.
      * @param step step size, such as "24 hr" or "3600s".  If the URI contains $H, "3600s" is used.
      * @param stream if true, send data out as it is read.
      * @param format FORM_QDS, FORM_D2S, FORM_HAPI
      * @param mon progress monitor to monitor the stream.
-     * @param out 
+     * @param out stream which receives the data.
      * @param ascii if true, use ascii types for qstreams and das2streams.
      * @param outEmpty for the streaming library, so we don't put progress out until we've output the initial header.
      * @throws Exception 
@@ -87,7 +90,20 @@ public class AutoplotDataServer {
 
         boolean someValid= false;
 
-        if (!timeRange.equals("")) {
+        boolean trimTimes= format.equals(FORM_HAPI_BINARY) || format.equals(FORM_HAPI_CSV) || format.equals(FORM_HAPI_DATA) || format.equals(FORM_HAPI_DATA_BINARY);
+        
+        if ( timeRange==null ) timeRange="";
+
+        // peek to see if there is a timeRange within the URI, and make this equivalent to the case where timerange is specified.
+        if ( timeRange.length()==0 ) {
+            DataSource dss1= DataSetURI.getDataSource(suri);
+            TimeSeriesBrowse tsb1= dss1.getCapability(TimeSeriesBrowse.class); // Note some Jyds scripts allow TSB to be present after the load.
+            if ( tsb1!=null ) {
+                timeRange= tsb1.getTimeRange().toString();
+            }
+        }
+            
+        if ( !timeRange.equals("")) {
             logger.fine("org.autoplot.jythonsupport.Util.getDataSet( suri,timeRange ):");
             logger.log(Level.FINE, "   suri={0}", suri);
             logger.log(Level.FINE, "   timeRange={0}", timeRange);
@@ -105,7 +121,7 @@ public class AutoplotDataServer {
             Datum next= first.add( Units.seconds.parse(step) );
 
             List<DatumRange> drs;
-            if ( stream && ( format.equals(FORM_D2S) || format.equals(FORM_QDS) || format.equals(FORM_HAPI_DATA) || format.equals(FORM_HAPI_DATA_BINARY)) ) {
+            if ( stream && ( format.equals(FORM_D2S) || format.equals(FORM_QDS) || format.equals(FORM_HAPI_DATA) || format.equals(FORM_HAPI_CSV) || format.equals(FORM_HAPI_DATA_BINARY)) ) {
                 drs= DatumRangeUtil.generateList( outer, new DatumRange( first, next ) );
             } else {
                 // dat xls cannot stream...
@@ -128,15 +144,23 @@ public class AutoplotDataServer {
                     ds1= org.autoplot.jythonsupport.Util.getDataSet(suri, dr.toString(), SubTaskMonitor.create( mon, i*10, (i+1)*10 ) );
                     
                 } catch ( NoDataInIntervalException ex ) {
-                    logger.log( Level.INFO, "no data trying to read "+dr, ex ); 
+                    logger.log( Level.FINE, "no data trying to read "+dr, ex ); 
+                    
+                } catch ( FileNotFoundException ex ) {
+                    logger.log( Level.FINE, "no files found trying to read "+dr, ex ); 
                     
                 } catch ( Exception ex ) {
                     logger.log( Level.WARNING, "exception when trying to read "+dr, ex ); 
                 }
+                
+                if ( ds1!=null && trimTimes ) {                                    
+                    ds1= Ops.trim( ds1, outer );
+                }
+                
                 logger.log( Level.FINE, "  --> {0} )", ds1 );
                 if ( ds1!=null ) {
                     if ( !SemanticOps.isTimeSeries(ds1) ) { //automatically fall back to -nostream
-                        logger.fine( String.format( "dataset doesn't appear to be a timeseries, reloading everything" ) );
+                        logger.fine( String.format( "dataset doesn't appear to be a time series, reloading everything" ) );
                         ds1 = org.autoplot.jythonsupport.Util.getDataSet(suri, outer.toString(), SubTaskMonitor.create( mon, i*10, (i+1)*10 ) );
                         logger.log( Level.FINE, "  --> {0} )", ds1 );
                         writeData(format, out, ds1, ascii, stream );
@@ -210,85 +234,108 @@ public class AutoplotDataServer {
 
     private static void formatD2S( QDataSet data, OutputStream fo, boolean ascii, boolean stream ) {
         boolean binary = !ascii;
-        if (data.rank() == 3) {
-            TableDataSet tds = TableDataSetAdapter.create(data);
-            if (binary) {
-                TableUtil.dumpToDas2Stream( tds, Channels.newChannel(fo), false, !stream );
-            } else {
-                TableUtil.dumpToDas2Stream( tds, Channels.newChannel(fo), true, !stream );
-            }
-        } else if (data.rank() == 2) {
-            TableDataSet tds = TableDataSetAdapter.create(data);
-            if (binary) {
-                TableUtil.dumpToDas2Stream( tds, Channels.newChannel(fo), false, !stream );
-            } else {
-                TableUtil.dumpToDas2Stream( tds, Channels.newChannel(fo), true, !stream );
-            }
-        } else if (data.rank() == 1) {
-            VectorDataSet vds = VectorDataSetAdapter.create(data);
-            if (binary) {
-                VectorUtil.dumpToDas2Stream( vds, Channels.newChannel(fo), false, !stream );
-            } else {
-                VectorUtil.dumpToDas2Stream( vds, Channels.newChannel(fo), true, !stream );
-            }
+        switch (data.rank()) {
+            case 3: {
+                    TableDataSet tds = TableDataSetAdapter.create(data);
+                    if (binary) {
+                        TableUtil.dumpToDas2Stream( tds, Channels.newChannel(fo), false, !stream );
+                    } else {
+                        TableUtil.dumpToDas2Stream( tds, Channels.newChannel(fo), true, !stream );
+                    }       
+                    break;
+                }
+            case 2: {
+                    TableDataSet tds = TableDataSetAdapter.create(data);
+                    if (binary) {
+                        TableUtil.dumpToDas2Stream( tds, Channels.newChannel(fo), false, !stream );
+                    } else {
+                        TableUtil.dumpToDas2Stream( tds, Channels.newChannel(fo), true, !stream );
+                    }
+                    break;
+                }
+            case 1:
+                VectorDataSet vds = VectorDataSetAdapter.create(data);
+                if (binary) {
+                    VectorUtil.dumpToDas2Stream( vds, Channels.newChannel(fo), false, !stream );
+                } else {
+                    VectorUtil.dumpToDas2Stream( vds, Channels.newChannel(fo), true, !stream );
+                }   
+                break;
+            default:
+                break;
         }
     }
 
     private static void writeData( String format, OutputStream out, QDataSet ds, boolean ascii, boolean stream) throws Exception {
-        if ( format.equals(FORM_D2S) ) {
-            
-            formatD2S( ds, out, ascii, stream );
-            
-        } else if ( format.equals(FORM_QDS) ) {
-            if ( ds.property( QDataSet.DEPEND_1 )!=null && ds.property( QDataSet.BUNDLE_1 )!=null ) {
-                logger.info("dropping BUNDLE_1 when DEPEND_1 is present");
-                ds= Ops.maybeCopy(ds);
-                ((MutablePropertyDataSet)ds).putProperty(QDataSet.BUNDLE_1,null);
-            }
-            new SimpleStreamFormatter().format(ds, out, ascii );
-            
-        } else if ( format.equals(FORM_HAPI_INFO) ) {
-            final DataSourceFormat dsf = DataSourceRegistry.getInstance().getFormatByExt("hapi");
-            File file= new File("/tmp/ap-hapi/foo.hapi");
-
-            dsf.formatData( file.toString()+"?id=temp", ds, new NullProgressMonitor() );
-            File infoFile= new File( "/tmp/ap-hapi/foo/info/temp.json" );
-            FileInputStream fin= new FileInputStream(infoFile);
-            DataSourceUtil.transfer( fin, out );
-
-        } else if ( format.equals(FORM_HAPI_DATA_BINARY) ) {
-            final DataSourceFormat dsf = DataSourceRegistry.getInstance().getFormatByExt("hapi");
-            File file= new File("/tmp/ap-hapi/foo.hapi");
-            
-            dsf.formatData( file.toString()+"?id=temp&format=binary", ds, new NullProgressMonitor() );
-            File binaryFile= new File( "/tmp/ap-hapi/foo/data/temp.binary" );
-            FileInputStream fin= new FileInputStream(binaryFile);
-            DataSourceUtil.transfer( fin, out );
-
-        } else if ( format.equals(FORM_HAPI_DATA) ) {
-            final DataSourceFormat dsf = DataSourceRegistry.getInstance().getFormatByExt("hapi");
-            File file= new File("/tmp/ap-hapi/foo.hapi");
-            
-            dsf.formatData( file.toString()+"?id=temp", ds, new NullProgressMonitor() );
-            File csvFile= new File( "/tmp/ap-hapi/foo/data/temp.csv" );
-            FileInputStream fin= new FileInputStream(csvFile);
-            DataSourceUtil.transfer( fin, out );
-            
-        } else if ( format.equals("dat") || format.equals("xls") || format.equals("bin") ) {
-            File file= File.createTempFile("autoplotDataServer", "."+format );
-            
-            formatDataSet( ds, file.toString() );
-            
-            FileInputStream fin= new FileInputStream(file);
-            DataSourceUtil.transfer( fin, out );
-            
-        } else {
-            throw new IllegalAccessException("bad format: "+format );
+        switch (format) {
+            case FORM_D2S:
+                formatD2S( ds, out, ascii, stream );
+                break;
+            case FORM_QDS:
+                if ( ds.property( QDataSet.DEPEND_1 )!=null && ds.property( QDataSet.BUNDLE_1 )!=null ) {
+                    logger.info("dropping BUNDLE_1 when DEPEND_1 is present");
+                    ds= Ops.maybeCopy(ds);
+                    ((MutablePropertyDataSet)ds).putProperty(QDataSet.BUNDLE_1,null);
+                }   new SimpleStreamFormatter().format(ds, out, ascii );
+                break;
+            case FORM_HAPI_INFO:
+                {
+                    final DataSourceFormat dsf = DataSourceRegistry.getInstance().getFormatByExt("hapi");
+                    int irand= (int)( Math.round( Math.random() * 100000000 ) );
+                    String n= String.format( "/tmp/ap-hapi/ads%09d", irand );
+                    File file= new File( n+".hapi");
+                    dsf.formatData( file.toString()+"?id=temp", ds, new NullProgressMonitor() );
+                    File infoFile= new File( n+"/hapi/info/temp.json" );
+                    FileInputStream fin= new FileInputStream(infoFile);
+                    DataSourceUtil.transfer( fin, out, false );
+                    FileUtil.deleteFileTree( new File(n) );
+                    break;
+                }
+            case FORM_HAPI_DATA_BINARY:
+            case FORM_HAPI_BINARY:
+                {
+                    final DataSourceFormat dsf = DataSourceRegistry.getInstance().getFormatByExt("hapi");
+                    int irand= (int)( Math.round( Math.random() * 100000000 ) );
+                    String n= String.format( "/tmp/ap-hapi/ads%09d", irand );
+                    File file= new File( n+".hapi");
+                    dsf.formatData( file.toString()+"?id=temp&format=binary", ds, new NullProgressMonitor() );
+                    File binaryFile= new File(  n+"/hapi/data/temp.binary" );
+                    FileInputStream fin= new FileInputStream(binaryFile);
+                    DataSourceUtil.transfer( fin, out, false );
+                    FileUtil.deleteFileTree( new File(n) );
+                    break;
+                }
+            case FORM_HAPI_DATA:
+            case FORM_HAPI_CSV:
+                {
+                    final DataSourceFormat dsf = DataSourceRegistry.getInstance().getFormatByExt("hapi");
+                    int irand= (int)( Math.round( Math.random() * 100000000 ) );
+                    String n= String.format( "/tmp/ap-hapi/ads%09d", irand );
+                    File file= new File( n+".hapi");
+                    dsf.formatData( file.toString()+"?id=temp", ds, new NullProgressMonitor() );
+                    File csvFile= new File( n+"/hapi/data/temp.csv" );
+                    FileInputStream fin= new FileInputStream(csvFile);
+                    DataSourceUtil.transfer( fin, out, false );
+                    FileUtil.deleteFileTree( new File(n) );
+                    break;
+                }
+            case "dat":
+            case "xls":
+            case "bin":
+                {
+                    File file= File.createTempFile("autoplotDataServer", "."+format );
+                    formatDataSet( ds, file.toString() );
+                    FileInputStream fin= new FileInputStream(file);
+                    DataSourceUtil.transfer( fin, out, false );
+                    break;
+                }
+            default:
+                throw new IllegalAccessException("bad format: "+format );
         }
     }
 
 
-    private static class D2SMonitor extends AbstractProgressMonitor {
+    public static class D2SMonitor extends AbstractProgressMonitor {
         PrintStream out;
         Set outEmpty;
         D2SMonitor( OutputStream out, Set outEmpty ) {
@@ -316,7 +363,7 @@ public class AutoplotDataServer {
     /**
      * put a comment onto the stream no more often then once per second.
      */
-    private static class QStreamMonitor extends AbstractProgressMonitor {
+    public static class QStreamMonitor extends AbstractProgressMonitor {
         PrintStream out;
         Set outEmpty; // if this is empty then out is empty.
 
@@ -345,11 +392,9 @@ public class AutoplotDataServer {
 
     public static void main(String[] args) throws Exception {
 
-        System.err.println("org.autoplot.AutoplotDataServer 20160309 (Autoplot version " + APSplash.getVersion() + ")" );
-
         ArgumentList alm = new ArgumentList("AutoplotDataServer");
         alm.addOptionalSwitchArgument("uri", "u", "uri", "", "URI to plot");
-        alm.addOptionalSwitchArgument("format", "f", "format", "", "output format qds, d2s (default=d2s if no filename) which support streaming, or xls bin dat hapi-info hapi-data hapi-data-binary");
+        alm.addOptionalSwitchArgument("format", "f", "format", "", "output format qds, d2s (default=d2s if no filename) which support streaming, or xls bin dat hapi-info hapi-csv hapi-binary");
         alm.addOptionalSwitchArgument("outfile", "o", "outfile", DEFT_OUTFILE, "output filename or -, extension implies format.");
         alm.addOptionalSwitchArgument("timeRange", "t", "timeRange", "", "timerange for TimeSeriesBrowse datasources");
         alm.addOptionalSwitchArgument("timeStep", "s", "timeStep", "86400s", "atom step size for loading and sending, default is 86400s");
@@ -357,14 +402,26 @@ public class AutoplotDataServer {
         alm.addBooleanSwitchArgument( "nostream", "", "nostream","disable streaming, as with Bill's dataset which is X and Y table");
         alm.addBooleanSwitchArgument( "ascii", "a", "ascii", "request that ascii streams be sent instead of binary.");
         alm.addBooleanSwitchArgument( "noexit", "z", "noexit", "don't exit after running, for use with scripts." );
+        alm.addBooleanSwitchArgument( "quiet", "q", "quiet", "don't print anything besides warning messages to stderr." );
         alm.addBooleanSwitchArgument( "enableResponseMonitor", null, "enableResponseMonitor", "monitor the event thread for long unresponsive pauses");        
 
         alm.requireOneOf(new String[]{"uri"});
-        alm.process(args);
+        if ( !alm.process(args) ) {
+            System.exit( alm.getExitCode() );
+        }
 
+        if ( alm.getBooleanValue("quiet") ) {
+            // don't print anything.
+        } else {
+            System.err.println("org.autoplot.AutoplotDataServer 20160309 (Autoplot version " + APSplash.getVersion() + ")" );
+        }
+        
         alm.logPrefsSettings( logger );
 
         String suri = alm.getValue("uri");
+        if ( suri.startsWith("'") && suri.endsWith("'") ) {
+            suri= suri.substring( 1, suri.length()-1 );
+        }
 
         String timeRange = alm.getValue("timeRange");
 
@@ -465,6 +522,7 @@ public class AutoplotDataServer {
         }
         
         doService( timeRange, suri, step, stream, format,out, ascii, outEmpty, mon );
+        out.close();
         
         if ( !alm.getBooleanValue("noexit") ) System.exit(0);
 

@@ -3,10 +3,13 @@ package org.autoplot.csv;
 
 import com.csvreader.CsvReader;
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.net.URI;
 import java.text.ParseException;
+import java.util.Arrays;
+import java.util.Iterator;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
@@ -25,9 +28,15 @@ import org.das2.qds.SemanticOps;
 import org.das2.qds.SparseDataSet;
 import org.autoplot.datasource.AbstractDataSource;
 import org.autoplot.datasource.DataSetURI;
+import org.autoplot.datasource.capability.Streaming;
+import org.autoplot.html.AsciiTableStreamer;
+import org.das2.datum.Datum;
+import org.das2.datum.DatumUtil;
+import org.das2.datum.InconvertibleUnitsException;
 import org.das2.qds.ops.Ops;
 import org.das2.qds.util.AsciiParser;
 import org.das2.qds.util.DataSetBuilder;
+import org.das2.util.monitor.NullProgressMonitor;
 
 /**
  * Specialized reader only reads csv files.  These csv files must be simple tables with the same number of fields in each record.
@@ -42,6 +51,7 @@ public class CsvDataSource extends AbstractDataSource {
      */
     public CsvDataSource(URI uri) {
         super(uri);
+        addCapability( Streaming.class, new CsvTableStreamingSource() );
     }
 
     private QDataSet parseHeader( int icol, String header, String sval ) {
@@ -91,7 +101,7 @@ public class CsvDataSource extends AbstractDataSource {
     @Override
     public QDataSet getDataSet(ProgressMonitor mon) throws Exception {
 
-        InputStream in = DataSetURI.getInputStream(uri, mon);
+        InputStream in = DataSetURI.getInputStream(uri, mon.getSubtaskMonitor("load input stream"));
         
         //char delimiter= TableOps.getDelim(thein);
         
@@ -102,7 +112,7 @@ public class CsvDataSource extends AbstractDataSource {
         char delimiter= sdelimiter.charAt(0);
         
         BufferedReader breader= new BufferedReader( new InputStreamReader(in) );        
-        
+            
         String skip= getParam( "skipLines", "" );
         if ( skip.length()==0 ) skip= getParam( "skip", "" );
         if ( skip.length()>0 ) {
@@ -111,14 +121,24 @@ public class CsvDataSource extends AbstractDataSource {
                 breader.readLine();
             }
         }
+        
+        String recCount= getParam( "recCount", "" );
+        int irecCount= recCount.length()==0 ? Integer.MAX_VALUE : Integer.parseInt(recCount);
 
+        String recStart= getParam( "recStart", "" );
+        int irecStart= recStart.length()==0 ? 0 : Integer.parseInt(recStart);
+        
+        if ( irecStart>0 && irecCount<(Integer.MAX_VALUE-irecStart) ) {
+            irecCount+= irecStart;
+        }
+        
         CsvReader reader= new CsvReader( breader );
         if ( delimiter!=',' ) reader.setDelimiter(delimiter);
         
         String[] columnHeaders;
 
-        columnHeaders= CsvDataSourceFactory.getColumnHeaders(reader);
-
+        columnHeaders= CsvDataSourceFactory.getColumnHeaders(reader,true);
+        
         String column= getParam( "column", null );
         /**
          * icolumn is the column we are reading, or -1 when reading multiple columns.
@@ -183,9 +203,14 @@ public class CsvDataSource extends AbstractDataSource {
 
         boolean needToCheckHeader= true; // check to see if the first line of data was mistaken for a header
         
+        logger.log(Level.FINE, "reading csv data from input stream: {0}", uri);
+        
         while ( reader.readRecord() ) {
             line++;
-            mon.setProgressMessage("read line "+line);
+            if ( line % 100 == 0 ) {
+                logger.log(Level.FINER, "read line {0}", line);
+                mon.setProgressMessage("read line "+line);
+            }
             if ( columnUnits==null ) {
                 boolean foundColumnNumbers= false;
                 columnUnits= new Units[reader.getColumnCount()];
@@ -295,6 +320,7 @@ public class CsvDataSource extends AbstractDataSource {
             }
 
             if ( needToCheckHeader && columnUnits!=null ) {
+                logger.finer("check headers");
                 boolean yepItsData= true;
                 double[] cbs= new double[columnUnits.length];
                 for ( int icol= 0; icol<columnUnits.length; icol++ ) {
@@ -306,20 +332,28 @@ public class CsvDataSource extends AbstractDataSource {
                         }
                         Units u1= columnUnits[icol];
                         if ( columnHeaders.length<=icol ) {
+                            logger.log(Level.FINER, "too few column headers {0}<={1}", new Object[]{columnHeaders.length, icol});
                             yepItsData= false;
                             continue;
                         }
                         if ( u1 instanceof EnumerationUnits ) {
                             cbs[icol]= ((EnumerationUnits)u1).createDatum( columnHeaders[icol] ).doubleValue(u1);
                         } else {
-                            cbs[icol]= u1.parse(columnHeaders[icol]).doubleValue(u1);
+                            try {
+                                cbs[icol]= u1.parse(columnHeaders[icol]).doubleValue(u1);
+                            } catch ( InconvertibleUnitsException ex ) {
+                                Datum d= DatumUtil.parse(columnHeaders[icol]);
+                                cbs[icol]= d.doubleValue(d.getUnits());
+                                if ( yepItsData && !UnitsUtil.isNominalMeasurement(d.getUnits()) ) columnUnits[icol]= d.getUnits();
+                            }
                         }
                     } catch ( ParseException ex ) {
+                        logger.log(Level.FINER, "parse exception at icol={0}", icol);
                         yepItsData= false;
                     }
                 }
                 
-                if ( yepItsData ) {
+                if ( yepItsData && builder.getLength()<irecCount ) {
                     if ( idep0column>=0 ) {
                         tbuilder.putValue( -1, cbs[idep0column] );
                         tbuilder.nextRecord();
@@ -338,9 +372,10 @@ public class CsvDataSource extends AbstractDataSource {
                     }
                 }
                 needToCheckHeader= false;
+                logger.finer("done check headers");
             }
                 
-            if ( columnUnits!=null ) {
+            if ( columnUnits!=null && builder.getLength()<irecCount ) {
                 if ( idep0column>=0 ) {
                     tbuilder.putValue( -1, tb );
                     tbuilder.nextRecord();
@@ -359,6 +394,7 @@ public class CsvDataSource extends AbstractDataSource {
         }
 
         reader.close();
+        logger.log(Level.FINE, "finished reading csv data.");
         
         mon.finished();
 
@@ -367,6 +403,11 @@ public class CsvDataSource extends AbstractDataSource {
         }
         
         DDataSet ds= builder.getDataSet();
+        
+        if ( irecStart>0 ) { // TODO: skip records, so that memory isn't consumed.
+            ds= (DDataSet)ds.trim(irecStart,ds.length());
+        }
+        
         if ( idep0column>=0 && dep0ds!=null ) {
             DDataSet tds= tbuilder.getDataSet();
             tds.putProperty(QDataSet.UNITS,dep0u);
@@ -394,5 +435,57 @@ public class CsvDataSource extends AbstractDataSource {
 
         return ds;
     }
+    
+    /**
+     * like the non-streaming source, but:<ul>
+     * <li> delimiter is not automatic.
+     * <li> rank2 is always used.
+     * </ul>
+     */
+    private class CsvTableStreamingSource implements Streaming {
 
+        public CsvTableStreamingSource() {
+        }
+ 
+        
+        @Override
+        public Iterator<QDataSet> streamDataSet(ProgressMonitor mon) throws Exception {
+            
+            final AsciiTableStreamer result= new AsciiTableStreamer();
+            
+            final BufferedReader reader = new BufferedReader( new InputStreamReader( getInputStream(new NullProgressMonitor() ) ) );
+
+            Runnable run= new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        String line;
+                        String sdelimiter= getParam("delim", ",");
+                        if ( sdelimiter.equals("COMMA") ) sdelimiter= ",";
+                        if ( sdelimiter.equals("SEMICOLON") ) sdelimiter= ";";
+                        while ( (line=reader.readLine())!=null ) {
+                            String[] fields= line.split(sdelimiter);
+                            result.addRecord( Arrays.asList(fields) );
+                        }
+                        result.setHasNext(false);
+                        logger.log(Level.FINE, "Done parsing {0}", getURI() );
+                    } catch ( IOException ex ) {
+
+                    } finally {
+                        try {
+                            reader.close();
+                        } catch ( IOException ex ) {
+                            logger.log( Level.WARNING, ex.getMessage(), ex );
+                        }
+                    }
+                }
+            };
+
+            new Thread( run, "CsvTableDataStreamer" ).start();
+            //new ParserDelegator().parse( reader, callback, true );
+
+            return result;
+
+        }
+    }
 }

@@ -11,7 +11,9 @@
 
 package org.das2.datasource;
 
+import java.awt.BorderLayout;
 import java.awt.Component;
+import java.awt.Dimension;
 import java.awt.Graphics;
 import java.awt.Image;
 import java.awt.event.MouseAdapter;
@@ -24,6 +26,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.Reader;
 import java.io.StringReader;
+import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLConnection;
@@ -84,6 +87,7 @@ import org.autoplot.datasource.DataSourceEditorPanel;
 import org.autoplot.datasource.RecentComboBox;
 import org.autoplot.datasource.TimeRangeTool;
 import org.autoplot.datasource.URISplit;
+import org.das2.client.Das2ServerGUI;
 import org.w3c.dom.Document;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
@@ -105,6 +109,7 @@ public class Das2ServerDataSourceEditorPanel extends javax.swing.JPanel implemen
 
 
     private final String DEFAULT_TIMERANGE="2001-01-01";
+    private String dsdfContent;
 
     /** Creates new form Das2ServerDataSourceEditorPanel */
     public Das2ServerDataSourceEditorPanel() {
@@ -148,11 +153,12 @@ public class Das2ServerDataSourceEditorPanel extends javax.swing.JPanel implemen
         intrinsicCb = new javax.swing.JCheckBox();
         recentComboBox1 = new org.autoplot.datasource.RecentComboBox();
         itemsComboBox = new javax.swing.JComboBox<>();
+        jButton1 = new javax.swing.JButton();
 
         setName("das2serverDataSourceEditorPanel"); // NOI18N
 
         das2ServerComboBox.setEditable(true);
-        das2ServerComboBox.setModel(new javax.swing.DefaultComboBoxModel(new String[] { "http://planet.physics.uiowa.edu/das/das2Server", "http://www-pw.physics.uiowa.edu/das/das2Server", "http://cassini.physics.uiowa.edu/das/das2Server" }));
+        das2ServerComboBox.setModel(new javax.swing.DefaultComboBoxModel(new String[] { "https://planet.physics.uiowa.edu/das/das2Server", "https://jupiter.physics.uiowa.edu/das/server" }));
         das2ServerComboBox.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
                 das2ServerComboBoxActionPerformed(evt);
@@ -246,62 +252,64 @@ public class Das2ServerDataSourceEditorPanel extends javax.swing.JPanel implemen
         itemsComboBox.setEditable(true);
         itemsComboBox.setModel(new javax.swing.DefaultComboBoxModel<>(new String[] { " ", " " }));
 
+        jButton1.setText("Edit Params");
+        jButton1.setToolTipText("The DSDF can be used to describe the parameters, and this experimental GUI will be generated.");
+        jButton1.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                jButton1ActionPerformed(evt);
+            }
+        });
+
         org.jdesktop.layout.GroupLayout layout = new org.jdesktop.layout.GroupLayout(this);
         this.setLayout(layout);
         layout.setHorizontalGroup(
             layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
             .add(layout.createSequentialGroup()
+                .addContainerGap()
                 .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+                    .add(das2ServerComboBox, 0, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
                     .add(layout.createSequentialGroup()
-                        .addContainerGap()
+                        .add(jLabel2)
+                        .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                        .add(discoveryCb))
+                    .add(jScrollPane1)
+                    .add(layout.createSequentialGroup()
+                        .add(jLabel7)
+                        .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
+                        .add(descriptionLabel, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                    .add(org.jdesktop.layout.GroupLayout.TRAILING, layout.createSequentialGroup()
                         .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
-                            .add(das2ServerComboBox, 0, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                            .add(jLabel1)
                             .add(layout.createSequentialGroup()
-                                .add(jLabel2)
-                                .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                                .add(discoveryCb))
-                            .add(jScrollPane1)))
-                    .add(layout.createSequentialGroup()
-                        .addContainerGap()
-                        .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.TRAILING)
-                            .add(org.jdesktop.layout.GroupLayout.LEADING, layout.createSequentialGroup()
-                                .add(jLabel7)
+                                .add(21, 21, 21)
+                                .add(validRangeLabel, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 267, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
                                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
-                                .add(descriptionLabel, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
-                            .add(org.jdesktop.layout.GroupLayout.LEADING, layout.createSequentialGroup()
-                                .add(jLabel4)
-                                .add(0, 0, Short.MAX_VALUE))
+                                .add(examplesComboBox, 0, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                            .add(org.jdesktop.layout.GroupLayout.TRAILING, layout.createSequentialGroup()
+                                .add(jLabel3)
+                                .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
+                                .add(recentComboBox1, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                                .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
+                                .add(timeRangeTool))
+                            .add(org.jdesktop.layout.GroupLayout.TRAILING, jScrollPane2))
+                        .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
+                        .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+                            .add(viewDsdfButton)
+                            .add(jButton1)))
+                    .add(layout.createSequentialGroup()
+                        .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+                            .add(jLabel1)
+                            .add(jLabel4)
                             .add(layout.createSequentialGroup()
-                                .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.TRAILING)
-                                    .add(layout.createSequentialGroup()
-                                        .add(21, 21, 21)
-                                        .add(validRangeLabel, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 267, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
-                                        .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
-                                        .add(examplesComboBox, 0, 322, Short.MAX_VALUE))
-                                    .add(org.jdesktop.layout.GroupLayout.LEADING, layout.createSequentialGroup()
-                                        .add(jLabel3)
-                                        .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
-                                        .add(recentComboBox1, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                                        .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
-                                        .add(timeRangeTool)))
-                                .add(18, 18, 18)
-                                .add(viewDsdfButton))))
-                    .add(layout.createSequentialGroup()
-                        .add(24, 24, 24)
-                        .add(jScrollPane2))
-                    .add(layout.createSequentialGroup()
-                        .addContainerGap()
-                        .add(intrinsicCb)
-                        .add(28, 28, 28)
-                        .add(jLabel5)
-                        .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
-                        .add(tcaTextField, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 70, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
-                        .add(26, 26, 26)
-                        .add(jLabel6)
-                        .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
-                        .add(itemsComboBox, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
-                        .add(0, 0, Short.MAX_VALUE)))
+                                .add(intrinsicCb)
+                                .add(28, 28, 28)
+                                .add(jLabel5)
+                                .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
+                                .add(tcaTextField, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 70, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
+                                .add(26, 26, 26)
+                                .add(jLabel6)
+                                .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
+                                .add(itemsComboBox, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)))
+                        .add(0, 27, Short.MAX_VALUE)))
                 .addContainerGap())
         );
         layout.setVerticalGroup(
@@ -324,10 +332,10 @@ public class Das2ServerDataSourceEditorPanel extends javax.swing.JPanel implemen
                 .add(7, 7, 7)
                 .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
                     .add(viewDsdfButton)
-                    .add(timeRangeTool)
                     .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.BASELINE)
                         .add(jLabel3)
-                        .add(recentComboBox1, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)))
+                        .add(recentComboBox1, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE))
+                    .add(org.jdesktop.layout.GroupLayout.TRAILING, timeRangeTool))
                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
                 .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
                     .add(examplesComboBox, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
@@ -335,14 +343,17 @@ public class Das2ServerDataSourceEditorPanel extends javax.swing.JPanel implemen
                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
                 .add(jLabel4)
                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
-                .add(jScrollPane2, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 53, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
-                .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
-                .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.BASELINE)
-                    .add(jLabel5)
-                    .add(tcaTextField, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
-                    .add(jLabel6)
-                    .add(intrinsicCb)
-                    .add(itemsComboBox, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE))
+                .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+                    .add(layout.createSequentialGroup()
+                        .add(jScrollPane2, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 53, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
+                        .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
+                        .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.BASELINE)
+                            .add(jLabel5)
+                            .add(tcaTextField, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
+                            .add(jLabel6)
+                            .add(intrinsicCb)
+                            .add(itemsComboBox, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)))
+                    .add(jButton1))
                 .addContainerGap())
         );
     }// </editor-fold>//GEN-END:initComponents
@@ -351,6 +362,8 @@ public class Das2ServerDataSourceEditorPanel extends javax.swing.JPanel implemen
     
     private final Map<String,String> readerParams= new HashMap(); // from dataset url to params.
             
+    private final Map<String,String> otherParams= new HashMap(); // other params which are not supported by this dialog, like qubeSubset
+    
     private String userTimeRange= null;
     
     private final Map<String,String> tcaItem= new HashMap(); // from ID to selected TCA item.
@@ -387,13 +400,35 @@ public class Das2ServerDataSourceEditorPanel extends javax.swing.JPanel implemen
     }
     
     /**
+     * open a connection to retrieve the URL, possibly handling one redirect.
+     * @param url the URL, such as http://jupiter.physics.uiowa.edu/das/server?server=logo
+     * @return the input stream.
+     * @throws IOException 
+     */
+    private InputStream openConnection( URL url ) throws IOException {
+        HttpURLConnection httpConn= (HttpURLConnection)url.openConnection();
+        int nStatus= httpConn.getResponseCode();
+        if ( nStatus==301 ) {
+            String newUrl= httpConn.getHeaderField("Location");
+            httpConn.disconnect(); //TODO: this is sloppy.  The buffer needs to be emptied.
+            if ( newUrl==null ) {
+                throw new IllegalArgumentException("301 response but no new location");
+            }
+            httpConn=  (HttpURLConnection) new URL(newUrl).openConnection();
+            nStatus= ((HttpURLConnection) httpConn).getResponseCode();
+            //if ( conn.getHeaderField("Strict-Transport-Security"))
+        }
+        return httpConn.getInputStream();        
+    }
+    
+    /**
      * this is called off the event thread for the web transaction, then hop back on it to populate the GUI.
      * @param url
      */
     private void updateDataSetSelected( final URL url ) {
         InputStream in= null;
         try {
-            in = url.openStream();
+            in= openConnection(url);
             StringBuilder sb = new StringBuilder();
             int by = in.read();
             while (by != -1) {
@@ -633,6 +668,7 @@ public class Das2ServerDataSourceEditorPanel extends javax.swing.JPanel implemen
             readerParams.put( osurl, readerParamsTextArea.getText() );
         }
         
+        this.dsdfContent=null;
         if ( ! m.isLeaf( p.getLastPathComponent() ) ) {
             descriptionLabel.setText( "" );
             this.validRangeLabel.setText("<html><i>no dataset selected</i></html>");
@@ -657,6 +693,15 @@ public class Das2ServerDataSourceEditorPanel extends javax.swing.JPanel implemen
             }
         }
     }//GEN-LAST:event_jTree1ValueChanged
+
+    private void updateDas2Servers() {
+        Runnable runOffEvt= new Runnable() {
+            public void run() {
+                updateDas2ServersImmediately();
+            }
+        };
+        new Thread(runOffEvt).start();
+    }
 
 
     private void updateDas2ServersImmediately() {
@@ -762,10 +807,10 @@ public class Das2ServerDataSourceEditorPanel extends javax.swing.JPanel implemen
      */
     private List<String> listDas2Servers() {
         List<String> d2ss1= new ArrayList( );
-        d2ss1.add( "http://planet.physics.uiowa.edu/das/das2Server" );
+        d2ss1.add( "https://planet.physics.uiowa.edu/das/das2Server" );
 
         if ( serverURL.length()==0 ) {
-            d2ss1.addAll( listPeers("http://planet.physics.uiowa.edu/das/das2Server") );
+            d2ss1.addAll( listPeers("https://planet.physics.uiowa.edu/das/das2Server") );
         } else {
             d2ss1.addAll( listPeers(serverURL) );
         }
@@ -833,10 +878,8 @@ public class Das2ServerDataSourceEditorPanel extends javax.swing.JPanel implemen
 
     }
 
-    private void showDsdf( URL url ) {
-      InputStream in= null ;
-        try {
-            in = url.openStream();
+    private String readDsdf( URL url ) throws IOException {
+        try ( InputStream in = openConnection(url) ) {
 
             StringBuilder sb= new StringBuilder();
 
@@ -849,6 +892,14 @@ public class Das2ServerDataSourceEditorPanel extends javax.swing.JPanel implemen
             String s= sb.toString();
             int contentLength= Integer.parseInt( s.substring(4,10) );
             String sxml= s.substring(10,10+contentLength);
+            return sxml;
+        }
+    }
+    private void showDsdf( URL url ) {
+      
+        try {
+            
+            String sxml= readDsdf( url );
 
             Reader xin = new BufferedReader(new StringReader(sxml));
 
@@ -899,13 +950,7 @@ public class Das2ServerDataSourceEditorPanel extends javax.swing.JPanel implemen
         } catch (XPathExpressionException | SAXException | ParserConfigurationException | IOException ex) {
             JOptionPane.showMessageDialog(examplesComboBox, "Unable to parse dsdf: "+ ex.getMessage() );
             logger.log(Level.SEVERE, ex.getMessage(), ex);
-        } finally {
-            try {
-                if ( in!=null ) in.close();
-            } catch (IOException ex) {
-                logger.log(Level.SEVERE, ex.getMessage(), ex);
-            }
-        }
+        } 
 
     }
 
@@ -947,7 +992,7 @@ public class Das2ServerDataSourceEditorPanel extends javax.swing.JPanel implemen
     private void das2ServerComboBoxActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_das2ServerComboBoxActionPerformed
         org.das2.util.LoggerManager.logGuiEvent(evt);
         Object o= das2ServerComboBox.getSelectedItem();
-        if ( o!=null ) {
+        if ( o!=null && String.valueOf(o).length()>0 ) {
             try {
                 URL url= new URL(String.valueOf(o));
                 setServerURL( url.toString() );
@@ -1002,6 +1047,65 @@ public class Das2ServerDataSourceEditorPanel extends javax.swing.JPanel implemen
         logger.log(Level.FINEST, "changed {0}", evt.getItem());
     }//GEN-LAST:event_recentComboBox1ItemStateChanged
 
+    private void jButton1ActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_jButton1ActionPerformed
+        org.das2.util.LoggerManager.logGuiEvent(evt);
+        TreePath p= jTree1.getSelectionPath();
+        TreeModel m= jTree1.getModel();
+        if ( p==null ) {
+            JOptionPane.showConfirmDialog( this, "No dataset selected" );
+            return;
+        }
+        if ( m.isLeaf( p.getLastPathComponent() ) ) {
+            {
+                try {
+                    Object[] oo = p.getPath();
+                    StringBuilder ds = new StringBuilder( String.valueOf(oo[1]) );
+                    for (int i = 2; i < oo.length; i++) {
+                        ds.append( "/" ).append( oo[i] );
+                    }
+                    String surl = oo[0] + "?server=dsdf&dataset=" + ds.toString();
+
+                    final URL url = new URL(surl);
+
+                    RequestProcessor.invokeLater( new Runnable() {
+                        @Override
+                        public void run() {
+                            if ( dsdfContent==null ) {
+                                try {
+                                    dsdfContent= readDsdf( url );
+                                } catch (IOException ex) {
+                                    logger.log(Level.SEVERE, null, ex);
+                                }
+                            }
+                            if ( dsdfContent!=null ) {
+                                editDsdfContent();
+                            }
+                            
+                        }
+                    } );
+                    
+                } catch ( MalformedURLException ex ) {
+                    logger.log(Level.SEVERE, ex.getMessage(), ex);
+                    JOptionPane.showConfirmDialog( this, "Internal Error: "+ex.toString() ); // give a message
+                }
+            }
+        }
+        
+    }//GEN-LAST:event_jButton1ActionPerformed
+
+    public void editDsdfContent() {
+        Das2ServerGUI x = new Das2ServerGUI();
+        x.setSpecification( dsdfContent );
+        x.setParameters( readerParamsTextArea.getText() );
+        JScrollPane sp= new JScrollPane(x.getPanel());
+        sp.setMaximumSize( new Dimension(500,800) );
+        sp.setPreferredSize( new Dimension(300,500) );
+        sp.getVerticalScrollBar().setUnitIncrement(sp.getFont().getSize());
+        int response= JOptionPane.showConfirmDialog( this, sp, "Edit reader params", JOptionPane.OK_CANCEL_OPTION );
+        if ( response==JOptionPane.OK_OPTION ) {
+            readerParamsTextArea.setText( x.getParameters() );
+        }
+    }
 
     // Variables declaration - do not modify//GEN-BEGIN:variables
     public javax.swing.JComboBox das2ServerComboBox;
@@ -1010,6 +1114,7 @@ public class Das2ServerDataSourceEditorPanel extends javax.swing.JPanel implemen
     public javax.swing.JComboBox examplesComboBox;
     public javax.swing.JCheckBox intrinsicCb;
     public javax.swing.JComboBox<String> itemsComboBox;
+    public javax.swing.JButton jButton1;
     public javax.swing.JLabel jLabel1;
     public javax.swing.JLabel jLabel2;
     public javax.swing.JLabel jLabel3;
@@ -1070,26 +1175,15 @@ public class Das2ServerDataSourceEditorPanel extends javax.swing.JPanel implemen
     public boolean reject(String uri) throws Exception {
         URISplit split = URISplit.parse(uri);
         if ( split.file==null || split.file.equals("file:///") ) { // use UIOWA's main one by default.
-            split.file= "http://planet.physics.uiowa.edu/das/das2Server";
+            split.file= "https://planet.physics.uiowa.edu/das/das2Server";
         }
         String s= split.file;
-        if ( s.equals("http://planet.physics.uiowa.edu/das/das2Server") ) {
+        if ( s.equals("https://planet.physics.uiowa.edu/das/das2Server") ) {
             return false;
         }
-        URL url= new URL(s+"?server=logo");
-        URLConnection connect= url.openConnection();
-        try {
-            InputStream in= connect.getInputStream();
-            if ( connect.getContentType().startsWith("image") ) {
-                in.close();
-                return false;
-            } else {
-                in.close();
-                return true;
-            }
-        } catch ( IOException ex ) {
-            return false; // we'll tell them later
-        }
+        // there's really no way to tell if it really is a Das2Server on the event thread, so accept all URIs. 
+        // and graphically tell them if it is not a valid server.
+        return false;
     }
 
 
@@ -1103,11 +1197,15 @@ public class Das2ServerDataSourceEditorPanel extends javax.swing.JPanel implemen
 
         URISplit split= URISplit.parse(uri);
 
-        String uriServerUrl= DataSetURI.fromUri( split.resourceUri );
-        if ( uriServerUrl.length()>0 && !uriServerUrl.startsWith("file:/") ) {
-            serverURL= uriServerUrl;
-        } else {
+        if ( split.resourceUri==null ) {
             serverURL= "";
+        } else {
+            String uriServerUrl= DataSetURI.fromUri( split.resourceUri );
+            if ( uriServerUrl.length()>0 && !uriServerUrl.startsWith("file:/") ) {
+                serverURL= uriServerUrl;
+            } else {
+                serverURL= "";
+            }
         }
 
         Map<String,String> params= URISplit.parseParams(split.params);
@@ -1158,6 +1256,9 @@ public class Das2ServerDataSourceEditorPanel extends javax.swing.JPanel implemen
             itemsComboBox.setSelectedItem(item);
             tcaItem.put( "" + serverURL + "?server=dsdf&dataset=" + dataSetId, item );
         }
+        
+        otherParams.put( "qubeSubset", params.remove("qubeSubset") );
+                
         StringBuilder paramsStr= new StringBuilder();
         for ( Entry<String,String> e: params.entrySet() ) {
             if ( e.getKey().startsWith("arg_") ) {
@@ -1170,16 +1271,9 @@ public class Das2ServerDataSourceEditorPanel extends javax.swing.JPanel implemen
         String key= serverURL + "?" + dataSetId;
         readerParams.put( key, paramsStr.toString() );
 
-        updateDas2ServersImmediately(); // this will set serverUrl to the last used server if nothing is specified.
-
-        Runnable run = new Runnable() {
-            @Override
-            public void run() {
-                das2ServerComboBox.setSelectedItem(serverURL);
-                jTree1.setModel( waitTreeModel() );
-            }
-        };
-        SwingUtilities.invokeLater(run);
+        das2ServerComboBox.setSelectedItem(serverURL);
+        
+        updateDas2Servers(); // this will set serverUrl to the last used server if nothing is specified.
         
         if ( serverURL.length()>0 ) {
             RequestProcessor.invokeLater( getDataSetsRunnable() );
@@ -1375,6 +1469,9 @@ public class Das2ServerDataSourceEditorPanel extends javax.swing.JPanel implemen
         
         if ( params.length()>0 ) result.append("&").append(params.toString());
         
+        if ( otherParams.get("qubeSubset")!=null ) {
+            result.append("&qubeSubset=").append(otherParams.get("qubeSubset"));
+        }
         
         return result.toString();
     }

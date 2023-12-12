@@ -1,11 +1,3 @@
-/*
- * Util.java
- *
- * Created on November 6, 2007, 10:41 AM
- *
- * To change this template, choose Tools | Template Manager
- * and open the template in the editor.
- */
 
 package org.autoplot.datasource;
 
@@ -51,11 +43,9 @@ import org.das2.qds.QDataSet;
 import org.das2.qds.SemanticOps;
 import org.autoplot.datasource.capability.TimeSeriesBrowse;
 import org.das2.qds.ops.Ops;
-//import org.autoplot.qstream.SimpleStreamFormatter;
-//import org.autoplot.qstream.StreamException;
 
 /**
- *
+ * DataSource utilities.
  * @author jbf
  */
 public class DataSourceUtil {
@@ -67,6 +57,10 @@ public class DataSourceUtil {
      */
     public static final DatumRange DEFAULT_TIME_RANGE= DatumRangeUtil.parseTimeRangeValid( "2010-01-01" );
         
+    private DataSourceUtil() {
+        // this class cannot be instatiated.
+    }
+    
     /**
      * remove escape sequences like %20 to create a human-editable string
      * This contains a kludge that looks for single spaces that are the result of
@@ -194,20 +188,14 @@ public class DataSourceUtil {
     }
 
     /**
-     * returns the last index of slash, splitting the FileSystem part from the template part.
-     * @param surl
-     * @return
-     */
-    private static int splitIndex(String surl) {
-        int i= firstIndexOf( surl,Arrays.asList( "%Y","$Y","%y","$y",".*") );
-        if ( i!=-1 ) {
-            i = surl.lastIndexOf('/', i);
-        } else {
-            i = surl.lastIndexOf('/');
-        }
-        return i;
-    }
-
+     * return the aggregations we can find.
+     * If remove is true, then the input list will have all items
+     * removed that are not part of an aggregation.
+     *
+     * @param files
+     * @param remove remove the files that are accounted for by the aggregation.
+     * @return list of aggregations found.
+     */    
     public static List<String> findAggregations( List<String> files, boolean remove ) {
         return findAggregations( files, remove, false );
     }
@@ -223,17 +211,19 @@ public class DataSourceUtil {
      * @return list of aggregations found.
      */
     public static List<String> findAggregations( List<String> files, boolean remove, boolean loose ) {
-        List<String> accountedFor= new ArrayList<String>();
-        List<String> result= new ArrayList<String>();
-        List<String> nonAgg= new ArrayList<String>();
+        List<String> accountedFor= new ArrayList<>();
+        List<String> result= new ArrayList<>();
+        List<String> nonAgg= new ArrayList<>();
 
         List<String> notAccountedFor;
         notAccountedFor= new LinkedList(files);
 
+        String[] ss= files.toArray( new String[notAccountedFor.size()] );
+        
         while ( notAccountedFor.size()>0 ) {
             String surl= notAccountedFor.remove(0);
 
-            String sagg = makeAggregation(surl);
+            String sagg = makeAggregationForGroup(surl,ss);
 
             if (sagg==null || sagg.equals(surl)) {
                 nonAgg.add(surl);
@@ -268,7 +258,7 @@ public class DataSourceUtil {
                         tp.parse(s);
                         dr = DatumRangeUtil.union(dr, tp.getTimeRange() );
                         moveUs.add( s );
-                    } catch (ParseException ex) {
+                    } catch (IllegalArgumentException | ParseException ex) {
                         // it's not part of the agg.
                     }
                 }
@@ -331,7 +321,8 @@ public class DataSourceUtil {
      */
     public static String makeAggregation( String surl, String[] surls ) {
         try {
-            String sagg = makeAggregation(surl);
+            String sagg = makeAggregationForGroup(surl, surls);
+            
             if (sagg==null || sagg.equals(surl))
                 return surl;
             DatumRange dr;
@@ -364,7 +355,55 @@ public class DataSourceUtil {
 
 
     }
+    
+    /**
+     * return true if the characters in the range st to en do not change.
+     * @param others
+     * @param st
+     * @param en
+     * @return 
+     */
+    public static boolean isConstant( String[] others, int st, int en ) {
+        if ( others.length==0 ) return true;
+        if ( st>en ) throw new IllegalArgumentException("st is greater than en");
+        if ( others[0].length()<en ) {
+            return false;
+        }
+        String s= others[0].substring( st, en );
+        for ( int i=1; i<others.length; i++ ) {
+            if ( others[i].length()<en ) return false;
+            if ( !others[i].substring( st, en ).equals(s) ) {
+                return false;
+            }
+        }
+        return true;
+    }
 
+    /**
+     * return the group containing the delimiter, the - in $Y-$m-$d.
+     * @param replaceWith1
+     * @return 
+     */
+    private static int delimGroup( String replaceWith1 ) {
+                                // identify delimiter 
+        int id2= replaceWith1.indexOf("$2"); 
+        if ( id2>-1 ) {
+            return 2;
+        } else {
+            int id3= replaceWith1.indexOf("$3");
+            if ( id3>-1 ) {
+                return 3;
+            } else {
+                int id4= replaceWith1.indexOf("$4");
+                if ( id4>-1 ) {
+                    return 4;
+                } else {
+                    return -1;
+                }
+            }
+        }
+    }
+    
     /**
      * return the replacement or null.  remove the used items.  This will not match anything 
      * after the question mark, if there is one.
@@ -372,15 +411,23 @@ public class DataSourceUtil {
      * @param search
      * @param replaceWith 
      * @param resolution 
+     * @param others other strings which will be used with the same template, or null.
+     * @param constraint if non-null, the time must be within this time range.
      * @return the string with 2014 replaced with $Y, etc.
      */
-    private static String replaceLast( String s, List<String> search, List<String> replaceWith, List<Integer> resolution ) {
+    private static String replaceLast( String s, 
+            List<String> search, 
+            List<String> replaceWith, 
+            List<Integer> resolution, 
+            String[] others, 
+            DatumRange timerange) {
         Map<String,Integer> found= new HashMap();
         int last= -1;
         String flast= null;
         String frepl= null;
         int best= -1;
-        int n= search.size();
+        int fdelimGroup= -1;
+        String bestDelim= "";
 
         int limit= s.indexOf('?');
         if ( limit==-1 ) limit=s.length();
@@ -388,28 +435,61 @@ public class DataSourceUtil {
         DatumRange dr= null;
         
         while (true ) {
+            
+            String delim= null;
+            int delimGroup= -1;
+            int n= search.size();
             for ( int i=0; i<n; i++ ) {
-                if ( search.get(i)==null ) continue; // search.get(i)==null means that search is no longer eligible.
-                Matcher m= Pattern.compile(search.get(i)).matcher(s);
+                String search1= search.get(i);
+                String replaceWith1= replaceWith.get(i);
+                delimGroup= delimGroup(replaceWith1);
+                if ( search1==null ) continue; // search.get(i)==null means that search is no longer eligible.
+                Matcher m= Pattern.compile(search1).matcher(s);
                 int idx= -1;
-                while ( m.find() ) idx= m.start();
+                int ien= -1;
+                
+                while ( m.find() ) {
+                    idx= m.start();
+                    ien= m.end();
+                    if ( delimGroup>-1 ) delim= m.group(delimGroup);
+                }
                 if ( idx>-1 && idx<limit ) {
-                    found.put( search.get(i), idx );
+                    found.put( search1, idx );
                     if ( idx>last ) {
+                        if ( others!=null ) {
+                            if ( isConstant( others, idx, ien ) ) {
+                                continue;
+                            }
+                        }
+                        if ( timerange!=null ) {
+                            String trypattern= replaceWith1;
+                            trypattern= trypattern.replaceAll("\\$\\d", ".");
+                            trypattern= trypattern.replaceAll("\\\\","");
+                            TimeParser tp= TimeParser.create(trypattern);
+                            try {
+                                DatumRange tr= tp.parse(s.substring(idx,ien)).getTimeRange();
+                                if ( !tr.contains(timerange) ) {
+                                    continue;
+                                }
+                            } catch (ParseException ex) {
+                                Logger.getLogger(DataSourceUtil.class.getName()).log(Level.SEVERE, null, ex);
+                            }
+                            
+                        }
                         last= idx;
-                        flast= search.get(i);
-                        frepl= replaceWith.get(i);
+                        flast= search1;
+                        frepl= replaceWith1;
+                        fdelimGroup= delimGroup;
+                        bestDelim= delim;
                         best= i;
                     }
                 }
             }
             if ( best>-1 ) {
                 String date= s.substring(last);
-                String ch= date.substring(4,5); // get the $2 char.  Assumes all are $Y
                 assert frepl!=null;
                 String stp= frepl.replaceAll("\\\\",""); 
-                stp= stp.replaceAll("\\$2",ch);
-                stp= stp.replaceAll("\\$3",ch);
+                stp= stp.replaceAll("\\$"+fdelimGroup,bestDelim);
                 TimeParser tp= TimeParser.create( stp );
                 DatumRange dr1=null;
                 try {
@@ -447,7 +527,7 @@ public class DataSourceUtil {
     /**
      * something which returns a new URI given an old one.
      */
-    public interface URIMap {
+    public static interface URIMap {
         public String map(String uri);
     }
     
@@ -478,45 +558,77 @@ public class DataSourceUtil {
      */
     public static String makeAggregation( String surl ) {
         
-        URISplit split= URISplit.parse(surl);
-        if ( split.file==null ) {
-            return surl;
+        String agg= makeAggregationForGroup( surl, null );
+        if ( agg==null ) return null;
+        URISplit split= URISplit.parse(agg);
+        return URISplit.format(split);
+        
+    }
+    
+    /**
+     * attempt to create a String that uses an aggregation template
+     * instead of the particular time.  This also return null when things 
+     * go wrong.  For example, 
+     * file:/tmp/20091102.dat -> file:/tmp/$Y$m$d.dat?timerange=20091102
+     * Also, look for version numbers.  If multiple periods are found, then use 
+     * $(v,sep) otherwise use numeric $v.
+     *<blockquote><pre><small>{@code
+     *ss= [ "1991_095/1993/19930303.dat","1991_095/1993/19930304.dat","1991_095/1991/19930305.dat" ]
+     *y= makeAggregationForGroup("1991_095/1993/19930303.dat",ss)       // 1991_095/$Y/$Y$m$d.dat?timerange=2009-11-02
+     *}</small></pre></blockquote>
+     * @see https://github.com/autoplot/dev/blob/master/bugs/sf/0484/makeAggregationForGroup_001.jy
+     * @param surl the URI.
+     * @param others other URIs in the group, used to reject solutions which would not produce unique results.
+     * @return null or the string with aggregations ($Y.dat) instead of filename (1999.dat), or the original filename.
+     */
+    public static String makeAggregationForGroup( String surl, String[] others ) {
+        
+        if ( surl==null && others!=null && others.length>0 ) {
+            surl= others[0];
         }
-            
-        if ( split.vapScheme!=null ) {
-            URIMap map= makeAggSchemes.get(split.vapScheme);
-            if ( map!=null ) {
-                return map.map(surl);
-            }
-        }
-                
+        
+        String sfile= surl;
+        
         String yyyy= "/(19|20)\\d{2}/";
-
-        String yyyymmdd= "(?<!\\d)(19|20)(\\d{6})(?!\\d)"; //"(\\d{8})";
-        String yyyyjjj= "(?<!\\d)(19|20)\\d{2}\\d{3}(?!\\d)";
-        String yyyymm= "(?<!\\d)(19|20)\\d{2}\\d{2}(?!\\d)";
-        String yyyy_mm_dd= "(?<!\\d)(19|20)\\d{2}([\\-_/])\\d{2}\\2\\d{2}(?!\\d)";
-        String yyyy_jjj= "(?<!\\d)(19|20)\\d{2}([\\-_/])\\d{3}(?!\\d)";
-        String yyyymmdd_HH= "(?<!\\d)(19|20)(\\d{6})(\\D)\\d{2}(?!\\d)"; //"(\\d{8})"; 20140204T15
-        String yyyymmdd_HHMM= "(?<!\\d)(19|20)(\\d{6})(\\D)\\d{2}\\d{2}(?!\\d)"; //"(\\d{8})"; 20140204T1515
+        String y4= "(19|20)\\d{2}";
+        String mm= "(01|02|03|04|05|06|07|08|09|10|11|12)";
+        String dd= "((?:0|1|2|3)\\d)";
+        String ddd= "([0123]\\d\\d)";
+        String hh= "(00|01|02|03|04|05|06|07|08|09|10|11|12|13|14|15|16|17|18|19|20|21|22|23|24)";
+        String min= "([0-6]\\d)";
+        
+        String yyyymmdd= "(?<!\\d)"+y4+mm+dd+"(?!\\d)"; //"(\\d{8})";
+        String yyyyjjj= "(?<!\\d)"+y4+ddd+"(?!\\d)";
+        String yyyymm= "(?<!\\d)"+y4+mm+"(?!\\d)";
+        String yyyy_mm_dd= "(?<!\\d)"+y4+"([\\-_/])"+mm+"\\2"+dd+"(?!\\d)";
+        String yyyy_mm= "(?<!\\d)"+y4+"([\\-_/])"+mm+"(?!\\d)";
+        String yyyy_jjj= "(?<!\\d)"+y4+"([\\-_/])"+ddd+"(?!\\d)";
+        String yyyymmdd_HH= "(?<!\\d)"+y4+mm+dd+"(\\D)"+hh+"(?!\\d)"; //"(\\d{8})"; 20140204T15
+        String yyyymmdd_HHMM= "(?<!\\d)"+y4+mm+dd+"(\\D)"+hh+min+"(?!\\d)"; //"(\\d{8})"; 20140204T1515
 
         //DANGER: code assumes starts with 4-digit year and then a delimiter, or no delimiter.  See replaceLast
         
         String version= "([Vv])\\d{2}";                // $v
         String vsep= "([Vv])(\\d+\\.\\d+(\\.\\d+)+)";  // $(v,sep)
 
-        String[] abs= new String[] { yyyymmdd_HHMM, yyyymmdd_HH, yyyy_mm_dd, yyyy_jjj, yyyymmdd, yyyyjjj, yyyymm };
-
+        String[] abs= new String[] { yyyymmdd_HHMM, yyyymmdd_HH, yyyy_mm_dd, yyyy_jjj, yyyymmdd, yyyyjjj, yyyymm, yyyy_mm };
+        
         String timeRange=null;
-        for ( String ab : abs ) {
-            Matcher m = Pattern.compile(ab).matcher(surl);
-            if ( m.find() ) {
-                timeRange= m.group(0);
-                break; // we found something
+
+        boolean doQuickSanityCheck= true;
+        if ( doQuickSanityCheck) {
+            for ( String ab : abs ) {
+                Matcher m = Pattern.compile(ab).matcher(surl);
+                if ( m.find() ) {
+                    timeRange= m.group(0);
+                    break; // we found something
+                }
+            }
+            if ( timeRange==null ) {
+                logger.fine("unable to find any digits for aggregation.");
+                return null;
             }
         }
-
-        if ( timeRange==null ) return null;
 
         int day= TimeUtil.DAY;
         int year= TimeUtil.YEAR;
@@ -524,18 +636,13 @@ public class DataSourceUtil {
         int hour= TimeUtil.HOUR;
         int minute= TimeUtil.MINUTE;
 
-        List<String> search= new ArrayList( Arrays.asList( yyyymmdd_HHMM, yyyymmdd_HH, yyyy_jjj, yyyymmdd, yyyyjjj, yyyymm, yyyy_mm_dd, yyyy ) );
-        List<String> replac= new ArrayList( Arrays.asList( "\\$Y\\$m\\$d$3\\$H\\$M", "\\$Y\\$m\\$d$3\\$H", "\\$Y$2\\$j", "\\$Y\\$m\\$d","\\$Y\\$j","\\$Y\\$m", "\\$Y$2\\$m$2\\$d","/\\$Y/" ) );
-        List<Integer> resol= new ArrayList( Arrays.asList( minute, hour, day, day, day, month, day, year ) );
-        
-        // it looks like to have $Y$m01 resolution, we would need to have a flag to only accept the aggregation if the more general one is not needed for other files.
+        List<String> search= new ArrayList( Arrays.asList( yyyymmdd_HHMM, yyyymmdd_HH, yyyymmdd, yyyy_jjj, yyyyjjj, yyyymm, yyyy_mm_dd, yyyy_mm, yyyy ) );
+        List<String> replac= new ArrayList( Arrays.asList( "\\$Y\\$m\\$d$4\\$H\\$M", "\\$Y\\$m\\$d$4\\$H", "\\$Y\\$m\\$d", "\\$Y$2\\$j","\\$Y\\$j","\\$Y\\$m", "\\$Y$2\\$m$2\\$d", "\\$Y$2\\$m", "/\\$Y/" ) );
+        List<Integer> resol= new ArrayList( Arrays.asList( minute, hour, day, day, day, month, day, month, year ) );
         
         String s;
         try {
-            s= replaceLast( split.file, 
-                search,
-                replac,
-                resol );
+            s= replaceLast(sfile, search, replac, resol, others, null );
         } catch ( IllegalArgumentException ex ) {
             logger.log( Level.FINE, ex.getMessage(), ex );
             return null;
@@ -543,9 +650,19 @@ public class DataSourceUtil {
         
         try {
             TimeParser tp= TimeParser.create(s);
-            timeRange= tp.parse( split.file ).getTimeRange().toString();
+            DatumRange drtr= tp.parse( sfile ).getTimeRange();
+            timeRange= drtr.toString();
             //s= s.replaceFirst(version, "$1\\$2v"); //TODO: version causes problems elsewhere, see line 189.  Why?
 
+            int i=s.indexOf("$Y");
+            if ( i>-1 ) {
+                String s0= s.substring(0,i);
+                String s1= replaceLast( s0, search, replac, resol, null, drtr );
+                if ( !s1.equals(s0) ) {
+                    s= s1 + s.substring(i);
+                }
+            }
+            
             Matcher m;
             m= Pattern.compile(vsep).matcher(s);
             if ( m.find() ) {
@@ -556,21 +673,20 @@ public class DataSourceUtil {
                 s= s.replaceFirst( m.group(), Matcher.quoteReplacement(m.group(1)+"$v") );
             }
             
-            split.file= s;
-            Map<String,String> params= URISplit.parseParams(split.params);
-            if ( !params.containsKey("timerange") ) {
-                params.put( "timerange", timeRange );
-                split.params= URISplit.formatParams(params);
+            String result= s;
+            
+            if ( result.contains("?") ) {
+                return result + "&timerange=" + timeRange;
+            } else {
+                return result + "?timerange=" + timeRange;
             }
-
-            String result= URISplit.format(split);
             
-            return result;
-            
-        } catch ( IllegalArgumentException ex ) {
+        } catch ( IllegalArgumentException | ParseException ex ) {
             return null; // I had the file in my directory: "file:///home/jbf/das2Server?dataset=juno%2Fwaves%2Fflight%2Fsurvey.dsdf;start_time=$Y-$m-$dT15:00:00.000Z;end_time=$Y-$m-$dT19:00:00.000Z;params=EINT;server=dataset"
-        } catch ( ParseException ex ) {
-            return null;
+        } catch ( StringIndexOutOfBoundsException ex ) {
+            StringIndexOutOfBoundsException e= new StringIndexOutOfBoundsException(s); // rte_0336734710_20191127_115020
+            e.initCause(ex);
+            throw e;
         }
         
     }
@@ -707,7 +823,7 @@ public class DataSourceUtil {
             final ByteBuffer buffer = ByteBuffer.allocateDirect(16 * 1024);
             while (src.read(buffer) != -1) {
                 // prepare the buffer to be drained
-                buffer.flip();
+                ((java.nio.Buffer)buffer).flip();
                 // write to the channel, may block
                 dest.write(buffer);
                 // If partial transfer, shift remainder down
@@ -715,7 +831,7 @@ public class DataSourceUtil {
                 buffer.compact();
             }
             // EOF will leave buffer in fill state
-            buffer.flip();
+            ((java.nio.Buffer)buffer).flip();
             // make sure the buffer is fully drained.
             while (buffer.hasRemaining()) {
                 dest.write(buffer);
@@ -735,17 +851,35 @@ public class DataSourceUtil {
      * @throws java.io.IOException
      */
     public static void transfer( InputStream src, OutputStream dest ) throws IOException {
+        transfer( src, dest, true );
+    }
+    
+    
+    /**
+     * transfers the data from one channel to another.  src and dest are
+     * closed after the operation is complete.
+     * @param src
+     * @param dest
+     * @param close if true then close the streams after.
+     * @throws java.io.IOException
+     */
+    public static void transfer( InputStream src, OutputStream dest, boolean close ) throws IOException {
         final byte[] buffer = new byte[ 16 * 1024 ];
 
-        int i= src.read(buffer);
-        while ( i != -1) {
-            dest.write(buffer,0,i);
-            i= src.read(buffer);
+        try {
+            int i= src.read(buffer);
+            while ( i != -1) {
+                dest.write(buffer,0,i);
+                i= src.read(buffer);
+            }
+        } finally {
+            if ( close ) {
+                dest.close();
+                src.close();
+            }
         }
-        dest.close();
-        src.close();
     }
-
+    
     /**
      * returns the [ start, stop, stride ] or [ start, -1, -1 ] for slice, but also
      * supports slice notations like [:,1]. This is
@@ -753,12 +887,14 @@ public class DataSourceUtil {
      * 
      * Examples:
      * <ul>
-     * <li>[::1,:]
-     * <li>[:,2]
+     * <li>[::1,:] -> { 0:[0,l0,1], 1:[1,l1,1] }
+     * <li>[:,2]   -> { 0:[0,l0,1], 1:[2,-1,-1] } //TODO: verify
      * </ul>
+     * 
+     * This returns a map from dimension (0,1,...,rank-1) to [ start, stop, stride ].
      * @param constraint, such as "[0:100:2]" for even records between 0 and 100, non-inclusive.
      * @param qubeDims the dimension of the data.
-     * @return the [startRecord,stopRecordExclusive,stride]
+     * @return the [startRecord,stopRecordExclusive,stride] for each index.
      * @throws java.text.ParseException when the constraint cannot be parsed.
      */
     public static Map<Integer,long[]> parseConstraint(String constraint, long[] qubeDims ) throws ParseException {
@@ -998,6 +1134,9 @@ public class DataSourceUtil {
         } else {
             if ( SemanticOps.isBundle(tsbData) ) {
                 time= Ops.unbundle( tsbData, 0 );
+                if ( time!=null && !UnitsUtil.isTimeLocation( SemanticOps.getUnits(time) ) ) {
+                    time= (QDataSet) time.property(QDataSet.DEPEND_0); // bundle of three time series, maybe?
+                }
             }
         }
         if ( time!=null && UnitsUtil.isTimeLocation( SemanticOps.getUnits(time) ) && time.rank()==1 ) {
@@ -1076,6 +1215,32 @@ public class DataSourceUtil {
         }
         
         return name;
+    }
+    
+    /**
+     * create a name which is unique, not in otherNames, perhaps looking at
+     * differences with other URIs found in otherURIs. TODO: there's lots of
+     * fun we could have here, for example looking for the closest URI in 
+     * otherNames, and then basing the name on the difference. (Possible student
+     * project!)
+     * @param uri the URI which needs naming.
+     * @param otherURIs list of URIs, or null.
+     * @param otherNames list of names for each URI, or null.
+     * @return the suggested name
+     */
+    public static String guessNameFor( String uri, List<String> otherURIs, List<String> otherNames ) {
+        String n= guessNameFor(uri);
+        if ( otherNames.contains(n) ) {
+            int serial= 1;
+            String newn= n + serial;
+            while ( otherNames.contains(newn) ) {
+                serial++;
+                newn= n + serial;
+            }
+            return newn;
+        } else {
+            return n;
+        }
     }
     
     /**

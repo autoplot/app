@@ -1,8 +1,3 @@
-/*
- * To change this license header, choose License Headers in Project Properties.
- * To change this template file, choose Tools | Templates
- * and open the template in the editor.
- */
 
 package org.autoplot.pdsppi;
 
@@ -19,7 +14,9 @@ import java.net.URL;
 import java.net.URLConnection;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.swing.JOptionPane;
@@ -37,6 +34,7 @@ import org.das2.util.filesystem.FileSystem;
 import org.das2.util.filesystem.WebFileSystem;
 import org.das2.util.monitor.ProgressMonitor;
 import org.autoplot.datasource.DataSourceUtil;
+import org.das2.util.filesystem.HttpUtil;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.w3c.dom.NodeList;
@@ -67,8 +65,9 @@ public class PDSPPIFileSystem extends WebFileSystem {
     private String root= PDSPPIDB.PDSPPI+"ditdos/view?id=pds:/";
     
     @Override
-    protected void downloadFile(String filename, File f, File partfile, ProgressMonitor monitor) throws IOException {
+    protected Map<String,String> downloadFile(String filename, File f, File partfile, ProgressMonitor monitor) throws IOException {
         logger.log(Level.WARNING, "download file {0}", filename);
+        return Collections.EMPTY_MAP;
     }
 
     @Override
@@ -102,8 +101,9 @@ public class PDSPPIFileSystem extends WebFileSystem {
         
         try {
             logger.log(Level.FINE, "listDirectory {0}", url);
-            
+            loggerUrl.log(Level.FINE,"GET to get data {0}", url);
             URLConnection connect= url.openConnection();
+            connect= HttpUtil.checkRedirect(connect);
             connect.connect();
             //if ( !connect.getContentType().equals("text/xml") ) {  //TODO: work with Todd to get response headers
             //    throw new IOException("bad request: "+url);

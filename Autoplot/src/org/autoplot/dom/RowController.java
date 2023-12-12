@@ -1,7 +1,3 @@
-/*
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
- */
 
 package org.autoplot.dom;
 
@@ -11,36 +7,40 @@ import java.text.ParseException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.logging.Level;
+import java.util.logging.Logger;
+import org.das2.DasNameException;
 import org.das2.graph.DasCanvas;
 import org.das2.graph.DasDevicePosition;
 import org.das2.graph.DasRow;
 import org.das2.util.LoggerManager;
 
 /**
- *
+ * Controller for Row objects, mostly keeping the DasRow in sync with the DOM.
  * @author jbf
  */
 public class RowController extends DomNodeController {
+    
+    protected static final Logger logger= org.das2.util.LoggerManager.getLogger( "autoplot.dom.row" );
+    
     Row row;
     DasRow dasRow;
     Canvas canvas;
-
-    RowController( Row row ) {
+    ApplicationController applicationController;
+ 
+    RowController( ApplicationController applicationController, Row row ) {
         super(row);
         this.row= row;
+        this.applicationController= applicationController;
         row.controller= this;
     }
 
-    protected void createDasPeer( Canvas canvas, DasRow parent ) {
-        DasCanvas c= canvas.controller.getDasCanvas();
-        dasRow= DasRow.create( c, parent, row.getTop(), row.getBottom() );
-
-        final List<String> minList= Arrays.asList( DasDevicePosition.PROP_MINIMUM, DasDevicePosition.PROP_EMMINIMUM, DasDevicePosition.PROP_PTMINIMUM );
-        final List<String> maxList= Arrays.asList( DasDevicePosition.PROP_MAXIMUM, DasDevicePosition.PROP_EMMAXIMUM, DasDevicePosition.PROP_PTMAXIMUM );
-        PropertyChangeListener list= new PropertyChangeListener() {
-            @Override            
+    PropertyChangeListener dasRowPosListener;
+    
+    PropertyChangeListener createDasRowPosListener( final List<String> minList, final List<String> maxList ) {
+        dasRowPosListener= new PropertyChangeListener( ) {
+            @Override
             public void propertyChange(PropertyChangeEvent evt) {
-                LoggerManager.logPropertyChangeEvent(evt);
+                LoggerManager.logPropertyChangeEvent(evt);  
                 if ( maxList.contains( evt.getPropertyName() ) ) {
                     row.setBottom( DasDevicePosition.formatLayoutStr(dasRow, false ) );
                 } else if ( minList.contains( evt.getPropertyName() ) ) {
@@ -48,18 +48,30 @@ public class RowController extends DomNodeController {
                 }
             }
         };
-
-        dasRow.addPropertyChangeListener(list);
-        list= new PropertyChangeListener() {
+        return dasRowPosListener;
+    }
+      
+    PropertyChangeListener rowPosListener;
+    
+    PropertyChangeListener createRowPosListener( ) {
+        rowPosListener= new PropertyChangeListener() {
             @Override            
             public void propertyChange(PropertyChangeEvent evt) {
                 LoggerManager.logPropertyChangeEvent(evt);                
                 try {
                     double[] dd= DasDevicePosition.parseLayoutStr((String)evt.getNewValue());
                     if ( evt.getPropertyName().equals(Row.PROP_TOP) ) {
-                        dasRow.setMin( dd[0], dd[1], (int) dd[2] );
+                        if ( dd[0]==dasRow.getMinimum() && dd[1]==dasRow.getEmMinimum() && ((int)dd[2])==dasRow.getPtMinimum() ) {
+                            logger.fine("suppressing change which would have no effect");
+                        } else {
+                            dasRow.setMin( dd[0], dd[1], (int) dd[2] );
+                        }
                     } else if ( evt.getPropertyName().equals(Row.PROP_BOTTOM) ) {
-                        dasRow.setMax( dd[0], dd[1], (int) dd[2] );
+                        if ( dd[0]==dasRow.getMaximum() && dd[1]==dasRow.getEmMaximum() && ((int)dd[2])==dasRow.getPtMinimum() ) {
+                            logger.fine("suppressing change which would have no effect");
+                        } else {
+                            dasRow.setMax( dd[0], dd[1], (int) dd[2] );
+                        }
                     }
                     //DasDevicePosition.parseLayoutStr( dasRow, row.getTop() + "," + row.getBottom() );
                 } catch (ParseException ex) {
@@ -69,8 +81,20 @@ public class RowController extends DomNodeController {
                 }
             }
         };
-        row.addPropertyChangeListener(Row.PROP_BOTTOM,list);
-        row.addPropertyChangeListener(Row.PROP_TOP,list);
+        return rowPosListener;
+    }
+    
+    protected void createDasPeer( Canvas canvas, DasRow parent ) {
+        DasCanvas c= canvas.controller.getDasCanvas();
+        dasRow= DasRow.create( c, parent, row.getTop(), row.getBottom() );
+        try {
+            if ( this.row.getId().length()>0 ) dasRow.setDasName( this.row.getId() );
+        } catch (DasNameException ex) {
+            logger.log(Level.SEVERE, null, ex);
+        }
+        applicationController.bind( row, Row.PROP_TOP, dasRow, DasDevicePosition.PROP_MINLAYOUT );
+        applicationController.bind( row, Row.PROP_BOTTOM, dasRow, DasDevicePosition.PROP_MAXLAYOUT );
+        
         this.canvas= canvas;
     }
     
@@ -89,6 +113,16 @@ public class RowController extends DomNodeController {
         return true;
     }    
 
+    public void removeBindings() {
+        applicationController.unbind(row);
+    }
+    
+    public void removeReferences() {
+        //row= null;
+        //dasRow= null;
+        //canvas= null;
+    }
+    
     public DasRow getDasRow() {
         return dasRow;
     }

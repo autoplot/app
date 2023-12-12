@@ -151,8 +151,8 @@ public class BookmarksManager extends javax.swing.JDialog {
         if ( name.equals("Tools") ) {
             overplotButton.setVisible(false);
             plotBelowButton.setVisible(false);
-            plotButton.setText("Execute");
-            plotButton.setToolTipText("Execute");
+            plotButton.setText("Run");
+            plotButton.setToolTipText("Run the script");
         }
         this.setLocationRelativeTo(parent);
         this.model = new BookmarksManagerModel();
@@ -240,8 +240,9 @@ public class BookmarksManager extends javax.swing.JDialog {
     /**
      * return the remoteUrl containing this bookmark, or an empty string.
      * @param b the target bookmark.  This can be null.
+     * @param model internal model for the GUI.
      * @param treeModel the model containing the bookmark
-     * @param ppath the path to the bookmark.
+     * @param ppath null or the path to the bookmark.
      * @return the first remote URL containing the bookmark, or an empty string if it is local.
      */
     protected static String maybeGetRemoteBookmarkUrl(Bookmark b, BookmarksManagerModel model, TreeModel treeModel, TreePath ppath ) {
@@ -447,7 +448,7 @@ public class BookmarksManager extends javax.swing.JDialog {
         jTree1 = new javax.swing.JTree();
         dismissButton = new javax.swing.JButton();
         URILabel = new javax.swing.JLabel();
-        URLTextField = new javax.swing.JTextField();
+        uriTextField = new javax.swing.JTextField();
         titleLabel = new javax.swing.JLabel();
         titleTextField = new javax.swing.JTextField();
         jLabel4 = new javax.swing.JLabel();
@@ -492,29 +493,31 @@ public class BookmarksManager extends javax.swing.JDialog {
         URILabel.setText("URI:");
         URILabel.setToolTipText("Location of the data (often the URL), or remote folder location");
 
-        URLTextField.setToolTipText("");
-        URLTextField.addFocusListener(new java.awt.event.FocusAdapter() {
+        uriTextField.setEditable(false);
+        uriTextField.setToolTipText("");
+        uriTextField.addFocusListener(new java.awt.event.FocusAdapter() {
             public void focusLost(java.awt.event.FocusEvent evt) {
-                URLTextFieldFocusLost(evt);
+                uriTextFieldFocusLost(evt);
             }
         });
-        URLTextField.addKeyListener(new java.awt.event.KeyAdapter() {
+        uriTextField.addKeyListener(new java.awt.event.KeyAdapter() {
             public void keyTyped(java.awt.event.KeyEvent evt) {
-                URLTextFieldKeyTyped(evt);
+                uriTextFieldKeyTyped(evt);
             }
         });
 
         titleLabel.setText("Title:");
         titleLabel.setToolTipText("Title for the URI");
 
-        titleTextField.addActionListener(new java.awt.event.ActionListener() {
-            public void actionPerformed(java.awt.event.ActionEvent evt) {
-                titleTextFieldActionPerformed(evt);
-            }
-        });
+        titleTextField.setEditable(false);
         titleTextField.addFocusListener(new java.awt.event.FocusAdapter() {
             public void focusLost(java.awt.event.FocusEvent evt) {
                 titleTextFieldFocusLost(evt);
+            }
+        });
+        titleTextField.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                titleTextFieldActionPerformed(evt);
             }
         });
         titleTextField.addPropertyChangeListener(new java.beans.PropertyChangeListener() {
@@ -531,6 +534,7 @@ public class BookmarksManager extends javax.swing.JDialog {
         jLabel4.setText("Description:");
         jLabel4.setToolTipText("Up to a short paragraph describing the data");
 
+        descriptionTextField.setEditable(false);
         descriptionTextField.setToolTipText("Up to a short paragraph describing the data");
         descriptionTextField.addFocusListener(new java.awt.event.FocusAdapter() {
             public void focusLost(java.awt.event.FocusEvent evt) {
@@ -555,6 +559,7 @@ public class BookmarksManager extends javax.swing.JDialog {
         plotButton.setIcon(new javax.swing.ImageIcon(getClass().getResource("/org/autoplot/go.png"))); // NOI18N
         plotButton.setText("Plot");
         plotButton.setToolTipText("Plot the URI in the current focus position");
+        plotButton.setEnabled(false);
         plotButton.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
                 plotButtonActionPerformed(evt);
@@ -562,6 +567,7 @@ public class BookmarksManager extends javax.swing.JDialog {
         });
 
         plotBelowButton.setText("Plot Below");
+        plotBelowButton.setEnabled(false);
         plotBelowButton.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
                 plotBelowButtonActionPerformed(evt);
@@ -569,6 +575,7 @@ public class BookmarksManager extends javax.swing.JDialog {
         });
 
         overplotButton.setText("Overplot");
+        overplotButton.setEnabled(false);
         overplotButton.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
                 overplotButtonActionPerformed(evt);
@@ -587,6 +594,7 @@ public class BookmarksManager extends javax.swing.JDialog {
         editButton.setIcon(new javax.swing.ImageIcon(getClass().getResource("/resources/fileMag.png"))); // NOI18N
         editButton.setText("Edit");
         editButton.setToolTipText("Inspect this resource before plotting.  If an editor is available, this will enter the editor before plotting.");
+        editButton.setEnabled(false);
         editButton.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
                 editButtonActionPerformed(evt);
@@ -698,7 +706,7 @@ public class BookmarksManager extends javax.swing.JDialog {
                     .add(org.jdesktop.layout.GroupLayout.LEADING, layout.createSequentialGroup()
                         .add(URILabel)
                         .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
-                        .add(URLTextField, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 652, Short.MAX_VALUE))
+                        .add(uriTextField, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 652, Short.MAX_VALUE))
                     .add(layout.createSequentialGroup()
                         .add(jLabel4)
                         .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
@@ -734,7 +742,7 @@ public class BookmarksManager extends javax.swing.JDialog {
                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
                 .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.BASELINE)
                     .add(URILabel)
-                    .add(URLTextField, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE))
+                    .add(uriTextField, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE))
                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
                 .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.BASELINE)
                     .add(dismissButton)
@@ -745,7 +753,7 @@ public class BookmarksManager extends javax.swing.JDialog {
                 .addContainerGap())
         );
 
-        layout.linkSize(new java.awt.Component[] {URLTextField, titleTextField}, org.jdesktop.layout.GroupLayout.VERTICAL);
+        layout.linkSize(new java.awt.Component[] {titleTextField, uriTextField}, org.jdesktop.layout.GroupLayout.VERTICAL);
 
         pack();
     }// </editor-fold>//GEN-END:initComponents
@@ -756,7 +764,7 @@ private void dismissButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN
     if ( dirtyBookmark!=null ) {
         dirtyBookmark.setTitle(titleTextField.getText());
         if ( dirtyBookmark instanceof Bookmark.Item ) {
-            ((Bookmark.Item)dirtyBookmark).setUri(URLTextField.getText());
+            ((Bookmark.Item)dirtyBookmark).setUri(uriTextField.getText());
         }
         dirtyBookmark.setDescription( descriptionTextField.getText() );
         model.fireBookmarkChange(dirtyBookmark);
@@ -768,9 +776,9 @@ private void dismissButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN
     }
 }//GEN-LAST:event_dismissButtonActionPerformed
 
-private void URLTextFieldFocusLost(java.awt.event.FocusEvent evt) {//GEN-FIRST:event_URLTextFieldFocusLost
+private void uriTextFieldFocusLost(java.awt.event.FocusEvent evt) {//GEN-FIRST:event_uriTextFieldFocusLost
     // it's been marked as dirty, so we don't need to do anything
-}//GEN-LAST:event_URLTextFieldFocusLost
+}//GEN-LAST:event_uriTextFieldFocusLost
 
 private void titleTextFieldFocusLost(java.awt.event.FocusEvent evt) {//GEN-FIRST:event_titleTextFieldFocusLost
     // it's been marked as dirty, so we don't need to do anything
@@ -780,7 +788,7 @@ private void jTree1ValueChanged(javax.swing.event.TreeSelectionEvent evt) {//GEN
     if ( dirtyBookmark!=null ) {
         dirtyBookmark.setTitle(titleTextField.getText());
         if ( dirtyBookmark instanceof Bookmark.Item ) {
-            ((Bookmark.Item)dirtyBookmark).setUri(URLTextField.getText());
+            ((Bookmark.Item)dirtyBookmark).setUri(uriTextField.getText());
         }
         dirtyBookmark.setDescription( descriptionTextField.getText() );
         model.fireBookmarkChange(dirtyBookmark);
@@ -805,10 +813,10 @@ private void jTree1ValueChanged(javax.swing.event.TreeSelectionEvent evt) {//GEN
             viewDetailsButton.setToolTipText("View "+descriptionUrl);
         }
 
-        URLTextField.setEditable( b instanceof Bookmark.Item );
+        uriTextField.setEditable( b instanceof Bookmark.Item );
         String err="";
         if (b instanceof Bookmark.Item) {
-            URLTextField.setText(((Bookmark.Item) b).getUri());
+            uriTextField.setText(((Bookmark.Item) b).getUri());
             URILabel.setText("URI:");
         } else {
             if ( b instanceof Bookmark.Folder && ((Bookmark.Folder)b).getRemoteUrl()!=null ) {
@@ -816,10 +824,10 @@ private void jTree1ValueChanged(javax.swing.event.TreeSelectionEvent evt) {//GEN
                 int status;
                 status= ((Bookmark.Folder)b).getRemoteStatus();
                 if ( status==Bookmark.Folder.REMOTE_STATUS_UNSUCCESSFUL ) err= "<br>** Unable to connect to remote URL **";
-                URLTextField.setText(url);
+                uriTextField.setText(url);
                 URILabel.setText("URL:");
             } else {
-                URLTextField.setText("");
+                uriTextField.setText("");
                 URILabel.setText("URI:");
             }
         }
@@ -828,14 +836,18 @@ private void jTree1ValueChanged(javax.swing.event.TreeSelectionEvent evt) {//GEN
         TreePath ppath= jTree1.getSelectionPath();
         if ( ppath!=null ) {
             remoteUrl= maybeGetRemoteBookmarkUrl( b, model, jTree1.getModel(), ppath);
-            URLTextField.setEditable(remoteUrl.length()==0);
             if ( remoteUrl.length()==0 ) {
-                URLTextField.setToolTipText("Location of the remote folder"+err);
+                if ( b instanceof Bookmark.Item ) {
+                    uriTextField.setToolTipText("Location of the item"+err);
+                } else {
+                    uriTextField.setToolTipText("Location of the remote folder"+err);
+                }
             } else {
-                URLTextField.setToolTipText("Location of the data (often the URL)");
+                uriTextField.setToolTipText("Location of the item (often the URL)");
             }
+            uriTextField.setEditable(remoteUrl.length()==0);
         } else {
-            URLTextField.setEditable(false);
+            uriTextField.setEditable(false);
         }
 
         if ( remoteUrl.length()==0 ) {
@@ -847,20 +859,29 @@ private void jTree1ValueChanged(javax.swing.event.TreeSelectionEvent evt) {//GEN
                     + remoteUrl +
                     "<br> and cannot be edited." + err );
         }
-        descriptionTextField.setEditable(remoteUrl.length()==0);
         editDescriptionButton.setEnabled( true );
         editDescriptionButton.setText( remoteUrl.length()==0 ? "Edit" : "View" );
+        plotButton.setEnabled( b instanceof Bookmark.Item );
+        overplotButton.setEnabled( b instanceof Bookmark.Item );
+        plotBelowButton.setEnabled( b instanceof Bookmark.Item );
+        editButton.setEnabled( b instanceof Bookmark.Item );
         titleTextField.setEditable(remoteUrl.length()==0);
-
+        descriptionTextField.setEditable(remoteUrl.length()==0);
     } else {
         titleTextField.setText("");
         descriptionTextField.setText("");
-        URLTextField.setText("");
+        uriTextField.setText("");
         titleLabel.setText("Title:");
         editDescriptionButton.setEnabled(false);
         viewDetailsButton.setEnabled(false);
         viewDetailsButton.setToolTipText("(no details URL)");
         titleTextField.setEditable(false);
+        descriptionTextField.setEditable(false);
+        uriTextField.setEditable(false);
+        plotButton.setEnabled( false );
+        overplotButton.setEnabled( false );
+        plotBelowButton.setEnabled( false );
+        editButton.setEnabled( false );
     }
 }//GEN-LAST:event_jTree1ValueChanged
 
@@ -1043,9 +1064,9 @@ private void titleTextFieldKeyTyped(java.awt.event.KeyEvent evt) {//GEN-FIRST:ev
     dirtyBookmark= model.getSelectedBookmark(jTree1.getModel(), jTree1.getSelectionPath());
 }//GEN-LAST:event_titleTextFieldKeyTyped
 
-private void URLTextFieldKeyTyped(java.awt.event.KeyEvent evt) {//GEN-FIRST:event_URLTextFieldKeyTyped
+private void uriTextFieldKeyTyped(java.awt.event.KeyEvent evt) {//GEN-FIRST:event_uriTextFieldKeyTyped
     dirtyBookmark= model.getSelectedBookmark(jTree1.getModel(), jTree1.getSelectionPath());
-}//GEN-LAST:event_URLTextFieldKeyTyped
+}//GEN-LAST:event_uriTextFieldKeyTyped
 
 private void mergeInDefaultMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_mergeInDefaultMenuItemActionPerformed
         try {
@@ -1119,7 +1140,7 @@ private void editDescriptionButtonActionPerformed(java.awt.event.ActionEvent evt
 
 /**
  * provide a means to get the selection.
- * @param listener 
+ * @return the selected bookmark  
  */
 public Bookmark getSelectedBookmark( ) {
     return model.getSelectedBookmark( jTree1.getModel(), jTree1.getSelectionPath() );
@@ -1191,7 +1212,6 @@ private void reloadMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GE
 
     // Variables declaration - do not modify//GEN-BEGIN:variables
     private javax.swing.JLabel URILabel;
-    private javax.swing.JTextField URLTextField;
     private javax.swing.JMenuItem addItemMenuItem;
     private javax.swing.JMenuItem closeMenuItem;
     private javax.swing.JMenuItem deleteMenuItem;
@@ -1217,6 +1237,7 @@ private void reloadMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GE
     private javax.swing.JMenuItem resetToDefaultMenuItem;
     private javax.swing.JLabel titleLabel;
     private javax.swing.JTextField titleTextField;
+    private javax.swing.JTextField uriTextField;
     private javax.swing.JButton viewDetailsButton;
     // End of variables declaration//GEN-END:variables
 
@@ -1268,7 +1289,7 @@ private void reloadMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GE
             @Override
             public void actionPerformed( ActionEvent e ) {
                 org.das2.util.LoggerManager.logGuiEvent(e);        
-                String s = JOptionPane.showInputDialog( BookmarksManager.this, "Bookmark URL:");
+                String s = JOptionPane.showInputDialog( BookmarksManager.this, "Bookmark URI:");
                 if (s != null && !s.equals("")) {
                     String x= maybeGetRemoteBookmarkUrl( null, model, jTree1.getModel(), jTree1.getSelectionPath() );
                     if ( x.length()==0 ) {
@@ -1293,7 +1314,8 @@ private void reloadMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GE
                     JOptionPane.showMessageDialog( rootPane, "Cannot add folder to remote bookmarks\n"+x, "Remote Bookmark Add Folder",JOptionPane.OK_OPTION );
                     return;
                 }
-                String s = JOptionPane.showInputDialog( BookmarksManager.this, "New Folder Name:");
+                String prompt= "<html>New Folder Name, which can be<br>a label for the folder or<br>this can be the address of a remote bookmarks file.";
+                String s = JOptionPane.showInputDialog( BookmarksManager.this, prompt );
                 if (s != null && !s.equals("")) {
                     if (s.startsWith("http:") || s.startsWith("https:") || s.startsWith("ftp:")) {
                         // kludge for testing remote bookmarks

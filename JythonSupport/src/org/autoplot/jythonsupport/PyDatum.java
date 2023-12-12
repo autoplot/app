@@ -1,10 +1,12 @@
 
 package org.autoplot.jythonsupport;
 
+import java.util.Objects;
 import java.util.logging.Logger;
 import org.das2.datum.Datum;
 import org.das2.datum.Units;
 import org.das2.datum.UnitsConverter;
+import org.das2.datum.UnitsUtil;
 import org.python.core.Py;
 import org.python.core.PyFloat;
 import org.python.core.PyInteger;
@@ -13,6 +15,7 @@ import org.python.core.PyLong;
 import org.python.core.PyObject;
 import org.python.core.PyString;
 import org.das2.qds.DataSetUtil;
+import org.das2.qds.ops.Ops;
 
 /**
  * Wrap a das2 Datum, implementing operators.
@@ -24,11 +27,25 @@ public class PyDatum extends PyJavaInstance {
 
     Datum datum;
     
+    /**
+     * findbugs says that because PyJavaInstance is externalizable, then there needs to be a no-arg constructor.
+     */
+    public PyDatum() {
+        throw new IllegalArgumentException("no-arg constructor is not supported");
+    }
+    
     public PyDatum( Datum d ) {
         super(d);
         this.datum= d;
     }
     
+    /**
+     * create a PyDatum by parsing to Datum with Ops.datum.
+     * @param s 
+     */
+    public PyDatum( String s ) {
+        this(Ops.datum(s));
+    }
     
     /* plus, minus, multiply, divide */
     @Override
@@ -38,7 +55,12 @@ public class PyDatum extends PyJavaInstance {
         } else if ( arg0 instanceof PyQDataSet ) {
             return arg0.__radd__(this);
         } else if ( arg0.isNumberType() ) {
-            return new PyDatum( datum.add( datum.getUnits().createDatum( arg0.__float__().getValue() ) ) );            
+            if ( UnitsUtil.isRatioMeasurement(datum.getUnits()) ) {
+                return new PyDatum( datum.add( datum.getUnits().createDatum( arg0.__float__().getValue() ) ) );            
+            } else {
+                // "2023-04-11T07:14" + 10 doesn't make sense.
+                throw new IllegalArgumentException("unable to add dimensionless number to location");
+            }
         } else {
             return new PyQDataSet( DataSetUtil.asDataSet(datum) ).__add__(arg0);
         }        
@@ -56,7 +78,12 @@ public class PyDatum extends PyJavaInstance {
         } else if ( arg0 instanceof PyQDataSet ) {
             return arg0.__rsub__(this);         
         } else if ( arg0.isNumberType() ) {
-            return new PyDatum( datum.subtract( datum.getUnits().createDatum( arg0.__float__().getValue() ) ) );                        
+            if ( UnitsUtil.isRatioMeasurement(datum.getUnits()) ) {
+                return new PyDatum( datum.subtract( datum.getUnits().createDatum( arg0.__float__().getValue() ) ) );                        
+            } else {
+                // "2023-04-11T07:14" + 10 doesn't make sense.
+                throw new IllegalArgumentException("unable to subtract dimensionless number from location");
+            }
         } else {
             return new PyQDataSet( DataSetUtil.asDataSet(datum) ).__sub__(arg0);
         }
@@ -233,6 +260,16 @@ public class PyDatum extends PyJavaInstance {
     }
 
     @Override
+    public boolean __nonzero__() {
+        Units u= datum.getUnits();
+        if ( u!=null && u.getOffsetUnits()!=u ) {
+            throw new IllegalArgumentException("data must be dimensionless or a ratiometric datum.");
+        } else {
+            return datum.value()!=0;
+        }
+    }
+
+    @Override
     public PyObject __int__() {
         return Py.newInteger((int)datum.value());
     }
@@ -336,13 +373,51 @@ public class PyDatum extends PyJavaInstance {
         }
     }
 
+    /**
+     * This is what does the magical coersion, see https://sourceforge.net/p/autoplot/bugs/1861/
+     * @param c the class needed.
+     * @return instance of the class if available.
+     */
     @Override
     public Object __tojava__(Class c) {
+        logger.fine("this is not supported because the double version would be used where a dataset would work.");
+        // See sftp://nudnik.physics.uiowa.edu/home/jbf/project/autoplot/tests/1861/demo1861UsesDoubleNotQDataSet.jy        
+        if ( false && datum.getUnits()==Units.dimensionless ) {
+            if ( c==double.class ) {
+                return datum.value();
+            } else if ( c==Double.class ) {
+                return datum.value();
+            } else if ( c==float.class ) {
+                return (float)datum.value();
+            } else if ( c==Float.class ) {
+                return (float)datum.value();
+            } else if ( c==Number.class ) {
+                return datum.value();
+            }    
+        }
         return super.__tojava__(c);        
     }
     
     @Override
     public PyString __str__( ) {
         return new PyString( datum.toString() );
+    }
+
+    @Override
+    public int hashCode() {
+        return this.datum.hashCode();
+    }
+        
+    @Override
+    public boolean equals(Object ob_other) {
+        if ( ob_other instanceof PyDatum ) {
+            return equals( (PyDatum)ob_other );
+        } else {
+            return super.equals(ob_other);
+        }
+    }
+
+    public boolean equals(PyDatum ob_other) {
+        return this.datum.equals( ob_other.datum );
     }
 }

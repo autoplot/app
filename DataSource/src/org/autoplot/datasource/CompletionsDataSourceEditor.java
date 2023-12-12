@@ -1,7 +1,3 @@
-/*
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
- */
 
 /*
  * CompletionsDataSourceEditor.java
@@ -14,6 +10,7 @@ package org.autoplot.datasource;
 import java.awt.BorderLayout;
 import java.awt.Dimension;
 import java.awt.Window;
+import java.awt.event.ActionEvent;
 import java.awt.event.ItemEvent;
 import java.awt.event.ItemListener;
 import java.net.URI;
@@ -22,12 +19,19 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.logging.Logger;
 import javax.swing.Box;
+import javax.swing.BoxLayout;
+import javax.swing.Icon;
+import javax.swing.JButton;
 import javax.swing.JCheckBox;
 import javax.swing.JComboBox;
+import javax.swing.JComponent;
 import javax.swing.JLabel;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JTextField;
+import org.das2.util.LoggerManager;
 import org.das2.util.monitor.ProgressMonitor;
 
 /**
@@ -37,6 +41,9 @@ import org.das2.util.monitor.ProgressMonitor;
  * @author jbf
  */
 public class CompletionsDataSourceEditor extends javax.swing.JPanel implements DataSourceEditorPanel {
+    
+    private static final Logger logger= LoggerManager.getLogger("apdss");
+    
     /**
      * maximum length of vap+xxx: in URIs.
      */
@@ -49,11 +56,29 @@ public class CompletionsDataSourceEditor extends javax.swing.JPanel implements D
     boolean suriNoFile= false;
 
     List<JCheckBox> opsCbs;
-    List<JComboBox> opsComboBoxes;
+    List<Control> opsComboBoxes;
     JComboBox arg0Cbs=null;
     String arg0Extra=null;
     JTextField arg0ExtraTF=null;
+    Control arg0ComboBox=null;
 
+    private static interface Control {
+        String getValue();
+        void setValue(String s);
+    }
+    private static Control getFromComboBox( JComboBox tcb ) {
+        return new Control() {
+            @Override
+            public String getValue() { 
+                return (String)tcb.getSelectedItem();
+            };
+            @Override
+            public void setValue( String s ) {
+                tcb.setSelectedItem(s);
+            }
+        };
+    }
+    
     /** Creates new form CompletionsDataSourceEditor */
     public CompletionsDataSourceEditor() {
         initComponents();
@@ -202,6 +227,66 @@ public class CompletionsDataSourceEditor extends javax.swing.JPanel implements D
 
         boolean empty= true;
 
+        if ( arg0.size()>0 ) {
+            JPanel optPanel= new JPanel( new BorderLayout() );
+            empty= false;
+
+            String val= map.get("arg_0");
+            if ( val!=null ) {
+                int ib= val.indexOf("[");
+                if ( ib>-1 && val.endsWith("]") ) { // vap+hdf5:file:///home/jbf/Linux/Download/gnc_B_July_16_2012.hdf5.mat?EFW_Uncomp_U[0]
+                    arg0Extra= val.substring(ib);
+                }
+            }
+
+            int isel=-1;
+            List<String> arg0options= new ArrayList();
+            for ( int ii=0; ii<arg0.size(); ii++ ) {
+                if ( arg0.get(ii).completable.equals(arg0.get(ii).label) ) {
+                    arg0.get(ii).label= null;
+                }
+                if ( arg0.get(ii).completable.equals("") ) {
+                    String s= arg0.get(ii).label;
+                    if ( s!=null && s.trim().length()>0 ) {
+                        optPanel.add( BorderLayout.NORTH, new JLabel(s) );
+                    }
+                }
+                if ( arg0.get(ii).label!=null ) {
+                    arg0options.add( arg0.get(ii).completable + ": " +arg0.get(ii).label );
+                } else {
+                    arg0options.add( arg0.get(ii).completable );
+                }
+                if ( arg0.get(ii).completable.equals(val) ) {
+                    isel= ii;
+                }
+            }
+
+
+            JComboBox jopts= new JComboBox( arg0options.toArray() );
+            optPanel.add( BorderLayout.CENTER, jopts );
+            if ( isel!=-1 ) {
+                jopts.setSelectedIndex(isel);
+            }
+            
+            arg0ComboBox= getFromComboBox(jopts);
+            
+            if ( arg0Extra!=null ) {
+                arg0ExtraTF= new JTextField(12);
+                arg0ExtraTF.setText(arg0Extra);
+                arg0ExtraTF.setToolTipText( "subset specifier like [2:] or [-100:]");
+                optPanel.add( BorderLayout.EAST, arg0ExtraTF );
+            }
+
+            arg0Cbs= jopts;
+
+            optPanel.setMaximumSize( new Dimension(10000,16) );
+
+            optionsPanel.add( optPanel );
+            optionsPanel.add( Box.createVerticalStrut(8) );
+            
+        }
+        
+        
         for ( CompletionContext cc1: first ) {
 
             String ss= CompletionContext.insert(cc, cc1);
@@ -233,7 +318,11 @@ public class CompletionsDataSourceEditor extends javax.swing.JPanel implements D
                 if ( key!=null ) {
                     int ii= key.indexOf("=");
                     if (ii>-1 ) key= key.substring(0,ii);
+                } else {
+                    logger.warning("bad key in uri");
+                    continue;
                 }
+                
                 String val= map.get( key );
                 if ( val!=null ) {
                     //jcheckBox.setSelected(true);
@@ -271,87 +360,71 @@ public class CompletionsDataSourceEditor extends javax.swing.JPanel implements D
 
                 }
 
-                final JComboBox jopts=  new JComboBox( options.toArray() );
-                jopts.setEditable(true);
-                optPanel.add( BorderLayout.CENTER, jopts );
-                if ( isel!=-1 ) {
-                    jopts.setSelectedIndex(isel);
-                    jcheckBox.setSelected(true);
+                JComponent control;
+                if ( key.equals(URISplit.PARAM_TIME_RANGE) ) {      
+                    JPanel valuePanel= new JPanel(  );
+                    valuePanel.setLayout( new BoxLayout( valuePanel, BoxLayout.X_AXIS ) );
+                    final RecentComboBox tcb= new RecentComboBox();
+                    tcb.setPreferenceNode( RecentComboBox.PREF_NODE_TIMERANGE );
+                    Dimension x= tcb.getPreferredSize();
+                    x.width= Integer.MAX_VALUE;
+                    tcb.setMaximumSize(x);
+                    tcb.setAlignmentX( JComponent.LEFT_ALIGNMENT );
+                    tcb.setText( val );
+                    Icon fileIcon= new javax.swing.ImageIcon( 
+                        CompletionsDataSourceEditor.class.getResource("/org/autoplot/datasource/calendar.png") );
+                    JButton button= new JButton( fileIcon );
+                    button.addActionListener((ActionEvent e) -> {
+                        TimeRangeTool tt= new TimeRangeTool();
+                        tt.setSelectedRange(tcb.getSelectedItem().toString());
+                        int r= WindowManager.showConfirmDialog( this, tt, "Select Time Range", JOptionPane.OK_CANCEL_OPTION );
+                        if ( r==JOptionPane.OK_OPTION) {
+                            tcb.setSelectedItem(tt.getSelectedRange());
+                        }
+                    });     
+                    button.setToolTipText("Time Range Tool");
+                    valuePanel.add( tcb );
+                    button.setAlignmentX( JComponent.LEFT_ALIGNMENT );
+                    valuePanel.add( button );
+
+                    control= valuePanel;
+                    
+                    Control c= getFromComboBox( tcb );
+                    opsComboBoxes.add( c );
+                    
                 } else {
-                    if ( deft!=null ) {
-                        jopts.setSelectedItem(deft);
+                    final JComboBox jopts=  new JComboBox( options.toArray() );
+                    jopts.setEditable(true);
+                    optPanel.add( BorderLayout.CENTER, jopts );
+                    if ( isel!=-1 ) {
+                        jopts.setSelectedIndex(isel);
+                        jcheckBox.setSelected(true);
+                    } else {
+                        if ( deft!=null ) {
+                            jopts.setSelectedItem(deft);
+                        }
                     }
+
+                    jcheckBox.addItemListener( new ItemListener() {
+                        @Override
+                        public void itemStateChanged(ItemEvent e) {
+                            jopts.setEnabled( jcheckBox.isSelected());
+                        }
+                    } );
+                    jopts.setEnabled( jcheckBox.isSelected());
+
+                    opsComboBoxes.add( getFromComboBox(jopts) );
+
+                    optPanel.setMaximumSize( new Dimension(10000,16) );
+                    
+                    control= optPanel;
                 }
 
-                jcheckBox.addItemListener( new ItemListener() {
-                    @Override
-                    public void itemStateChanged(ItemEvent e) {
-                        jopts.setEnabled( jcheckBox.isSelected());
-                    }
-                } );
-                jopts.setEnabled( jcheckBox.isSelected());
-
-                opsComboBoxes.add(jopts);
-
-                optPanel.setMaximumSize( new Dimension(10000,16) );
-
-                optionsPanel.add( optPanel );
+                optionsPanel.add( control );
                 optionsPanel.add( Box.createVerticalStrut(8) );
             } else {
                 opsComboBoxes.add( null );
             }
-            
-        }
-
-        if ( arg0.size()>0 ) {
-            JPanel optPanel= new JPanel( new BorderLayout() );
-            empty= false;
-
-            String val= map.get("arg_0");
-            if ( val!=null ) {
-                int ib= val.indexOf("[");
-                if ( ib>-1 && val.endsWith("]") ) { // vap+hdf5:file:///home/jbf/Linux/Download/gnc_B_July_16_2012.hdf5.mat?EFW_Uncomp_U[0]
-                    arg0Extra= val.substring(ib);
-                }
-            }
-
-            int isel=-1;
-            List<String> arg0options= new ArrayList();
-            for ( int ii=0; ii<arg0.size(); ii++ ) {
-                if ( arg0.get(ii).completable.equals(arg0.get(ii).label) ) {
-                    arg0.get(ii).label= null;
-                }
-                if ( arg0.get(ii).label!=null ) {
-                    arg0options.add( arg0.get(ii).completable + ": " +arg0.get(ii).label );
-                } else {
-                    arg0options.add( arg0.get(ii).completable );
-                }
-                if ( arg0.get(ii).completable.equals(val) ) {
-                    isel= ii;
-                }
-            }
-
-
-            JComboBox jopts= new JComboBox( arg0options.toArray() );
-            optPanel.add( BorderLayout.CENTER, jopts );
-            if ( isel!=-1 ) {
-                jopts.setSelectedIndex(isel);
-            }
-            opsComboBoxes.add( jopts );
-            
-            if ( arg0Extra!=null ) {
-                arg0ExtraTF= new JTextField(12);
-                arg0ExtraTF.setText(arg0Extra);
-                arg0ExtraTF.setToolTipText( "subset specifier like [2:] or [-100:]");
-                optPanel.add( BorderLayout.EAST, arg0ExtraTF );
-            }
-
-            arg0Cbs= jopts;
-
-            optPanel.setMaximumSize( new Dimension(10000,16) );
-
-            optionsPanel.add( optPanel );
-            optionsPanel.add( Box.createVerticalStrut(8) );
             
         }
 
@@ -381,7 +454,7 @@ public class CompletionsDataSourceEditor extends javax.swing.JPanel implements D
                 if ( opsCbs.get(i).getText().equals(s+"=") ) {
                     opsCbs.get(i).setSelected(true);
                     if ( opsComboBoxes.get(i)!=null ) {
-                        opsComboBoxes.get(i).setSelectedItem(v);
+                        opsComboBoxes.get(i).setValue(v);
                     } else {
                         
                     }
@@ -425,14 +498,15 @@ public class CompletionsDataSourceEditor extends javax.swing.JPanel implements D
         for ( int i=0; i<opsCbs.size(); i++ ) {
             if ( opsCbs.get(i).isSelected() ) {
                 String paramName= opsCbs.get(i).getText();
+                if ( paramName.endsWith("=") ) paramName= paramName.substring(0,paramName.length()-1);
                 String paramValue;
                 if ( opsComboBoxes.get(i)!=null ) {
-                    paramValue= String.valueOf( opsComboBoxes.get(i).getSelectedItem() );
+                    paramValue= String.valueOf( opsComboBoxes.get(i).getValue() );
                 } else {
                     paramValue= "????";
                 }
                 int icolon= paramValue.indexOf(':');
-                if ( icolon!=-1 && !paramValue.substring(0,icolon).equals("orbit")) {
+                if ( icolon!=-1 && !paramName.equalsIgnoreCase( URISplit.PARAM_TIME_RANGE ) ) {
                     paramValue= paramValue.substring(0,icolon);
                 }
                 if ( amp ) {
@@ -444,6 +518,7 @@ public class CompletionsDataSourceEditor extends javax.swing.JPanel implements D
                     amp= true;
                 }
                 base.append( paramName ); //TODO: is there an equals here?
+                base.append( "=" );
                 base.append( paramValue );
             }
         }

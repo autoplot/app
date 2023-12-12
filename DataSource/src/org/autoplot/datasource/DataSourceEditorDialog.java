@@ -105,7 +105,7 @@ public class DataSourceEditorDialog extends javax.swing.JDialog {
 
         jPanel1.setLayout(new java.awt.BorderLayout());
 
-        okayButton.setIcon(new javax.swing.ImageIcon(getClass().getResource("/org/autoplot/datasource/go.png"))); // NOI18N
+        okayButton.setIcon(new javax.swing.ImageIcon(getClass().getResource("/resources/go.png"))); // NOI18N
         okayButton.setText("Plot");
         okayButton.setToolTipText("Plot, replacing any previous plot.");
         okayButton.addActionListener(new java.awt.event.ActionListener() {
@@ -122,7 +122,20 @@ public class DataSourceEditorDialog extends javax.swing.JDialog {
         });
 
         plotBelowButton.setText("Plot Below");
-        plotBelowButton.setToolTipText("Plot below the current plot.");
+        plotBelowButton.setToolTipText("Plot below the current plot.  Holding shift will plot above.");
+        plotBelowButton.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
+            public void mouseMoved(java.awt.event.MouseEvent evt) {
+                plotBelowButtonMouseMoved(evt);
+            }
+        });
+        plotBelowButton.addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mouseExited(java.awt.event.MouseEvent evt) {
+                plotBelowButtonMouseExited(evt);
+            }
+            public void mouseEntered(java.awt.event.MouseEvent evt) {
+                plotBelowButtonMouseEntered(evt);
+            }
+        });
         plotBelowButton.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
                 plotBelowButtonActionPerformed(evt);
@@ -203,7 +216,7 @@ private void okayButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FI
 private void plotBelowButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_plotBelowButtonActionPerformed
     org.das2.util.LoggerManager.logGuiEvent(evt);
     this.cancelled= false;
-    setModifiers( KeyEvent.CTRL_MASK );
+    setModifiers( KeyEvent.CTRL_MASK | evt.getModifiers() );
     this.setVisible(false);
 }//GEN-LAST:event_plotBelowButtonActionPerformed
 
@@ -213,6 +226,26 @@ private void overplotButtonActionPerformed(java.awt.event.ActionEvent evt) {//GE
     setModifiers( KeyEvent.SHIFT_MASK );
     this.setVisible(false);
 }//GEN-LAST:event_overplotButtonActionPerformed
+
+    private void plotBelowUpdate( boolean above ) {    
+        if ( above ) {
+            plotBelowButton.setText("Plot Above");
+        } else {
+            plotBelowButton.setText("Plot Below");
+        }    
+    }
+    
+    private void plotBelowButtonMouseMoved(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_plotBelowButtonMouseMoved
+        plotBelowUpdate( evt.isShiftDown() );
+    }//GEN-LAST:event_plotBelowButtonMouseMoved
+
+    private void plotBelowButtonMouseEntered(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_plotBelowButtonMouseEntered
+        plotBelowUpdate( evt.isShiftDown() );
+    }//GEN-LAST:event_plotBelowButtonMouseEntered
+
+    private void plotBelowButtonMouseExited(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_plotBelowButtonMouseExited
+        plotBelowUpdate( evt.isShiftDown() );
+    }//GEN-LAST:event_plotBelowButtonMouseExited
 
 
     // Variables declaration - do not modify//GEN-BEGIN:variables
@@ -234,7 +267,7 @@ private void overplotButtonActionPerformed(java.awt.event.ActionEvent evt) {//GE
             okayButton.setText("Plot");
         } else {
             okayButton.setIcon(null);
-            okayButton.setText("Ok");
+            okayButton.setText("OK");
         }
         plotBelowButton.setVisible(b);
         overplotButton.setVisible(b);

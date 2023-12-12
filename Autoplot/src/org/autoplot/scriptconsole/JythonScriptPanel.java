@@ -5,12 +5,12 @@
  */
 package org.autoplot.scriptconsole;
 
-import java.awt.Color;
 import java.awt.Dimension;
 import org.autoplot.jythonsupport.ui.EditorContextMenu;
 import java.awt.Font;
 import java.awt.Toolkit;
 import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.beans.PropertyChangeEvent;
@@ -18,19 +18,26 @@ import java.beans.PropertyChangeListener;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.net.URI;
 import java.net.URL;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import javax.swing.AbstractAction;
 import javax.swing.JFileChooser;
+import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
+import javax.swing.JScrollPane;
 import javax.swing.KeyStroke;
 import javax.swing.event.CaretEvent;
 import javax.swing.event.CaretListener;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
+import javax.swing.text.BadLocationException;
 import javax.swing.text.Document;
 import javax.swing.text.Element;
+import jsyntaxpane.SyntaxDocument;
 import org.das2.jythoncompletion.JythonCompletionProvider;
 import org.das2.jythoncompletion.JythonCompletionTask;
 import org.das2.jythoncompletion.JythonInterpreterProvider;
@@ -63,6 +70,7 @@ public class JythonScriptPanel extends javax.swing.JPanel {
     private static final Logger logger= org.das2.util.LoggerManager.getLogger("autoplot");
 
     ApplicationModel model;
+    AutoplotUI app; // the app, if available
     ApplicationController applicationController;
     DataSetSelector selector;
     ScriptPanelSupport support;
@@ -70,7 +78,8 @@ public class JythonScriptPanel extends javax.swing.JPanel {
     static final int CONTEXT_APPLICATION = 0;
     private int context = 0;
     File runningScript= null; // the script being run.
-
+    EditorContextMenu menu;
+            
     /**
      * true if the current file contains tabs.
      */
@@ -78,6 +87,10 @@ public class JythonScriptPanel extends javax.swing.JPanel {
 
     private transient DocumentListener dirtyListener; // this contains repeated code in ScriptPanelSupport  
 
+    /**
+     * this downloads the URI and loads the local version into the editor.
+     * @param uri the URI
+     */
     public void loadExampleUri( String uri ) {
         try {
             File ff= DataSetURI.getFile( uri, new NullProgressMonitor() );
@@ -91,7 +104,7 @@ public class JythonScriptPanel extends javax.swing.JPanel {
      * Creates new form JythonScriptPanel 
      * 
      * @param app the app with which we'll register the close callback.
-     * @param selector the selector which might receive jyds URIs when "execute" is pressed.
+     * @param selector the selector which might receive jyds URIs when "run" is pressed.
      */
     public JythonScriptPanel( AutoplotUI app, final DataSetSelector selector) {
         initComponents();
@@ -102,6 +115,8 @@ public class JythonScriptPanel extends javax.swing.JPanel {
         setContext(CONTEXT_APPLICATION);
 
         this.model = app.getApplicationModel();
+        this.app= app;
+
         support = new ScriptPanelSupport(this, model, selector);
 
         this.applicationController= model.getDocumentModel().getController();
@@ -240,7 +255,7 @@ public class JythonScriptPanel extends javax.swing.JPanel {
             @Override
             public void actionPerformed(ActionEvent e) {
                 LoggerManager.logGuiEvent(e);
-                DataSourceUtil.openBrowser( "http://apps-pw.physics.uiowa.edu/hudson/job/autoplot-release2017/ws/autoplot/Autoplot/src/scripts/" );
+                DataSourceUtil.openBrowser( "https://github.com/autoplot/dev/" );
             }
         });
 
@@ -264,11 +279,35 @@ public class JythonScriptPanel extends javax.swing.JPanel {
             @Override
             public void actionPerformed(ActionEvent e) {
                 LoggerManager.logGuiEvent(e);
-                DataSourceUtil.openBrowser( "http://apps-pw.physics.uiowa.edu/hudson/job/autoplot-release2017/ws/autoplot/JythonDataSource/src/" );
+                DataSourceUtil.openBrowser( "https://ci-pw.physics.uiowa.edu/job/autoplot-release/ws/autoplot/JythonDataSource/src/" );
             }
         });
 
+        JMenuItem mi= new JMenuItem( new AbstractAction("Run Git Diff") {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                LoggerManager.logGuiEvent(e);       
+                try {
+                    if ( JythonScriptPanel.this.filename!=null ) {
+                        File f= new File( JythonScriptPanel.this.filename );
+                        support.save(); 
+                        ScriptPanelSupport.markChanges( getEditorPanel().getEditorAnnotationsSupport(), f );
+                    } else {
+                        JOptionPane.showMessageDialog( JythonScriptPanel.this,
+                                "Script must be from a file in a local git repository" );
+                    }
+                    
+                } catch (Exception ex) {
+                    JOptionPane.showMessageDialog( JythonScriptPanel.this, ex );
+                }
+            }
+        });
+            
+        menu.addMenuItem(  mi);
+                        
         menu.setDataSetSelector(selector);
+        
+        this.menu= menu;
 
         JythonCompletionProvider.getInstance().addPropertyChangeListener( JythonCompletionProvider.PROP_MESSAGE, new PropertyChangeListener() {
             @Override
@@ -335,7 +374,12 @@ public class JythonScriptPanel extends javax.swing.JPanel {
             getEditorPanel().setEditable(true);
         } else {
             File lfile= new File(filename);
-            boolean writable= lfile.canWrite() && !FileUtil.isParent( FileSystem.settings().getLocalCacheDir(), lfile );
+            boolean writable;
+            try {
+                writable = lfile.canWrite() && !FileUtil.isParent( FileSystem.settings().getLocalCacheDir(), lfile );
+            } catch ( SecurityException ex ) {
+                writable = false;
+            }
             getEditorPanel().setEditable(writable);
             fileNameTextField.setText( filename + ( writable ? "" : " (read only)" ) + ( dirty ? " *" : "" ) + ( containsTabs ? " TAB" : "" ) ) ;
         }
@@ -392,14 +436,15 @@ public class JythonScriptPanel extends javax.swing.JPanel {
         fileNameTextField = new javax.swing.JTextField();
 
         executeButton.setIcon(new javax.swing.ImageIcon(getClass().getResource("/org/autoplot/go.png"))); // NOI18N
-        executeButton.setText("Execute");
-        executeButton.setToolTipText("<html>Execute script.  <br>Alt modifier enters editor GUI.  <br>Ctrl modifier attempts to trace program location.  <br>Shift modifier will being up parameters gui.");
+        executeButton.setText("Run");
+        executeButton.setToolTipText("<html>Run the script.  <br>Alt enters editor GUI.  <br>Ctrl attempts to trace program location.  <br>Shift will being up parameters gui.");
         executeButton.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
                 executeButtonActionPerformed(evt);
             }
         });
 
+        saveAsButton.setFont(saveAsButton.getFont());
         saveAsButton.setText("Save As...");
         saveAsButton.setToolTipText("Save the buffer to a local file.");
         saveAsButton.addActionListener(new java.awt.event.ActionListener() {
@@ -461,10 +506,10 @@ public class JythonScriptPanel extends javax.swing.JPanel {
         layout.setHorizontalGroup(
             layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
             .add(layout.createSequentialGroup()
-                .add(executeButton, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 124, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
+                .add(executeButton, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 121, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
                 .add(interruptButton)
-                .add(7, 7, 7)
+                .add(18, 18, 18)
                 .add(saveAsButton)
                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
                 .add(openButton)
@@ -476,7 +521,7 @@ public class JythonScriptPanel extends javax.swing.JPanel {
                 .add(fileNameTextField)
                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
                 .add(caretPositionLabel, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 99, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE))
-            .add(jScrollPane2)
+            .add(jScrollPane2, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 0, Short.MAX_VALUE)
         );
         layout.setVerticalGroup(
             layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
@@ -489,7 +534,7 @@ public class JythonScriptPanel extends javax.swing.JPanel {
                     .add(newScriptButton)
                     .add(interruptButton))
                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
-                .add(jScrollPane2, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 280, Short.MAX_VALUE)
+                .add(jScrollPane2, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 279, Short.MAX_VALUE)
                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
                 .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.BASELINE)
                     .add(caretPositionLabel)
@@ -509,6 +554,7 @@ public class JythonScriptPanel extends javax.swing.JPanel {
             }
         }
         System.err.println("== Executing Script ==");
+        ScriptContext.setApplication( app );
         ScriptContext.setWindow(model);
         if ( support.file!=null ) this.setRunningScript(support.file);
         support.executeScript( evt.getModifiers() );
@@ -557,10 +603,66 @@ private void interruptButtonActionPerformed(java.awt.event.ActionEvent evt) {//G
     private org.autoplot.jythonsupport.ui.EditorTextPane textArea;
     // End of variables declaration//GEN-END:variables
 
+    /**
+     * returns the editor
+     * @return the editor
+     */
     public EditorTextPane getEditorPanel() {
         return textArea;
     }
     
+    Pattern jythonRefPattern = Pattern.compile("\\s*((\\S+\\.jy(ds)?|\\<string\\>)\\:(\\d+))");
+
+    /**
+     * return action listener listening for action commands containing source:linenum
+     * @return 
+     */
+    public ActionListener getConsoleListener() {
+        return (ActionEvent e) -> {
+            String printline= e.getActionCommand();
+            Matcher jythonMatcher= jythonRefPattern.matcher(printline);
+            if ( jythonMatcher.find() ) {
+                String jythonRef= jythonMatcher.group(1);
+                String currentFilename= this.filename==null ? "<string>" : this.filename;
+                String messageSource= jythonMatcher.group(2);
+                if ( messageSource.contains("/") ) {
+                    int iff= messageSource.lastIndexOf("/");
+                    if ( currentFilename.endsWith( messageSource.substring(iff) ) ) {
+                        int i2= messageSource.indexOf("(http");
+                        if ( i2>0 ) {
+                            messageSource= messageSource.substring(i2+1);
+                        }
+                        URI uri= DataSetURI.getResourceURI(messageSource);
+                        if ( uri!=null ) {
+                            File ff= DataSetURI.getCacheFilename(uri);
+                            if ( ff==null && uri.getScheme().equals("file")) {
+                                messageSource= uri.getPath(); 
+                            } else {
+                                messageSource= ff.toString();   
+                            }
+                        }
+                    }
+                }
+                if ( currentFilename.endsWith(messageSource) ) {
+                    int line= Integer.parseInt(jythonMatcher.group(4));
+                    try {
+                        this.support.annotationsSupport.annotateLine( line, EditorAnnotationsSupport.ANNO_CODE_HINT, printline );
+                    } catch (BadLocationException ex) {
+                        
+                    }
+                }
+                jythonRef=null;
+            }
+        };
+    }
+    
+    /**
+     * returns the JScrollPane containing the editor so that special applications can control what's visible.
+     * @return the JScrollPane containing the editor
+     */
+    public JScrollPane getScrollPane() {
+        return jScrollPane2;
+    }
     
     protected String filename = null;
 
@@ -570,9 +672,25 @@ private void interruptButtonActionPerformed(java.awt.event.ActionEvent evt) {//G
         return filename;
     }
 
-    public void setFilename(String filename) {
+    public void setFilename(final String filename) {
         String oldFilename = this.filename;
         this.filename = filename;
+        if ( filename!=oldFilename && ( oldFilename==null || !oldFilename.equals(filename) ) ) {
+            if ( filename!=null ) {
+                final File loadFile= new File(filename);
+                Runnable r= new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            loadFile(loadFile);
+                        } catch (IOException ex) {
+                            Logger.getLogger(JythonScriptPanel.class.getName()).log(Level.SEVERE, null, ex);
+                        }
+                    }
+                };
+                new Thread(r,"loadScript603").start();
+            }
+        }
         updateStatus();
         firePropertyChange(PROP_FILENAME, oldFilename, filename);
     }
@@ -585,11 +703,25 @@ private void interruptButtonActionPerformed(java.awt.event.ActionEvent evt) {//G
         return dirty;
     }
 
+    /**
+     * set the flag indicating the script has been modified.
+     * @param dirty 
+     */
     public void setDirty(boolean dirty) {
         boolean oldDirty = this.dirty;
         this.dirty = dirty;
         if ( oldDirty!=dirty ) updateStatus();
         firePropertyChange(PROP_DIRTY, oldDirty, dirty);
+    }
+    
+    /**
+     * reset the undo history.
+     */
+    public void resetUndo() {
+        Document doc= textArea.getDocument();
+        if ( doc instanceof SyntaxDocument ) {
+            ((SyntaxDocument)textArea.getDocument()).resetUndo();
+        }
     }
 
     /**
@@ -618,6 +750,30 @@ private void interruptButtonActionPerformed(java.awt.event.ActionEvent evt) {//G
     public EditorAnnotationsSupport getAnnotationsSupport() {
         return support.annotationsSupport;
     }
+    
+    /**
+     * add the menu or menu item to the editor context menu.
+     * @param menu 
+     */
+    public void addSettingsMenuItem( JMenuItem menu ) {
+        this.menu.addSettingsMenuItem(menu);
+    }    
+    
+    /**
+     * add the menu or menu item to the editor context menu.
+     * @param menu 
+     */
+    public void addMenuItem( JMenuItem menu ) {
+        this.menu.addMenuItem(menu);
+    }
+    
+    /**
+     * request that the popup menu be rebuilt.  Codes that added menu items will need to be called again.
+     */
+    public void doRebuildMenu() {
+        this.menu.doRebuildMenu();
+    }
+    
     
     /**
      * set the current script that is running.  This will prevent 

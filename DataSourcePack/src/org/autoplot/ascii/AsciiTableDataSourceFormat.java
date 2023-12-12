@@ -1,7 +1,4 @@
-/*
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
- */
+
 package org.autoplot.ascii;
 
 import java.io.File;
@@ -35,6 +32,7 @@ import org.das2.qds.BundleDataSet;
 import org.das2.qds.DDataSet;
 import org.das2.qds.DataSetOps;
 import org.das2.qds.DataSetUtil;
+import org.das2.qds.LongReadAccess;
 import org.das2.qds.MutablePropertyDataSet;
 import org.das2.qds.ops.Ops;
 
@@ -130,6 +128,15 @@ public class AsciiTableDataSourceFormat extends AbstractDataSourceFormat {
                     //timeFormatter =  new TimeDatumFormatter("%Y-%m-%dT%H:%M:%S.%{milli}Z");
                 } else if (ft.startsWith("microsec")) {
                     final TimeParser tp= TimeParser.create("$Y-$m-$dT$H:$M:$S.$(subsec,places=6)");
+                    timeFormatter= new DatumFormatter() {
+                        @Override
+                        public String format(Datum datum) {
+                            return tp.format(datum);
+                        }
+                    };
+                    //timeFormatter =  new TimeDatumFormatter("%Y-%m-%dT%H:%M:%S.%{milli}%{micro}Z");
+                } else if (ft.startsWith("nanosec")) {
+                    final TimeParser tp= TimeParser.create("$Y-$m-$dT$H:$M:$S.$(subsec,places=9)");
                     timeFormatter= new DatumFormatter() {
                         @Override
                         public String format(Datum datum) {
@@ -451,6 +458,13 @@ public class AsciiTableDataSourceFormat extends AbstractDataSourceFormat {
         QDataSet bundleDesc= (QDataSet) data.property(QDataSet.BUNDLE_1);
         QDataSet dep0 = (QDataSet) data.property(QDataSet.DEPEND_0);
 
+        if ( dep0!=null && dep0.length()>0 ) {
+            if ( Ops.equivalent( dep0, Ops.unbundle(data, 0) ) ) {
+                logger.fine("depend0 is also found in the first column, ignoring");
+                dep0= null;
+            }            
+        }
+        
         String head= getParam( "header", "" ); // could be "rich"
 
         boolean haveRich= false;
@@ -594,7 +608,7 @@ public class AsciiTableDataSourceFormat extends AbstractDataSourceFormat {
             }
         }
         
-
+        LongReadAccess lra= dep0==null ? null : dep0.capability( LongReadAccess.class );
         DatumFormatter cf0= tf;
         Units u0 = null;
         if (dep0 != null) {
@@ -617,7 +631,13 @@ public class AsciiTableDataSourceFormat extends AbstractDataSourceFormat {
             if ( mon.isCancelled() ) break;
             if (dep0 != null) {
                 assert u0!=null;
-                out.print("" + cf0.format( u0.createDatum(dep0.value(i)) ) + delim );
+                Datum t;
+                if ( lra==null ) {
+                    t= u0.createDatum( dep0.value(i) );
+                } else {
+                    t= u0.createDatum( lra.lvalue(i) );
+                }
+                out.print("" + cf0.format( t,u0 ) + delim );                                
             }
 
             int j;
@@ -674,7 +694,9 @@ public class AsciiTableDataSourceFormat extends AbstractDataSourceFormat {
         if ( u!=Units.dimensionless && !"rich".equals( head )  ) maybeOutputProperty( out, data, QDataSet.UNITS );
         
         if (dep1 != null && !"none".equals(head) ) {
-            out.print("#");
+            if ( "rich".equals( head ) ) { 
+                out.print("#"); // Autoplot must be able to read what it formats.  For rich headers we continue to comment this line.
+            }
             if (dep0 != null) {
                 String l = (String) dep0.property(QDataSet.LABEL);
                 if ( l==null ) {
@@ -716,9 +738,20 @@ public class AsciiTableDataSourceFormat extends AbstractDataSourceFormat {
 
         DatumFormatter tf= getTimeFormatter();
 
-        String dfs= getParam( "format", "" );
-        DatumFormatter df= dfs.equals("") ? u.getDatumFormatterFactory().defaultFormatter() : getDataFormatter( dfs, u );
+        DatumFormatter df;
+        String format= getParam( "format", "" );
+        if ( format.equals("") ) {
+            String dfs= (String)data.property(QDataSet.FORMAT);
+            if ( dfs!=null && dfs.trim().length()>0 ) {
+                df= getDataFormatter( dfs, u );
+            } else {
+                df= u.getDatumFormatterFactory().defaultFormatter();
+            }
+        } else {
+            df= getDataFormatter(format, u );
+        }
 
+        LongReadAccess lra= dep0==null ? null : dep0.capability( LongReadAccess.class );
         DatumFormatter cf0= dep0==null ? null : ( UnitsUtil.isTimeLocation(u0) ? tf : df );
         DatumFormatter cf1= UnitsUtil.isTimeLocation(u) ? tf : df;
 
@@ -729,7 +762,13 @@ public class AsciiTableDataSourceFormat extends AbstractDataSourceFormat {
                 assert dep0!=null;
                 assert cf0!=null;
                 assert u0!=null;
-                out.print("" + cf0.format( u0.createDatum(dep0.value(i)),u0 ) + delim );
+                Datum t;
+                if ( lra==null ) {
+                    t= u0.createDatum( dep0.value(i) );
+                } else {
+                    t= u0.createDatum( lra.lvalue(i) );
+                }
+                out.print("" + cf0.format( t,u0 ) + delim );                
             }
 
             int j;
@@ -848,11 +887,11 @@ public class AsciiTableDataSourceFormat extends AbstractDataSourceFormat {
 
         l = dataSetLabel( data, "data" );
         buf.append( delim ).append( l);
+        
         u= (Units) data.property(QDataSet.UNITS);
         if ( u==null ) u= Units.dimensionless;
 
         if (  !"rich".equals( head ) ) {
-            maybeOutputProperty(out, data, QDataSet.TITLE);
             if ( u!=Units.dimensionless ) maybeOutputProperty( out, data, QDataSet.UNITS );
         }
         
@@ -901,8 +940,19 @@ public class AsciiTableDataSourceFormat extends AbstractDataSourceFormat {
         }
         
         String format= getParam( "format", "" );
-        DatumFormatter df= format.equals("") ? u.getDatumFormatterFactory().defaultFormatter() : getDataFormatter(format, u );
+        DatumFormatter df;
+        if ( format.equals("") ) {
+            String dfs= (String)data.property(QDataSet.FORMAT);
+            if ( dfs!=null && dfs.trim().length()>0 ) {
+                df= getDataFormatter( dfs, u );
+            } else {
+                df= u.getDatumFormatterFactory().defaultFormatter();
+            }
+        } else {
+            df= getDataFormatter(format, u );
+        }
 
+        LongReadAccess lra= dep0==null ? null : dep0.capability( LongReadAccess.class );
         DatumFormatter cf0= dep0==null ? null : ( UnitsUtil.isTimeLocation(u0) ? tf : df );
         DatumFormatter cf1= UnitsUtil.isTimeLocation(u) ? tf : df;
         for (int i = 0; i < data.length(); i++ ) {
@@ -912,7 +962,13 @@ public class AsciiTableDataSourceFormat extends AbstractDataSourceFormat {
             if (dep0 != null) {
                 assert cf0!=null;
                 assert u0!=null;
-                out.print("" + cf0.format( u0.createDatum(dep0.value(i)),dep0units ) + delim );
+                Datum t;
+                if ( lra==null ) {
+                    t= u0.createDatum( dep0.value(i) );
+                } else {
+                    t= u0.createDatum( lra.lvalue(i) );
+                }
+                out.print("" + cf0.format( t,dep0units ) + delim );
             }
 
             out.print( cf1.format(u.createDatum(data.value(i)), u) );
@@ -938,6 +994,7 @@ public class AsciiTableDataSourceFormat extends AbstractDataSourceFormat {
     public void formatData( String uri, QDataSet data, ProgressMonitor mon) throws IOException {
 
         setUri(uri);
+        maybeMkdirs();
         
         String doDep= getParam("doDep", "");
         if ( doDep.length()>0 && doDep.toUpperCase().charAt(0)=='F' ) {

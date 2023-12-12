@@ -50,7 +50,10 @@ import org.das2.qds.DataSetUtil;
 import org.das2.qds.QDataSet;
 import org.das2.qds.SemanticOps;
 import org.autoplot.datasource.URISplit;
+import org.autoplot.tca.DataSourceTcaSource;
 import org.autoplot.util.TickleTimer;
+import org.das2.graph.DasDevicePosition;
+import org.das2.qds.QFunction;
 import org.das2.qds.ops.Ops;
 
 /**
@@ -58,7 +61,7 @@ import org.das2.qds.ops.Ops;
  * and layout changes.
  * @author jbf
  */
-public class PlotController extends DomNodeController {
+public final class PlotController extends DomNodeController {
 
     Application dom;
     Plot plot;
@@ -100,7 +103,7 @@ public class PlotController extends DomNodeController {
         this.dom = dom;
         this.plot = plot;
         this.plot.addPropertyChangeListener( Plot.PROP_TITLE, labelListener );
-        this.plot.addPropertyChangeListener( Plot.PROP_TICKS_URI, ticksURIListener );
+        this.plot.addPropertyChangeListener(Plot.PROP_TICKS_URI, ticksURIListener );
         this.plot.addPropertyChangeListener( Plot.PROP_ID, idListener );
         this.plot.getXaxis().addPropertyChangeListener( autorangeListener );
         this.plot.getYaxis().addPropertyChangeListener( autorangeListener );
@@ -129,11 +132,13 @@ public class PlotController extends DomNodeController {
                 if ( col==null ) col= dom.controller.getCanvas().marginColumn;
                 DasColumn dasColumn= col.controller.getDasColumn();
                 dasPlot.setColumn(dasColumn);
+                DasColumn oldColorbarColumn= plot.getZaxis().getController().getDasAxis().getColumn();
                 plot.getXaxis().getController().getDasAxis().setColumn(dasColumn);
                 plot.getYaxis().getController().getDasAxis().setColumn(dasColumn);
                 // need to remove old column if no one is listening to it
                 DasColumn c= DasColorBar.getColorBarColumn(dasColumn);
-                dasColorBar.setColumn(c);
+                dasColorBar.setColumn(c); //TODO verify updateListeners are removed.
+                oldColorbarColumn.removeListeners();
             }
         }
 
@@ -193,17 +198,42 @@ public class PlotController extends DomNodeController {
          public void propertyChange(PropertyChangeEvent evt) {
             LoggerManager.logPropertyChangeEvent(evt,"ticksURIListener");  
             if ( evt.getPropertyName().equals(Plot.PROP_TICKS_URI) ) {
-                if ( ((String)evt.getNewValue()).length()>0 ) {
-                    logger.log(Level.FINE, "prop_ticks_uri={0}", evt.getNewValue());
-                    String dasAddress= "class:org.autoplot.tca.UriTcaSource:" + evt.getNewValue();
-                    //TODO: check for time series browse here and set to time axis.
-                    plot.getXaxis().getController().getDasAxis().setDataPath(dasAddress);
-                    plot.getXaxis().getController().getDasAxis().setDrawTca(true);
-                    plot.getXaxis().setLabel("%{RANGE}");
-                } else {
+                String control= (String) evt.getNewValue();
+                if ( control.length()==0 ) {
                     plot.getXaxis().getController().getDasAxis().setDataPath("");
                     plot.getXaxis().getController().getDasAxis().setDrawTca(false);
                     plot.getXaxis().setLabel("");
+                } else {
+                    if ( Ops.isSafeName(control) ) { // hey wow it's a data source
+                        DomNode n= dom.getElementById(control);
+                        if ( n instanceof DataSourceFilter ) {
+                            DataSourceFilter dsf= (DataSourceFilter)n;
+                            QFunction f;
+                            try {
+                                f = new DataSourceTcaSource(dsf);
+                                plot.getXaxis().getController().getDasAxis().setTcaFunction(f);
+                                plot.getXaxis().getController().getDasAxis().setDrawTca(true);
+                                plot.getXaxis().setLabel("%{RANGE}");
+                            } catch (Exception ex) {
+                                plot.getXaxis().getController().getDasAxis().setDataPath("");
+                                plot.getXaxis().getController().getDasAxis().setDrawTca(false);
+                                plot.getXaxis().setLabel("Error with init using "+control);
+                            }
+                            
+                        } else {
+                            plot.getXaxis().getController().getDasAxis().setDataPath("");
+                            plot.getXaxis().getController().getDasAxis().setDrawTca(false);
+                            plot.getXaxis().setLabel("node must be data source");
+                        }
+                        
+                    } else {
+                        logger.log(Level.FINE, "prop_ticks_uri={0}", evt.getNewValue());
+                        String dasAddress= "class:org.autoplot.tca.UriTcaSource:" + evt.getNewValue();
+                        //TODO: check for time series browse here and set to time axis.
+                        plot.getXaxis().getController().getDasAxis().setDataPath(dasAddress);
+                        plot.getXaxis().getController().getDasAxis().setDrawTca(true);
+                        plot.getXaxis().setLabel("%{RANGE}");
+                    }
                 }
             }
          }
@@ -352,7 +382,8 @@ public class PlotController extends DomNodeController {
      * @param ds the dataset to find next or previous focus.
      */
     private void updateNextPrevious( final DatumRange dr0, QDataSet ds ) {
-        logger.log(Level.FINE, "updateRadius: {0}", dr0);
+
+        logger.log(Level.FINE, "updateNextPrevious: {0}", dr0);
         if ( ds!=null && SemanticOps.isBundle(ds) ) {
             logger.log(Level.FINE, "unbundling: {0}", ds);
             QDataSet xds= SemanticOps.xtagsDataSet(ds);
@@ -363,119 +394,49 @@ public class PlotController extends DomNodeController {
             }
             ds= Ops.link( xds, ds );
         }
-                        
-        DatumRange dr= dr0;
-        int count; // limits the number of steps we can take.
-        int STEP_LIMIT=10000;
-        if ( ds!=null &&  ds.rank()>0 && UnitsUtil.isIntervalOrRatioMeasurement(SemanticOps.getUnits(ds) ) ) {
-            try {
-                QDataSet bounds= SemanticOps.bounds(ds).slice(0);
-                if ( !validBounds(bounds) || !SemanticOps.getUnits(bounds).isConvertibleTo(dr.getUnits() ) || !DataSetUtil.asDatumRange(bounds).contains(dr) ) {
-                    dr= dr.next();
-                } else {
-                    DatumRange limit= DataSetUtil.asDatumRange(bounds);
-                    if ( !DatumRangeUtil.isAcceptable(limit,false) ) {
-                        throw new IllegalArgumentException("limit is not acceptable"); // see 10 lines down
-                    }
-                    limit= DatumRangeUtil.union( limit, dr0 );
-                    dr= dr.next();
-                    count= 0;
-                    while ( dr.intersects(limit) ) {
-                        count++;
-                        if ( count>STEP_LIMIT ) {
-                            logger.warning("step limit in nextprev https://sourceforge.net/p/autoplot/bugs/1209/");
-                            dr= dr0.next();
-                            break;
-                        }
-                        QDataSet ds1= SemanticOps.trim( ds, dr, null);
-                        if ( ds1==null || ds1.length()==0 ) {
-                            dr= dr.next();
-                        } else {
-                            //QDataSet box= SemanticOps.bounds(ds1);
-                            //Datum min= DataSetUtil.asDatum( box.slice(0).slice(0) );
-                            //dr= DatumRangeUtil.union( min, min.add(dr.width()) );
-                            //dr= DatumRangeUtil.rescale( dr, -0.05, 0.95 );
-                            logger.log(Level.FINE, "found next data after {0} steps", count);
-                            break;
-                        }
-                    }
-                }
-            } catch ( InconvertibleUnitsException ex ) {
-                logger.log(Level.FINE, ex.getMessage() );
-                dr= dr.next();
-            } catch ( IllegalArgumentException ex ) {
-                logger.log(Level.FINE, ex.getMessage() );
-                dr= dr.next();
-            }
-        } else {
-            dr= dr.next();
-        }
-        scanNextRange= dr;
         
-        dr= dr0;
-        if ( ds!=null &&  ds.rank()>0 ) {
-            try {
-                QDataSet bounds= SemanticOps.bounds(ds).slice(0);
-                if ( !validBounds(bounds) || !SemanticOps.getUnits(bounds).isConvertibleTo(dr.getUnits() ) || !DataSetUtil.asDatumRange(bounds).contains(dr) ) {
-                    dr= dr.previous();
-                } else {
-                    DatumRange limit= DataSetUtil.asDatumRange(bounds);
-                    if ( !DatumRangeUtil.isAcceptable(limit,false) ) {
-                        throw new IllegalArgumentException("limit is not acceptable"); // see 10 lines down
-                    }
-                    limit= DatumRangeUtil.union( limit, dr0 );
-                    dr= dr.previous();
-                    count= 0;
-                    while ( dr.intersects(limit) ) {
-                        count++;
-                        if ( count>STEP_LIMIT ) {
-                            logger.warning("step limit in nextprev https://sourceforge.net/p/autoplot/bugs/1209/");
-                            dr= dr0.previous();
-                            break;
-                        }
-                        QDataSet ds1= SemanticOps.trim( ds, dr, null);
-                        if ( ds1==null || ds1.length()==0 ) {
-                            dr= dr.previous();
-                        } else {
-                            //There's a bug with this where scan is the previous instead of step, and this makes scan quite different than step, since it's non-integer
-
-                            //QDataSet box= SemanticOps.bounds(ds1);
-                            //Datum max= DataSetUtil.asDatum( box.slice(0).slice(1) );
-                            //dr= DatumRangeUtil.union( max.subtract(dr.width()), max );
-                            //dr= DatumRangeUtil.rescale( dr, 0.05, 1.05 );
-                            logger.log(Level.FINE, "found previous data after {0} steps", count);
-                            break;
-                        }
-                    }
-                }
-            } catch ( InconvertibleUnitsException ex ) {
-                logger.log(Level.FINE, ex.getMessage() );
-                dr= dr.previous();
-            } catch ( IllegalArgumentException ex ) {
-                logger.log(Level.FINE, ex.getMessage() );
-                dr= dr.previous();
-            }
+        if ( ds!=null && ( ds.rank()==0 || ds.length()>10000000 ) ) {
+            logger.fine("simple next and previous used because data is very large");
+            scanNextRange= dr0.next();
+            scanPrevRange= dr0.previous();
+            
         } else {
-            dr= dr.previous();
+            scanNextRange= DataSetUtil.getNextInterval(ds, dr0);
+            scanPrevRange= DataSetUtil.getPreviousInterval(ds, dr0);
         }
-        scanPrevRange= dr;
+        
+        double rescaleFactor;
+        rescaleFactor= scanNextRange.width().divide(dr0.width()).value();
+        if ( rescaleFactor<0.1 || rescaleFactor>10 ) {
+            logger.log(Level.WARNING, "scan next fails to find acceptable range: {0} -> {1} rescaleFactor={2}", new Object[]{dr0, scanNextRange, rescaleFactor});
+            scanNextRange= dr0.next();
+        }
+        rescaleFactor= scanPrevRange.width().divide(dr0.width()).value();
+        if ( rescaleFactor<0.1 || rescaleFactor>10 ) {
+            logger.log(Level.WARNING, "scan prev fails to find acceptable range: {0} -> {1} rescaleFactor={2}", new Object[]{dr0, scanPrevRange, rescaleFactor});
+            scanPrevRange= dr0.previous();
+        }
         
         Runnable run= new Runnable() {
             @Override
             public void run() {
+                Plot p= getPlot();
+                if ( p==null ) return;
+                Axis a= p.getXaxis();
+                if ( a==null ) return;
+                AxisController c= a.getController();
+                if ( c==null ) return;
+                DasAxis da= c.getDasAxis();
+                if ( da==null ) return;
                 if ( scanNextRange.min().equals(dr0.max()) ) {
-                    getPlot().getXaxis().getController().getDasAxis()
-                            .setNextActionLabel("step >>","<html>step to next interval<br>"+scanNextRange);
+                    da.setNextActionLabel("step >>","<html>step to next interval<br>"+scanNextRange);
                 } else {
-                    getPlot().getXaxis().getController().getDasAxis()
-                            .setNextActionLabel("scan >>","<html>scan to <br>"+scanNextRange);
+                    da.setNextActionLabel("scan >>","<html>scan to <br>"+scanNextRange);
                 }
                 if ( scanPrevRange.max().equals(dr0.min()) ) {
-                    getPlot().getXaxis().getController().getDasAxis()
-                            .setPreviousActionLabel("<< step","<html>step to previous interval<br>"+scanPrevRange);
+                    da.setPreviousActionLabel("<< step","<html>step to previous interval<br>"+scanPrevRange);
                 } else {
-                    getPlot().getXaxis().getController().getDasAxis()
-                            .setPreviousActionLabel("<< scan","<html>scan to <br>"+scanPrevRange);
+                    da.setPreviousActionLabel("<< scan","<html>scan to <br>"+scanPrevRange);
                 }
             }
         };
@@ -530,6 +491,8 @@ public class PlotController extends DomNodeController {
         }
     }
     
+    PropertyChangeListener xaxisRangeListener;
+            
     private void createDasPeerImmediately( Canvas canvas, Row domRow, Column domColumn ) {
                 
         Application application= dom;
@@ -554,7 +517,7 @@ public class PlotController extends DomNodeController {
             }
         });
         
-        xaxis.addPropertyChangeListener( DasAxis.PROPERTY_DATUMRANGE, new PropertyChangeListener() {
+        xaxisRangeListener= new PropertyChangeListener() {
             @Override
             public void propertyChange(PropertyChangeEvent evt) {
                 LoggerManager.logPropertyChangeEvent(evt,"xaxis datumrange");  
@@ -562,9 +525,10 @@ public class PlotController extends DomNodeController {
                     nextPrevTickleTimer.tickle();
                 }
             }
-        });
-        
-        xaxis.setNextAction( "scan", new AbstractAction( "scannext" ) {
+        };
+        xaxis.addPropertyChangeListener( DasAxis.PROPERTY_DATUMRANGE, xaxisRangeListener );
+
+        AbstractAction nextListener= new AbstractAction( "scannext" ) {
             @Override
             public void actionPerformed(ActionEvent e) {
                 LoggerManager.logGuiEvent(e);
@@ -582,9 +546,10 @@ public class PlotController extends DomNodeController {
                     xaxis.setDatumRange(dr);
                 }
             }
-        });
+        };
+        xaxis.setNextAction( "scan", nextListener );
 
-        xaxis.setPreviousAction( "scan", new AbstractAction( "scanprev" ) {
+        AbstractAction prevListener= new AbstractAction( "scanprev" ) {
             @Override
             public void actionPerformed(ActionEvent e) {
                 LoggerManager.logGuiEvent(e);                
@@ -606,7 +571,8 @@ public class PlotController extends DomNodeController {
                     xaxis.setDatumRange(dr);
                 }
             }
-        });
+        };
+        xaxis.setPreviousAction( "scan", prevListener );
 
         if (UnitsUtil.isTimeLocation(xaxis.getUnits())) {
             xaxis.setUserDatumFormatter(new DateTimeDatumFormatter(dom.getController().getApplication().getOptions().isDayOfYear() ? DateTimeDatumFormatter.OPT_DOY : 0 )); //See kludge in TimeSeriesBrowseController
@@ -630,7 +596,8 @@ public class PlotController extends DomNodeController {
         final DasPlot dasPlot1 = new DasPlot(xaxis, yaxis);
 
         dasPlot1.setPreviewEnabled(true);
-
+        dasPlot1.setDrawGridOver(false);
+        
         DatumRange colorRange = new DatumRange(0, 100, Units.dimensionless);
         DasColorBar colorbar = new DasColorBar(colorRange.min(), colorRange.max(), false);
         colorbar.addFocusListener(application.controller.focusAdapter);
@@ -707,6 +674,13 @@ public class PlotController extends DomNodeController {
         dasPlot1.getYAxis().addFocusListener(ac.focusAdapter);
         dasPlot1.addPropertyChangeListener(DasPlot.PROP_FOCUSRENDERER, ac.rendererFocusListener);
 
+        ac.bind( this.plot, Plot.PROP_ISOTROPIC, dasPlot1, DasPlot.PROP_ISOTROPIC );
+        ac.bind( this.plot, Plot.PROP_DISPLAYTITLE, dasPlot1, DasPlot.PROP_DISPLAYTITLE );
+        ac.bind( this.plot, Plot.PROP_DISPLAYLEGEND, dasPlot1, DasPlot.PROP_DISPLAYLEGEND );
+        ac.bind( this.plot, Plot.PROP_FONTSIZE, dasPlot1, DasPlot.PROP_FONTSIZE );        
+        ac.bind( this.plot, Plot.PROP_LEGENDFONTSIZE, dasPlot1, DasPlot.PROP_LEGENDFONTSIZE );        
+        
+        ac.bind(application.getOptions(), Options.PROP_LOGMESSAGETIMEOUTSEC, dasPlot1, DasPlot.PROP_LOG_TIMEOUT_SEC );
         ac.bind(application.getOptions(), Options.PROP_DRAWGRID, dasPlot1, "drawGrid");
         ac.bind(application.getOptions(), Options.PROP_DRAWMINORGRID, dasPlot1, "drawMinorGrid");
         ac.bind(application.getOptions(), Options.PROP_FLIPCOLORBARLABEL, this.plot.getZaxis().getController().dasAxis, "flipLabel");
@@ -714,8 +688,15 @@ public class PlotController extends DomNodeController {
         ac.bind(application.getOptions(), Options.PROP_TICKLEN, dasPlot1.getXAxis(), "tickLength");
         ac.bind(application.getOptions(), Options.PROP_TICKLEN, dasPlot1.getYAxis(), "tickLength");
         ac.bind(application.getOptions(), Options.PROP_TICKLEN, colorbar, "tickLength");
+        ac.bind(application.getOptions(), Options.PROP_OPPOSITEAXISVISIBLE, dasPlot1.getXAxis(), DasAxis.PROP_OPPOSITE_AXIS_VISIBLE );
+        ac.bind(application.getOptions(), Options.PROP_OPPOSITEAXISVISIBLE, dasPlot1.getYAxis(), DasAxis.PROP_OPPOSITE_AXIS_VISIBLE );
+        ac.bind(application.getOptions(), Options.PROP_LINE_THICKNESS, dasPlot1.getXAxis(), DasAxis.PROP_LINETHICKNESS );
+        ac.bind(application.getOptions(), Options.PROP_LINE_THICKNESS, dasPlot1.getYAxis(), DasAxis.PROP_LINETHICKNESS );
+        ac.bind(application.getOptions(), Options.PROP_LINE_THICKNESS, colorbar, DasAxis.PROP_LINETHICKNESS );
+        ac.bind(application.getOptions(), Options.PROP_LINE_THICKNESS, dasPlot1, DasAxis.PROP_LINETHICKNESS );
         ac.bind(application.getOptions(), Options.PROP_MULTILINETEXTALIGNMENT, dasPlot1, DasPlot.PROP_MULTILINETEXTALIGNMENT);
-
+        ac.bind(application.getOptions(), Options.PROP_PRINTINGLOGLEVEL, dasPlot1, DasPlot.PROP_PRINTINGLOGLEVEL );
+        ac.bind(application.getOptions(), Options.PROP_DISPLAYLOGLEVEL, dasPlot1, DasPlot.PROP_LOG_LEVEL );
         ac.bind(this.plot, Plot.PROP_LEGENDPOSITION, dasPlot1, DasPlot.PROP_LEGENDPOSITION );
         ac.bind(this.plot, Plot.PROP_DISPLAYLEGEND, dasPlot1, DasPlot.PROP_DISPLAYLEGEND );
 
@@ -767,6 +748,9 @@ public class PlotController extends DomNodeController {
      */
     private Axis getDomAxis( DasAxis axis ) {
         Axis domAxis;
+        if ( plot.xaxis.controller==null ) {
+            return null;
+        }
         if ( plot.xaxis.controller.dasAxis == axis ) {
             domAxis= plot.xaxis;
         } else if ( plot.yaxis.controller.dasAxis==axis ) {
@@ -790,6 +774,26 @@ public class PlotController extends DomNodeController {
         }
     }
 
+    private PropertyChangeListener plotListener= new PropertyChangeListener() {
+        @Override
+        public void propertyChange(PropertyChangeEvent evt) {
+            if ( evt.getPropertyName().equals(Plot.PROP_COLORBARCOLUMNPOSITION) ) {
+                try {
+                    DasDevicePosition.parseLayoutStr( dasColorBar.getColumn(), (String)evt.getNewValue() );
+                } catch ( ParseException ex ) {
+                    logger.log(Level.WARNING, "unable to parse value: {0}", evt.getNewValue());
+                    String val= DasDevicePosition.formatLayoutStr( dasColorBar.getColumn() );
+                    if ( !val.equals(evt.getNewValue()) ) {
+                        plot.setColorbarColumnPosition(val);
+                    }
+                }
+            }
+            if ( titleConverter==null ) return;
+            dasPlot.setTitle( (String)titleConverter.convertForward(plot.getTitle()) );
+        }
+    };
+            
+            
     private PropertyChangeListener listener = new PropertyChangeListener() {
         @Override
         public String toString() {
@@ -861,18 +865,23 @@ public class PlotController extends DomNodeController {
     private Axis resolveSettings( Axis a1, Axis a2 ) {
         Axis result;
         if ( !a1.isAutoRange() && a2.isAutoRange() ) {
+            logger.log(Level.FINER, "resolveSettings axis a1 ({0}) is not autorange", new Object[]{a1.range.getUnits()});
             return a2;
         } else if ( !a2.isAutoRange() && a1.isAutoRange() ) {
+            logger.log(Level.FINER, "resolveSettings axis a2 ({0}) is not autorange", new Object[]{a2.range.getUnits()});
             return a1;
         }
         result = new Axis();
         result.range = DatumRangeUtil.union( a1.range, a2.range );
+        logger.log(Level.FINER, "resolveSettings range {0} {1} -> {2}", new Object[]{a1.range, a2.range, result.range });
         if ( a1.log==a2.log ) {
             result.log= a1.log;
         } else {
             result.log= result.range.min().doubleValue(result.range.getUnits()) > 0;
         }
         result.autoRange= a1.autoRange && a2.isAutoRange();
+        logger.log(Level.FINER, "resolveSettings range {0} {1} -> {2}", new Object[]{a1.range, a2.range, result.range });
+        
         return result;
     }
     
@@ -884,7 +893,7 @@ public class PlotController extends DomNodeController {
      */
     private Axis reluctantRanging( Axis axis, Axis newSettings ) {
         try {
-            if ( axis.getRange().rescale(-1,2).intersects( newSettings.getRange() ) ) {
+            if ( DatumRangeUtil.rescale( axis.getRange(),-1,2 ).intersects( newSettings.getRange() ) ) {
                 double d1= DatumRangeUtil.normalize( axis.getRange(), newSettings.getRange().min(), axis.isLog() );
                 double d2= DatumRangeUtil.normalize( axis.getRange(), newSettings.getRange().max(), axis.isLog() );
                 if ( Math.abs(d2-d1)>0.1 ) {
@@ -901,30 +910,53 @@ public class PlotController extends DomNodeController {
     }
     
     /**
-     * implement hints like width=40&includeZero=T.  
+     * implement hints like width=40&amp;includeZero=T.  
      * <blockquote><pre>
      * includeZero   T or F     make sure that zero is within the result.
+     * min           0          make zero be the minimum value.
+     * max           100        make 100 be the maximum value
      * width         30nT       use this width.  This is a formatted datum which 
      *                          is parsed with the units of the axis, or with the number of cycles for log.
      * log           T or F     force log or linear axis
      * widths        30nT,300nT,3000nT   use one of these widths
      * center        0          constrain the center to be this location
+     * extend        10         percent to extend the range beyond the min and the max, so the width is this percent more.  This is done after other constraints.
+     *               0,10       percent the max by ten percent.
      * (not yet) reluctant     T or F     use the old range if it is acceptable.
      * </pre></blockquote>
-
+     * Width or width imply that extend=0, but extend=10 may become the default.
      * @param axis the axis to which we are applying the hints.
-     * @param hintsString the string, ampersand-delimited.
+     * @param hintsString the string, ampersand-delimited; or null when no hints should be applied.
      */
-    private void doHints( Axis axis, String hintsString ) {
+    public static void doHints( Axis axis, String hintsString ) {
         Map<String,String> hints= URISplit.parseParams(hintsString);
         DatumRange range=axis.getRange();
         boolean log= axis.isLog();
 
         boolean includeZero= "T".equals(hints.get("includeZero"));
+        Datum minValue= null;
+        {
+            String s= hints.get("min");
+            if ( s!=null ) try {
+                minValue= axis.getRange().getUnits().parse(s);
+            } catch (ParseException ex) {
+                logger.log(Level.SEVERE, null, ex);
+            }
+        }
+        Datum maxValue= null;
+        {
+            String s= hints.get("max");
+            if ( s!=null ) try {
+                maxValue= axis.getRange().getUnits().parse(s);
+            } catch (ParseException ex) {
+                logger.log(Level.SEVERE, null, ex);
+            }
+        }
         String width= hints.get("width");
         String widths= hints.get("widths");
         String center= hints.get("center");
         String logHint= hints.get("log");
+        String extend= hints.get("extend");
 
         if ( logHint!=null && UnitsUtil.isRatioMeasurement( axis.getRange().getUnits() ) ) {
             if ( logHint.equals("T") ) {
@@ -942,16 +974,29 @@ public class PlotController extends DomNodeController {
         
         if ( width!=null ) {
             Units u= range.getUnits().getOffsetUnits();
+            Datum currentCenter=null;
+            if ( center!=null ) {
+                try {
+                    currentCenter= u.parse(center);
+                } catch (ParseException ex) {
+                    logger.log( Level.WARNING, null, ex );
+                }
+            }
+            if ( currentCenter==null ) {
+                if ( log ) {
+                    currentCenter= DatumRangeUtil.rescaleLog( range, 0.5, 0.5 ).min();
+                } else {
+                    currentCenter= DatumRangeUtil.rescale( range, 0.5, 0.5 ).min();
+                }
+            }
             try {
                 if ( log ) {
                     Datum w= Units.log10Ratio.parse(width);
                     w= w.divide(2);
-                    Datum currentCenter= DatumRangeUtil.rescaleLog( range, 0.5, 0.5 ).min();
                     range= new DatumRange( currentCenter.divide( Math.pow(10,w.value()) ), currentCenter.multiply( Math.pow(10,w.value()) ) );
                 } else {
                     Datum w= u.parse(width);
                     w= w.divide(2);
-                    Datum currentCenter= DatumRangeUtil.rescale( range, 0.5, 0.5 ).min();
                     range= new DatumRange( currentCenter.subtract(w), currentCenter.add(w) );
                 }
             } catch (ParseException | InconvertibleUnitsException ex ) {
@@ -1000,27 +1045,73 @@ public class PlotController extends DomNodeController {
                 }
             }
         }
+        
+        if ( minValue!=null && UnitsUtil.isRatioMeasurement(range.getUnits() ) ) {
+            if ( widths==null && width==null ) {
+                if ( range.max().gt(minValue) ) {
+                    range= DatumRange.newRange( minValue, range.max() );
+                }
+            } else {
+                Datum w= range.width();
+                range= DatumRange.newRange( minValue, minValue.add(w) );
+            }
+        }
+        
+        if ( maxValue!=null && UnitsUtil.isRatioMeasurement(range.getUnits() ) ) {
+            if ( widths==null && width==null ) {
+                if ( range.min().lt(maxValue) ) {
+                    range= DatumRange.newRange( range.min(), maxValue );
+                }
+            } else {
+                Datum w= range.width();
+                range= DatumRange.newRange( maxValue.subtract(w), maxValue );
+            }
+        }
+
         if ( center!=null ) {
             Units u= range.getUnits();
             try {
                 if ( log ) {
-                    double w= Math.log10( range.max().divide(range.min() ).value() );
-                    w= w/2;
-                    Datum currentCenter;
-                    currentCenter = u.parse(center);
+                    Datum currentCenter = u.parse(center);
+                    double w1= Math.abs( Math.log10( range.min().divide(currentCenter).value() ) );
+                    double w2= Math.abs( Math.log10( range.max().divide(currentCenter).value() ) );
+                    double w= w1>=w2 ? w1 : w2;
                     range= new DatumRange( currentCenter.divide( Math.pow(10,w) ), currentCenter.multiply( Math.pow(10,w) ) );
                 } else {
-                    Datum w= range.width();
-                    w= w.divide(2);
                     Datum currentCenter= u.parse(center);
+                    Datum w1= range.min().subtract(currentCenter).abs();
+                    Datum w2= range.max().subtract(currentCenter).abs();
+                    Datum w= w1.ge(w2) ? w1 : w2;
                     range= new DatumRange( currentCenter.subtract(w), currentCenter.add(w) );
                 }
             } catch (ParseException | InconvertibleUnitsException ex ) {
                 logger.log(Level.WARNING, null, ex);
             }              
         }
-        axis.setRange( range );
-        axis.setLog(log);
+        
+        if ( extend!=null ) {
+            double dextendmin,dextendmax;
+            if ( extend.contains(",") ) {
+                String[] ss= extend.split(",");
+                dextendmin= Double.parseDouble(ss[0])/100;
+                dextendmax= Double.parseDouble(ss[1])/100;
+            } else {
+                dextendmax= dextendmin= Double.parseDouble(extend)/100/2;
+            }
+            if ( log ) {
+                range= DatumRangeUtil.rescaleLog( range, 0-dextendmin, 1+dextendmax );
+            } else {
+                range= DatumRangeUtil.rescale( range, 0-dextendmin, 1+dextendmax );
+            }
+        }
+        
+        AxisController ac= axis.getController();
+        if ( ac!=null ) {
+            ac.setRangeAutomatically( range, log );
+        } else {
+            axis.setRange(range);
+            axis.setLog(log);
+        }
     }
     
     /**
@@ -1030,8 +1121,12 @@ public class PlotController extends DomNodeController {
      * @param x reset zoom in the x dimension.
      * @param y reset zoom in the y dimension.
      * @param z reset zoom in the z dimension.
+     * @see AutoplotUtil#resetZoomX(org.autoplot.dom.Application, org.autoplot.dom.Plot) 
+     * @see AutoplotUtil#resetZoomY(org.autoplot.dom.Application, org.autoplot.dom.Plot) 
+     * @see AutoplotUtil#resetZoomZ(org.autoplot.dom.Application, org.autoplot.dom.Plot) 
      */
     public void resetZoom(boolean x, boolean y, boolean z) {
+        logger.entering("PlotController","resetZoom",new Object[]{x,y,z});
         List<PlotElement> elements = dom.controller.getPlotElementsFor(plot);
         if ( elements.isEmpty() ) return;
         Plot newSettings = null;
@@ -1042,6 +1137,46 @@ public class PlotController extends DomNodeController {
 //        for ( PlotElement p: elements ) {
 //            System.err.println( p  +  " y= " + p.getPlotDefaults().getYaxis().getRange() );
 //        }
+
+        boolean alsoBindings= false; // See https://sourceforge.net/p/autoplot/bugs/2149/
+        if ( alsoBindings ) {
+            List<BindingModel> plots= DomUtil.findBindings( dom, plot.getXaxis(), Axis.PROP_RANGE );
+            for ( BindingModel b : plots ) {
+                Plot other;
+                if ( b.getDstId().equals( plot.getXaxis().getId() ) ) {
+                    Axis oa= (Axis)DomUtil.getElementById( dom, b.getSrcId() );
+                    other= (Plot)DomUtil.getPlotForAxis( dom, oa );
+                } else {
+                    Axis oa= (Axis)DomUtil.getElementById( dom, b.getDstId() );
+                    other= (Plot)DomUtil.getPlotForAxis( dom, oa );
+                }
+                elements.addAll( DomUtil.getPlotElementsFor( dom, other ) );
+            }
+            plots= DomUtil.findBindings( dom, plot.getYaxis(), Axis.PROP_RANGE );
+            for ( BindingModel b : plots ) {
+                Plot other;
+                if ( b.getDstId().equals( plot.getYaxis().getId() ) ) {
+                    Axis oa= (Axis)DomUtil.getElementById( dom, b.getSrcId() );
+                    other= (Plot)DomUtil.getPlotForAxis( dom, oa );
+                } else {
+                    Axis oa= (Axis)DomUtil.getElementById( dom, b.getDstId() );
+                    other= (Plot)DomUtil.getPlotForAxis( dom, oa );
+                }
+                elements.addAll( DomUtil.getPlotElementsFor( dom, other ) );
+            }
+            plots= DomUtil.findBindings( dom, plot.getZaxis(), Axis.PROP_RANGE );
+            for ( BindingModel b : plots ) {
+                Plot other;
+                if ( b.getDstId().equals( plot.getZaxis().getId() ) ) {
+                    Axis oa= (Axis)DomUtil.getElementById( dom, b.getSrcId() );
+                    other= (Plot)DomUtil.getPlotForAxis( dom, oa );
+                } else {
+                    Axis oa= (Axis)DomUtil.getElementById( dom, b.getDstId() );
+                    other= (Plot)DomUtil.getPlotForAxis( dom, oa );
+                }
+                elements.addAll( DomUtil.getPlotElementsFor( dom, other ) );
+            }
+        }
 
         boolean warnedAboutUnits= false;
         for (PlotElement p : elements) {
@@ -1087,6 +1222,7 @@ public class PlotController extends DomNodeController {
             plot.getXaxis().setAutoRange(true);
             plot.getYaxis().setAutoRange(true);
             plot.getZaxis().setAutoRange(true);
+            logger.exiting( "PlotController","resetZoom");
             return;
         }
 
@@ -1140,6 +1276,11 @@ public class PlotController extends DomNodeController {
             plot.getZaxis().setAutoRange(true);
             plot.getZaxis().getController().dasAxis.setScanRange(  newAxis.getRange() );
         }
+        
+        logger.log(Level.FINER, "xrange: {0}", plot.getXaxis().getRange());
+        logger.log(Level.FINER, "yrange: {0}", plot.getYaxis().getRange());
+        logger.log(Level.FINER, "zrange: {0}", plot.getZaxis().getRange());
+        logger.exiting( "PlotController", "resetZoom" );
     }
     
     private final PropertyChangeListener plotDefaultsListener= new PropertyChangeListener() {
@@ -1171,6 +1312,14 @@ public class PlotController extends DomNodeController {
     };
 
     PlotElement plotElement;
+    
+    /**
+     * return the plotElement we are listening to.  
+     * @return 
+     */
+    public PlotElement getPlotElement() {
+        return this.plotElement;
+    }
 
     private final PropertyChangeListener plotElementDataSetListener= new PropertyChangeListener() {
         @Override
@@ -1181,23 +1330,37 @@ public class PlotController extends DomNodeController {
                 return;
             }
             QDataSet ds1;
+            if ( titleConverter==null ) return;
             if ( titleConverter.plotElement!=null ) {
                 ds1= titleConverter.plotElement.getController().getDataSet();
             } else {
                 ds1= null;
             }
+            
             logger.log(Level.FINE, "titleConverter should use for dataset: {0}", ds1);
                     
             String t= (String)titleConverter.convertForward( plot.getTitle() );
 
             dasPlot.setTitle( t );
-            dasPlot.getYAxis().setLabel( (String)plot.getYaxis().getController().labelConverter.convertForward( plot.getYaxis().getLabel() ) );
-            dasPlot.getXAxis().setLabel( (String)plot.getXaxis().getController().labelConverter.convertForward( plot.getXaxis().getLabel() ) );
+            AxisController xaxisController= plot.getXaxis().getController();
+            AxisController yaxisController= plot.getYaxis().getController();
+            if ( xaxisController==null || yaxisController==null ) return;
+            LabelConverter yaxisLabelConverter= yaxisController.labelConverter;
+            LabelConverter xaxisLabelConverter= xaxisController.labelConverter;
+            if ( xaxisLabelConverter==null || yaxisLabelConverter==null ) return;
+            dasPlot.getYAxis().setLabel( (String)yaxisLabelConverter.convertForward( plot.getYaxis().getLabel() ) );
+            dasPlot.getXAxis().setLabel( (String)xaxisLabelConverter.convertForward( plot.getXaxis().getLabel() ) );
             QDataSet pds= plotElement.getController().getDataSet();
+            setActiveDataSet( pds );
             logger.log( Level.FINE, "{0} dataSetListener", plot);
             if ( pds!=null && UnitsUtil.isIntervalOrRatioMeasurement(SemanticOps.getUnits(pds)) ) {
                 updateNextPrevious( plot.getXaxis().getRange(), pds );
             }
+        }
+        
+        @Override
+        public String toString() {
+            return "plotElementDataSetListener for "+PlotController.this.getPlot().getId();
         }
     };
 
@@ -1214,13 +1377,20 @@ public class PlotController extends DomNodeController {
             }
         }
         plot.getZaxis().setVisible(needsColorbar);
+//        boolean needsYAxis= false; // this doesn't work...
+//        for (PlotElement p : dom.getController().getPlotElementsFor(plot)) {
+//            if ( p.getPlotDefaults().getYaxis().isVisible() ) {
+//                needsYAxis= true;
+//            }
+//        }
+//        plot.getYaxis().setVisible(needsYAxis);
     }
 
     void addPlotElement(PlotElement p) {
         addPlotElement(p,true);
     }
 
-    synchronized List<Integer> indecesOfPlotElements( ) {
+    private List<Integer> indecesOfPlotElements( ) {
         List<Integer> indeces= new ArrayList<>(dom.plotElements.size());
         for ( int i=0; i<dom.plotElements.size(); i++ ) {
             if ( dom.getPlotElements(i).getPlotId().equals(this.plot.getId()) ) {
@@ -1230,7 +1400,7 @@ public class PlotController extends DomNodeController {
         return indeces;
     }
 
-    synchronized void moveToStackBottom( PlotElement p ) {
+    private void moveToStackBottom( PlotElement p ) {
         final DomLock lock= dom.getController().mutatorLock();
         lock.lock("Move to Stack Bottom");
         try {
@@ -1290,6 +1460,56 @@ public class PlotController extends DomNodeController {
         Renderer r= p.getController().getRenderer();
         pp.removeRenderer(r);
         pp.addRenderer(r);
+    }    
+
+    /**
+     * move the plot element to just above the reference element.
+     * @param reference
+     * @param p
+     */
+    public void moveToJustAbove( PlotElement reference, PlotElement p ) {
+        if ( reference==p ) throw new IllegalArgumentException("reference and p are the same plot element");
+        if ( !reference.getPlotId().equals(p.getPlotId()) ) throw new IllegalArgumentException("reference and p must be in the same plot");
+        final DomLock lock= dom.getController().mutatorLock();
+        lock.lock("Move to Just Above");
+        try {
+            if (!p.getPlotId().equals(this.plot.getId())) {
+                throw new IllegalArgumentException("this is not my plot");
+            }
+            
+            Application dom2= (Application) this.dom.copy();
+            DomUtil.moveToJustAbove( dom2, reference.getId(), p.getId() );
+            this.dom.syncTo( dom2 );
+
+        } finally {
+            lock.unlock();
+        }
+
+    }
+    
+    /**
+     * move the plot element to just below the reference element.
+     * @param reference
+     * @param p
+     */
+    public void moveToJustBelow( PlotElement reference, PlotElement p ) {
+        if ( reference==p ) throw new IllegalArgumentException("reference and p are the same plot element");
+        if ( !reference.getPlotId().equals(p.getPlotId()) ) throw new IllegalArgumentException("reference and p must be in the same plot");
+        final DomLock lock= dom.getController().mutatorLock();
+        lock.lock("Move to Just Below");
+        try {
+            if (!p.getPlotId().equals(this.plot.getId())) {
+                throw new IllegalArgumentException("this is not my plot");
+            }
+            
+            Application dom2= (Application) this.dom.copy();
+            DomUtil.moveToJustBelow( dom2, reference.getId(), p.getId() );
+            this.dom.syncTo( dom2 );
+
+        } finally {
+            lock.unlock();
+        }
+
     }
     
     /**
@@ -1297,7 +1517,7 @@ public class PlotController extends DomNodeController {
      * This does not affect the View (das2), only the model!
      * @param p
      */
-    synchronized void moveToStackTop( PlotElement p ) {
+    void moveToStackTop( PlotElement p ) {
         final DomLock lock= dom.getController().mutatorLock();
         lock.lock("Move to Stack Top");
         try {
@@ -1343,63 +1563,82 @@ public class PlotController extends DomNodeController {
         if ( pe.style==null ) {
             throw new NullPointerException("Style pe.style is null"); // bug 1419: I think I see this on the server
         }
-        this.dom.controller.bind( pe.style, PlotElementStyle.PROP_COLORTABLE, this.plot, Plot.PROP_COLORTABLE );
+        this.dom.controller.bind( this.plot, Plot.PROP_COLORTABLE, pe.style, PlotElementStyle.PROP_COLORTABLE );
     }
 
     /**
      * add the plot element to the plot, including the renderer and bindings.
      * @param p
-     * @param reset
+     * @param reset if true then reset the render type.
      */
-    synchronized void addPlotElement(PlotElement p,boolean reset) {
+    protected void addPlotElement(PlotElement p,boolean reset) {
+        DomLock lock= changesSupport.mutatorLock();
+        lock.lock("addPlotElement");
         
-        if ( p==null ) throw new NullPointerException("PlotElement p is null"); // bug 1419: I think I see this on the server
-        
-        Renderer rr= p.controller.getRenderer();
+        try {
+            if ( p==null ) throw new NullPointerException("PlotElement p is null"); // bug 1419: I think I see this on the server
 
-        if ( rr instanceof SpectrogramRenderer ) {
-            ((SpectrogramRenderer)rr).setColorBar( getDasColorBar() );
-        } else if ( rr instanceof SeriesRenderer ) {
-            ((SeriesRenderer)rr).setColorBar( getDasColorBar() );
-        }
+            Renderer rr= p.controller.getRenderer();
 
-        bindPEToColorbar( p );
+            if ( rr instanceof SpectrogramRenderer ) {
+                ((SpectrogramRenderer)rr).setColorBar( getDasColorBar() );
+            } else if ( rr instanceof SeriesRenderer ) {
+                ((SeriesRenderer)rr).setColorBar( getDasColorBar() );
+            }
 
-        boolean toTop= rr!=null && !( rr instanceof SpectrogramRenderer );
-        if ( rr!=null ) {
-            if ( !toTop ) { // kludge to put on the bottom
-                dasPlot.addRenderer(0,rr);
+            bindPEToColorbar( p );
+
+            boolean toTop= rr!=null && !( rr instanceof SpectrogramRenderer );
+            if ( rr!=null ) {
+                if ( !toTop ) { // kludge to put on the bottom
+                    dasPlot.addRenderer(0,rr);
+                } else {
+                    dasPlot.addRenderer(rr);
+                }
+            }
+            RenderType rt = p.getRenderType();
+            //p.setPlotId(plot.getId());
+            p.plotId= plot.getId();
+            if ( reset ) p.controller.doResetRenderType(rt);
+
+            if ( !dom.controller.isValueAdjusting() ) {
+                doPlotElementDefaultsChange(p);
             } else {
-                dasPlot.addRenderer(rr);
-            }
-        }
-        RenderType rt = p.getRenderType();
-        //p.setPlotId(plot.getId());
-        p.plotId= plot.getId();
-        if ( reset ) p.controller.doResetRenderType(rt);
+                boolean isFirst= false;
+                for ( PlotElement pete: this.dom.getPlotElements() ) {
+                    if ( pete.plotId.equals(this.plot.id ) ) {
+                        if ( pete==p ) {
+                            isFirst=true;
+                        }
+                        break;
+                    }
+                }
 
-        if ( !dom.controller.isValueAdjusting() ) {
-            doPlotElementDefaultsChange(p);
-        } else {
-            //TODO: there's a copy of this code in doPlotElementDefaultsChange
-            if ( this.plotElement!=null ) {
-                this.plotElement.getController().removePropertyChangeListener( PlotElementController.PROP_DATASET, plotElementDataSetListener );
+                //TODO: there's a copy of this code in doPlotElementDefaultsChange
+                if ( this.plotElement!=null && isFirst ) {
+                    this.plotElement.getController().removePropertyChangeListener( PlotElementController.PROP_DATASET, plotElementDataSetListener );
+                }
+                if ( isFirst ) {
+                    this.plotElement= p;
+                    // this used to happen in doPlotElementDefaultsChange
+                    p.getController().addPropertyChangeListener( PlotElementController.PROP_DATASET, plotElementDataSetListener );
+                }
             }
-            this.plotElement= p;
-            // this used to happen in doPlotElementDefaultsChange
-            p.getController().addPropertyChangeListener( PlotElementController.PROP_DATASET, plotElementDataSetListener );
-        }
-        if ( !pdListen.contains(p) ) {
-            p.addPropertyChangeListener( PlotElement.PROP_PLOT_DEFAULTS, plotDefaultsListener );
-            p.addPropertyChangeListener( PlotElement.PROP_RENDERTYPE, renderTypeListener );
-            pdListen.add(p);
-        }
-        p.setPlotId(plot.getId());
-        checkRenderType();
+            if ( !pdListen.contains(p) ) {
+                p.addPropertyChangeListener( PlotElement.PROP_PLOT_DEFAULTS, plotDefaultsListener );
+                p.addPropertyChangeListener( PlotElement.PROP_RENDERTYPE, renderTypeListener );
+                pdListen.add(p);
+            }
+            p.setPlotId(plot.getId());
+            checkRenderType();
 
-        if ( rr!=null && toTop ) {
-            moveToStackTop(p);
+            if ( rr!=null && toTop ) {
+                moveToStackTop(p);
+            }
+        } finally {
+            lock.unlock();
         }
+        
 
 //        DasPlot pl= p.controller.getDasPlot();
 //        if ( pl!=null ) {
@@ -1409,6 +1648,21 @@ public class PlotController extends DomNodeController {
 //                if ( cc instanceof DasColorBar ) System.err.println(cc);
 //            }
 //        }
+    }
+
+    
+    private QDataSet activeDataSet = null;
+
+    public static final String PROP_ACTIVEDATASET = "activeDataSet";
+
+    public QDataSet getActiveDataSet() {
+        return activeDataSet;
+    }
+
+    public void setActiveDataSet(QDataSet activeDataSet) {
+        QDataSet oldActiveDataSet = this.activeDataSet;
+        this.activeDataSet = activeDataSet;
+        propertyChangeSupport.firePropertyChange(PROP_ACTIVEDATASET, oldActiveDataSet, activeDataSet);
     }
 
     /**
@@ -1463,23 +1717,29 @@ public class PlotController extends DomNodeController {
      * remove the plot element from this plot: remove renderer, remove bindings, etc.
      * @param p
      */
-    synchronized void removePlotElement(PlotElement p) {
-        Renderer rr= p.controller.getRenderer();
-        // setPlotId re-enters this code, so we need to rem
-        if ( rr!=null && dasPlot.containsRenderer(rr) ) dasPlot.removeRenderer(rr);
-        if ( rr instanceof SpectrogramRenderer ) {
-            ((SpectrogramRenderer)rr).setColorBar(null);
-        } else if ( rr instanceof SeriesRenderer ) {
-            ((SeriesRenderer)rr).setColorBar(null);
-        }
+    protected void removePlotElement(PlotElement p) {
+        DomLock lock= changesSupport.mutatorLock();
+        lock.lock("removePlotElement");
+        try {
+            Renderer rr= p.controller.getRenderer();
+            // setPlotId re-enters this code, so we need to rem
+            if ( rr!=null && dasPlot.containsRenderer(rr) ) dasPlot.removeRenderer(rr);
+            if ( rr instanceof SpectrogramRenderer ) {
+                ((SpectrogramRenderer)rr).setColorBar(null);
+            } else if ( rr instanceof SeriesRenderer ) {
+                ((SeriesRenderer)rr).setColorBar(null);
+            }
 
-        doPlotElementDefaultsChange(null);
-        p.removePropertyChangeListener( PlotElement.PROP_PLOT_DEFAULTS, plotDefaultsListener );
-        p.removePropertyChangeListener( PlotElement.PROP_RENDERTYPE, renderTypeListener );
-        removeBindingsPEToColorbar(p);
-        pdListen.remove(p);
-        if ( !p.getPlotId().equals("") ) p.setPlotId("");
-        checkRenderType();
+            doPlotElementDefaultsChange(null);
+            p.removePropertyChangeListener( PlotElement.PROP_PLOT_DEFAULTS, plotDefaultsListener );
+            p.removePropertyChangeListener( PlotElement.PROP_RENDERTYPE, renderTypeListener );
+            removeBindingsPEToColorbar(p);
+            pdListen.remove(p);
+            if ( !p.getPlotId().equals("") ) p.setPlotId("");
+            checkRenderType();
+        } finally {
+            lock.unlock();
+        }
     }
 
 //    private static String getCommonPart( String wordA, String wordB ) {
@@ -1559,11 +1819,23 @@ public class PlotController extends DomNodeController {
                 logger.fine("value is adjusting, no reset autorange");
             }
 
-            if ( this.plotElement!=null ) {
+            boolean isFirst= false;
+            for ( PlotElement pete: this.dom.getPlotElements() ) {
+                if ( pete.plotId.equals(this.plot.id ) ) {
+                    if ( pete==p ) {
+                        isFirst=true;
+                    }
+                    break;
+                }
+            }
+            
+            if ( this.plotElement!=null && isFirst ) {
                 this.plotElement.getController().removePropertyChangeListener( PlotElementController.PROP_DATASET, plotElementDataSetListener );
             }
-            this.plotElement= p;
-            this.plotElement.getController().addPropertyChangeListener( PlotElementController.PROP_DATASET, plotElementDataSetListener );
+            if ( isFirst ) {
+                this.plotElement= p;
+                this.plotElement.getController().addPropertyChangeListener( PlotElementController.PROP_DATASET, plotElementDataSetListener );
+            }
             if ( true ) {   // bugfix 1157: simplify logic, was: if ( pele==null || defaults.getXaxis().isAutoRange()!=false ) { //TODO: why is this?  /home/jbf/ct/hudson/vap/geo_1.vap wants it
                 if ( defaults!=null ) {
                     if ( plot.isAutoLabel() ) plot.getController().setTitleAutomatically( defaults.getTitle() );
@@ -1592,7 +1864,7 @@ public class PlotController extends DomNodeController {
     }
 
     /** 
-     * see https://sourceforge.net/tracker/?func=detail&aid=3104572&group_id=199733&atid=970682  We've loaded an old
+     * See <a href='https://sourceforge.net/p/autoplot/bugs/547/'>sourceforge ticket</a>. We've loaded an old
      * vap file and we need to convert units.dimensionless to a correct unit.
      * @param e
      */
@@ -1687,7 +1959,7 @@ public class PlotController extends DomNodeController {
      * @param newSettings the new plot settings from autoranging.
      */
     private void doCheckBindings( Plot plot, Plot newSettings ) {
-        logger.entering( "org.virbo.autoplot.PlotController", "doCheckBindings" );
+        logger.entering( "PlotController", "doCheckBindings" );
         boolean shouldBindX= false;
         boolean shouldSetAxisRange= false; // true indicates that the dom.timeRange already contains the range
         List<BindingModel> bms= dom.getController().findBindings( dom, Application.PROP_TIMERANGE, null, Axis.PROP_RANGE );
@@ -1695,6 +1967,7 @@ public class PlotController extends DomNodeController {
         if ( bm!=null ) bms.remove(bm);
 
         if ( ! plot.isAutoBinding() ) {
+            logger.exiting( "PlotController", "doCheckBindings" );
             return;
         }
 
@@ -1720,21 +1993,15 @@ public class PlotController extends DomNodeController {
                 } else {
                     dom.setTimeRange( newSettings.getXaxis().getRange() );      // fall back to old logic.
                 }
-                shouldBindX= true;
                 shouldSetAxisRange= true;
             }
             if ( !plot.getXaxis().isAutoRange() ) {
+                if ( needToAutorangeAfterAll && bm!=null ) {
+                    dom.getController().removeBinding(bm);
+                }
                 plot.getXaxis().setAutoRange(true); // setting the time range would clear autoRange here.
             }
             shouldBindX= shouldBindX(newSettings.getXaxis());
-        }
-
-        if ( shouldBindX && !plot.getColumnId().equals( dom.getCanvases(0).getMarginColumn().getId() ) ) {
-            logger.log(Level.FINER, "not binding because plot is not attached to marginRow: {0}", plot.getXaxis());
-            //TODO: Reiner has a two-column canvas that has each plot bound.  It might be
-            //  nice to support this.
-            shouldBindX= false;
-            dom.getController().setStatus("not binding axis because plot is not attached to marginRow");
         }
         
         if ( bm==null && shouldBindX ) {
@@ -1744,7 +2011,7 @@ public class PlotController extends DomNodeController {
             dom.getController().bind( dom, Application.PROP_TIMERANGE, plot.getXaxis(), Axis.PROP_RANGE );
 
             BindingModel b= dom.getController().findBinding( dom, Application.PROP_TIMERANGE, plot, Plot.PROP_CONTEXT );
-            if ( b!=null ) dom.getController().deleteBinding(b); // https://sourceforge.net/p/autoplot/bugs/868/
+            if ( b!=null ) dom.getController().removeBinding(b); // https://sourceforge.net/p/autoplot/bugs/868/
             //if ( !CanvasUtil.getMostBottomPlot(dom.getController().getCanvasFor(plot))==plot ) {
             //    plot.getXaxis().setDrawTickLabels(false);
             //} //TODO: could disable tick label drawing automatically.
@@ -1754,7 +2021,7 @@ public class PlotController extends DomNodeController {
             //BindingModel b= dom.getController().findBinding( dom, Application.PROP_TIMERANGE, plot, Plot.PROP_CONTEXT );
             //if ( b!=null ) dom.getController().deleteBinding(b); // 3516161 https://sourceforge.net/p/autoplot/bugs/868/
             plot.setContext( dom.getTimeRange() );
-            dom.getController().deleteBinding(bm);
+            dom.getController().removeBinding(bm);
         }
         
         if ( needToAutorangeAfterAll ) {
@@ -1771,7 +2038,7 @@ public class PlotController extends DomNodeController {
         }
 
         plot.setAutoBinding(false);
-        
+        logger.exiting( "PlotController", "doCheckBindings" );
     }
 
     /**
@@ -1781,9 +2048,9 @@ public class PlotController extends DomNodeController {
         final DasPlot p = getDasPlot();
         final DasColorBar cb = getDasColorBar();
         final DasCanvas c= p.getCanvas();
-        p.getDasMouseInputAdapter().setFeedback( null );
+        p.getDasMouseInputAdapter().setFeedback( DasMouseInputAdapter.NULL_FEEDBACK );
         if ( c!=null ) {
-            SwingUtilities.invokeLater( new Runnable() {
+            SwingUtilities.invokeLater(new Runnable() {
                 @Override
                 public void run() {
                     c.remove(p);
@@ -1791,9 +2058,10 @@ public class PlotController extends DomNodeController {
                 }
             } );
         }
+        p.getDasMouseInputAdapter().releaseAll();
     }
 
-    private synchronized void bindTo(DasPlot p) {
+    private void bindTo(DasPlot p) {
         ApplicationController ac= dom.controller;
         titleConverter= new LabelConverter( dom, plot, null, null, null );
         ac.bind( this.plot, Plot.PROP_TITLE, p, DasPlot.PROP_TITLE, titleConverter );
@@ -1815,14 +2083,11 @@ public class PlotController extends DomNodeController {
                 }
             }
         };
+        this.plot.addPropertyChangeListener(plotListener);
         ac.bind( this.plot, Plot.PROP_CONTEXT, p, DasPlot.PROP_CONTEXT, plotContextConverter );
-        ac.bind( this.plot, Plot.PROP_ISOTROPIC, p, DasPlot.PROP_ISOTROPIC );
-        ac.bind( this.plot, Plot.PROP_DISPLAYTITLE, p, DasPlot.PROP_DISPLAYTITLE );
-        ac.bind( this.plot, Plot.PROP_DISPLAYLEGEND, p, DasPlot.PROP_DISPLAYLEGEND );
-        ac.bind( this.plot, Plot.PROP_FONTSIZE, p, DasPlot.PROP_FONTSIZE );
-        ac.bind( dom.options, Options.PROP_PRINTINGLOGLEVEL, p, DasPlot.PROP_PRINTINGLOGLEVEL );
-        ac.bind( dom.options, Options.PROP_DISPLAYLOGLEVEL, p, DasPlot.PROP_LOG_LEVEL );
-        ac.bind( dom.options, Options.PROP_LOGMESSAGETIMEOUTSEC, p, DasPlot.PROP_LOG_TIMEOUT_SEC );
+        ac.bind( this.plot, Plot.PROP_BACKGROUND, p, DasPlot.PROP_DRAWBACKGROUND );
+        ac.bind(this.plot, Plot.PROP_EPHEMERIS_LABELS, p.getXAxis(), DasAxis.PROP_TCALABELS );
+        ac.bind( this.plot, Plot.PROP_EPHEMERISLINECOUNT, p.getXAxis(), DasAxis.PROP_TCAROWS );
         
     }
 
@@ -1839,13 +2104,19 @@ public class PlotController extends DomNodeController {
 //        ac.unbind( this.plot, Plot.PROP_DISPLAYTITLE, p, DasPlot.PROP_DISPLAYTITLE );
 //        ac.unbind( this.plot, Plot.PROP_DISPLAYLEGEND, p, DasPlot.PROP_DISPLAYLEGEND );
         //int i= dom.options.boundCount();
-        ac.unbind(dom.options, Options.PROP_DRAWGRID, p, "drawGrid");
-        ac.unbind(dom.options, Options.PROP_DRAWMINORGRID, p, "drawMinorGrid");
-        ac.unbind(dom.options, Options.PROP_FLIPCOLORBARLABEL, this.plot.getZaxis().getController().dasAxis, "flipLabel");
-        ac.unbind(dom.options, Options.PROP_FLIPCOLORBARLABEL, this.plot.getYaxis().getController().dasAxis, "flipLabel");
-        ac.unbind(dom.options, Options.PROP_TICKLEN, p.getXAxis(), "tickLength");
-        ac.unbind(dom.options, Options.PROP_TICKLEN, p.getYAxis(), "tickLength");
-        ac.unbind(dom.options, Options.PROP_TICKLEN, this.dasColorBar, "tickLength");
+        ac.unbind( dom.options, Options.PROP_DRAWGRID, p, "drawGrid");
+        ac.unbind( dom.options, Options.PROP_DRAWMINORGRID, p, "drawMinorGrid");
+        ac.unbind( dom.options, Options.PROP_FLIPCOLORBARLABEL, this.plot.getZaxis().getController().dasAxis, "flipLabel");
+        ac.unbind( dom.options, Options.PROP_FLIPCOLORBARLABEL, this.plot.getYaxis().getController().dasAxis, "flipLabel");
+        ac.unbind( dom.options, Options.PROP_TICKLEN, p.getXAxis(), "tickLength");
+        ac.unbind( dom.options, Options.PROP_TICKLEN, p.getYAxis(), "tickLength");
+        ac.unbind( dom.options, Options.PROP_TICKLEN, this.dasColorBar, "tickLength");
+        ac.unbind( dom.options, Options.PROP_OPPOSITEAXISVISIBLE, p.getXAxis(), DasAxis.PROP_OPPOSITE_AXIS_VISIBLE);
+        ac.unbind( dom.options, Options.PROP_OPPOSITEAXISVISIBLE, p.getYAxis(), DasAxis.PROP_OPPOSITE_AXIS_VISIBLE);
+        ac.unbind( dom.options, Options.PROP_LINE_THICKNESS, p.getXAxis(), DasAxis.PROP_LINETHICKNESS );
+        ac.unbind( dom.options, Options.PROP_LINE_THICKNESS, p.getYAxis(), DasAxis.PROP_LINETHICKNESS );
+        ac.unbind( dom.options, Options.PROP_LINE_THICKNESS, this.dasColorBar, DasAxis.PROP_LINETHICKNESS );
+        ac.unbind( dom.options, Options.PROP_LINE_THICKNESS, p, DasAxis.PROP_LINETHICKNESS );
         ac.unbind( dom.options, Options.PROP_MULTILINETEXTALIGNMENT, p, DasPlot.PROP_MULTILINETEXTALIGNMENT );
         ac.unbind( dom.options, Options.PROP_PRINTINGLOGLEVEL, p, DasPlot.PROP_PRINTINGLOGLEVEL );
         ac.unbind( dom.options, Options.PROP_DISPLAYLOGLEVEL, p, DasPlot.PROP_LOG_LEVEL );
@@ -1853,7 +2124,39 @@ public class PlotController extends DomNodeController {
         ac.unbind( dom.options, Options.PROP_OVERRENDERING, p, DasPlot.PROP_OVERSIZE );
         dom.options.removePropertyChangeListener( Options.PROP_DAY_OF_YEAR, dayOfYearListener );
         dom.options.removePropertyChangeListener( Options.PROP_MOUSEMODULE, mouseModuleListener );
+        this.plot.removePropertyChangeListener(plotListener);
+        this.plot.xaxis.controller.removeBindings();
+        this.plot.yaxis.controller.removeBindings();
+        this.plot.zaxis.controller.removeBindings();
+        this.plot.getXaxis().removePropertyChangeListener( autorangeListener );
+        this.plot.getYaxis().removePropertyChangeListener( autorangeListener );
+        this.plot.getZaxis().removePropertyChangeListener( autorangeListener );
+        this.plot.removePropertyChangeListener( Plot.PROP_TITLE, labelListener );
+        this.plot.removePropertyChangeListener( Plot.PROP_TICKS_URI, ticksURIListener );
+        this.plot.removePropertyChangeListener( Plot.PROP_EPHEMERIS_LABELS, ticksURIListener );
+        this.plot.removePropertyChangeListener( Plot.PROP_ID, idListener );
+        this.plot.removePropertyChangeListener( Plot.PROP_ROWID, rowColListener );
+        this.plot.removePropertyChangeListener( Plot.PROP_COLUMNID, rowColListener );
         //System.err.println("removeBindings "+i+" -> "+dom.options.boundCount() );
+        final DasAxis a= p.getXAxis();
+        a.removePropertyChangeListener( xaxisRangeListener );
+        a.setPreviousAction( "scan", null );
+        a.setNextAction( "scan", null );
+        expertMenuItems= null;
+        this.pdListen= null;
+        this.titleConverter= null;
+    }
+    
+    /** 
+     * remove references this controller has so that they are more likely to be
+     * garbage collected.  This must be called after removeBindings.
+     */
+    protected void removeReferences() {
+        this.plot= null;
+        this.dom= null;
+        this.dasPlot= null;
+        this.dasColorBar= null;
+        this.pdListen= null;
     }
     
     public BindingModel[] getBindings() {

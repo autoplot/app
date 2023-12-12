@@ -6,14 +6,11 @@
  */
 package org.autoplot;
 
-import org.autoplot.AutoplotUtil;
-import org.autoplot.BindToHiddenDialog;
-import org.autoplot.ApplicationModel;
-import org.autoplot.AddPlotsDialog;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Cursor;
+import java.awt.Graphics;
 import java.awt.Point;
 import java.awt.Rectangle;
 import java.awt.event.ActionEvent;
@@ -36,6 +33,7 @@ import javax.swing.AbstractAction;
 import javax.swing.AbstractListModel;
 import javax.swing.Action;
 import javax.swing.DefaultListCellRenderer;
+import javax.swing.DefaultListModel;
 import javax.swing.ImageIcon;
 import javax.swing.JLabel;
 import javax.swing.JList;
@@ -74,6 +72,9 @@ import org.autoplot.dom.Row;
 import org.autoplot.util.CanvasLayoutPanel;
 import org.autoplot.datasource.DataSourceEditorPanel;
 import org.autoplot.datasource.DataSourceEditorPanelUtil;
+import org.autoplot.dom.Annotation;
+import org.autoplot.dom.DomNode;
+import org.das2.graph.DasCanvas;
 
 /**
  * LayoutPanel shows all the plots and plot elements on the canvas.  
@@ -90,6 +91,8 @@ public class LayoutPanel extends javax.swing.JPanel {
     private Application dom;
     private ApplicationModel applicationModel; // used for history.
     
+    private boolean selectionChanged= false;
+            
     /** Creates new form LayoutPanel */
     public LayoutPanel() {
         initComponents();
@@ -146,6 +149,7 @@ public class LayoutPanel extends javax.swing.JPanel {
                         break;
                 }
                 selectedPlotLabel.setText(selectText);
+                dom.getController().setSelectedPlotsArray( selectedPlots.toArray( new Plot[ selectedPlots.size() ] ) );
             }
         });
         
@@ -198,8 +202,29 @@ public class LayoutPanel extends javax.swing.JPanel {
         plotElementListComponent.addMouseListener(popupTrigger);
         dataSourceList.addMouseListener(popupTrigger);
         bindingListComponent.addMouseListener(popupTrigger);
+        annotationsListComponent.addMouseListener(popupTrigger);
 
         AutoplotHelpSystem.getHelpSystem().registerHelpID(this, "layoutPanel");
+    }
+
+    /**
+     * to avoid use of synchronized blocks, methods must be called from the
+     * event thread.  This verifies that the thread is the event thread.
+     * @param caller the name of the calling code, which will appear in the name.
+     */
+    private static void assertEventThread( String caller ) {
+        if ( !SwingUtilities.isEventDispatchThread() ) {
+            throw new IllegalArgumentException( caller + " must be called from the event thread.");
+        }
+    }
+    
+    @Override
+    public void paint(Graphics g) {
+        if ( selectionChanged ) {
+            updateSelected();
+            selectionChanged= false;
+        }
+        super.paint(g);
     }
 
     private MouseListener createPopupTrigger() {
@@ -327,10 +352,8 @@ public class LayoutPanel extends javax.swing.JPanel {
             }
         };
 
-
-
-
-    private synchronized void createPopupMenus() {
+    private void createPopupMenus() {
+        assertEventThread("createPopupMenus");
         contextMenus = new HashMap<>();
 
         JMenuItem item;
@@ -376,7 +399,10 @@ public class LayoutPanel extends javax.swing.JPanel {
                     org.das2.util.LoggerManager.logGuiEvent(e);
                     PlotStylePanel.StylePanel editorPanel= getStylePanel( p.getRenderType() );
                     editorPanel.doElementBindings(p);
-                    AutoplotUtil.showMessageDialog( LayoutPanel.this, editorPanel, p.getRenderType() + " Style", JOptionPane.OK_OPTION );
+                    PlotElement oldp= (PlotElement)p.copy();
+                    if ( JOptionPane.CANCEL_OPTION==AutoplotUtil.showConfirmDialog( LayoutPanel.this, editorPanel, p.getRenderType() + " Style", JOptionPane.OK_CANCEL_OPTION ) ) {
+                        p.syncTo(oldp);
+                    }
                 } else if ( os.size()>1 ) {
                     PlotElementStyle[] peers= new PlotElementStyle[os.size()];
                     for ( int i=0; i<os.size(); i++ ) peers[i]= (os.get(i)).getStyle();
@@ -434,6 +460,7 @@ public class LayoutPanel extends javax.swing.JPanel {
 
         contextMenus.put(plotElementListComponent, plotElementContextMenu );
         contextMenus.put( bindingListComponent, bindingActionsMenu );
+        contextMenus.put( annotationsListComponent, annotationsActionsMenu );
 
     }
     private transient ListSelectionListener plotElementSelectionListener = new ListSelectionListener() {
@@ -472,6 +499,13 @@ public class LayoutPanel extends javax.swing.JPanel {
         @Override
         public void propertyChange(PropertyChangeEvent evt) {
             updateBindingList();
+        }
+    };
+
+    private transient PropertyChangeListener annotationsListener = new PropertyChangeListener() {
+        @Override
+        public void propertyChange(PropertyChangeEvent evt) {
+            updateAnnotationsList();
         }
     };
 
@@ -528,7 +562,8 @@ public class LayoutPanel extends javax.swing.JPanel {
                 public void run() {
                     logger.finer("enter plotListener");
                     plotElementListComponent.setSelectedIndices(iindices);
-                    updateSelected();
+                    selectionChanged= true;
+                    repaint();
                 }
             };
             if ( SwingUtilities.isEventDispatchThread() ) {
@@ -573,12 +608,17 @@ public class LayoutPanel extends javax.swing.JPanel {
         if ( plot!=null ) {
             dasPlot = plot.getController().getDasPlot();
             selected.add(dasPlot);
-            List<DataSourceFilter> dsfs= new ArrayList();
+            List<DataSourceFilter> dsfs= new ArrayList<>();
+            List<Plot> plots= new ArrayList<>();
             for ( int i=0; i<iindices.length; i++ ) {
                 try {
                     PlotElementController pec= peles[iindices[i]].getController();
                     selected.add( pec.getRenderer() );
                     dsfs.add( (DataSourceFilter)DomUtil.getElementById( dom, pec.getPlotElement().getDataSourceFilterId() ) );
+                    Plot pp= (Plot)DomUtil.getElementById( dom, pec.getPlotElement().getPlotId() );
+                    if ( !plots.contains(pp) ) {
+                        plots.add( pp );
+                    }
                     if ( dsfs.size()>0 ) {
                         dataSourceList.setSelectedValue( dsfs.get(0), true);        
                     }
@@ -587,6 +627,9 @@ public class LayoutPanel extends javax.swing.JPanel {
                     System.err.println("harmless indexOutOfBoundsException needs to be fixed sometime");
                 }
             }
+            dom.getController().setSelectedPlotsArray( plots.toArray( new Plot[ plots.size() ] ) );
+        } else {
+            dom.getController().setSelectedPlots("");
         }
 
         updateDataSourceList();
@@ -607,12 +650,19 @@ public class LayoutPanel extends javax.swing.JPanel {
         this.dom = app;
         updatePlotElementList();
         updateBindingList();
+        updateAnnotationsList();
         updateDataSourceList();
         canvasLayoutPanel1.setContainer(app.getController().getDasCanvas());
+        app.getController().getDasCanvas().addPropertyChangeListener( DasCanvas.PROP_PAINTCOUNT, new PropertyChangeListener() {
+            public void propertyChange( PropertyChangeEvent ev ) {
+                plotElementListComponent.repaint();
+            }
+        });
         canvasLayoutPanel1.addComponentType(DasPlot.class, Color.BLUE);
         app.getController().bind(app.getOptions(), Options.PROP_BACKGROUND, canvasLayoutPanel1, "background");
         app.addPropertyChangeListener(Application.PROP_PLOT_ELEMENTS, plotElementsListener);
         app.addPropertyChangeListener(Application.PROP_BINDINGS, bindingsListener);
+        app.addPropertyChangeListener(Application.PROP_ANNOTATIONS, annotationsListener);
         app.addPropertyChangeListener(Application.PROP_DATASOURCEFILTERS, dataSourcesListener );
         app.getController().addPropertyChangeListener(ApplicationController.PROP_PLOT, plotListener);
         app.getController().addPropertyChangeListener(ApplicationController.PROP_PLOT_ELEMENT, plotElementListener);
@@ -622,7 +672,7 @@ public class LayoutPanel extends javax.swing.JPanel {
         }        
     }
 
-    private ListCellRenderer myListCellRenderer=  new DefaultListCellRenderer() {
+    private ListCellRenderer plotElementListCellRenderer=  new DefaultListCellRenderer() {
         @Override
         public Component getListCellRendererComponent(JList list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
             final javax.swing.JLabel label= (JLabel) super.getListCellRendererComponent(list, value, index, isSelected, cellHasFocus);
@@ -634,12 +684,12 @@ public class LayoutPanel extends javax.swing.JPanel {
                     if ( rend!=null ) {
                         javax.swing.Icon icon= rend.getListIcon();
                         label.setIcon(icon);
-                        rend.addPropertyChangeListener( new PropertyChangeListener() {
-                            @Override
-                            public void propertyChange(PropertyChangeEvent evt) {
-                                plotElementListComponent.repaint();
-                            }
-                        });
+                        //rend.addPropertyChangeListener( new PropertyChangeListener() {
+                        //    @Override
+                        //    public void propertyChange(PropertyChangeEvent evt) {
+                        //        plotElementListComponent.repaint();
+                        //    }
+                        //});
                     }
                 }
             }
@@ -659,8 +709,9 @@ public class LayoutPanel extends javax.swing.JPanel {
                 return foo[index];
             }
         };
+        plotElementListComponent.removeAll();
         plotElementListComponent.setModel(elementsList);
-        plotElementListComponent.setCellRenderer( myListCellRenderer );
+        plotElementListComponent.setCellRenderer( plotElementListCellRenderer );
     }
 
     private void updatePlotElementList() {
@@ -712,38 +763,51 @@ public class LayoutPanel extends javax.swing.JPanel {
         bindingListComponent.setModel(elementsList);
         bindingListComponent.repaint();
     }
-
-    private void updateDataSourceList() {
-        final List list= new ArrayList( Arrays.asList(dom.getDataSourceFilters() ) );
+    
+    private void updateAnnotationsList() {
+        final List annotations= new ArrayList( Arrays.asList(dom.getAnnotations()) );
         AbstractListModel elementsList = new AbstractListModel() {
             @Override
             public int getSize() {
-                return list.size();
+                return annotations.size();
             }
             @Override
             public Object getElementAt(int index) {
-                return list.get(index);
+                return annotations.get(index);
             }
         };
-        dataSourceList.setCellRenderer( new DefaultListCellRenderer()  {
-            @Override
-            public Component getListCellRendererComponent(JList list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
-                JLabel l= (JLabel)super.getListCellRendererComponent( list, value, index, isSelected, cellHasFocus );
-                DataSourceFilter dsf= (DataSourceFilter)value;
-                if ( dsf.getController().getTsb()!=null ) {
-                    l.setIcon( new ImageIcon( LayoutPanel.class.getResource("/resources/blue.gif" ) ) );
-                    l.setToolTipText( "<html>"+dsf.getUri()+"<br>Data source provides Time Series Browsing");
+        annotationsListComponent.setModel(elementsList);
+        annotationsListComponent.repaint();
+    }
+    
+    private static final ImageIcon blueIcon= new ImageIcon( LayoutPanel.class.getResource("/resources/blue.gif" ) );
+    private static final ImageIcon idleIcon= new ImageIcon( LayoutPanel.class.getResource("/org/autoplot/resources/idle-icon.png" ) );
+            
+    ListCellRenderer dsfListCellRenderer= new DefaultListCellRenderer() {
+        @Override
+        public Component getListCellRendererComponent(JList list, Object value, int index, boolean isSelected, boolean cellHasFocus) {
+            JLabel l= (JLabel)super.getListCellRendererComponent( list, value, index, isSelected, cellHasFocus );
+            DataSourceFilter dsf= (DataSourceFilter)value;
+            if ( dsf.getController().getTsb()!=null ) {
+                l.setIcon( blueIcon );
+                l.setToolTipText( "<html>"+dsf.getUri()+"<br>Data source provides Time Series Browsing");
+            } else {
+                l.setIcon( idleIcon );
+                if ( dsf.getUri().length()==0 ) {
+                    l.setToolTipText(null);
                 } else {
-                    l.setIcon( new ImageIcon( LayoutPanel.class.getResource("/org/autoplot/resources/idle-icon.png" ) ) );
-                    if ( dsf.getUri().length()==0 ) {
-                        l.setToolTipText(null);
-                    } else {
-                        l.setToolTipText( "<html>"+dsf.getUri() );
-                    }
+                    l.setToolTipText( "<html>"+dsf.getUri() );
                 }
-                return l;
             }
-        });
+            return l;
+        }
+    };
+    
+    private void updateDataSourceList() {
+        final List<DataSourceFilter> list= new ArrayList( Arrays.asList(dom.getDataSourceFilters() ) );
+        DefaultListModel elementsList = new DefaultListModel();
+        for ( DataSourceFilter dsf: list ) elementsList.addElement(dsf);
+        dataSourceList.setCellRenderer( dsfListCellRenderer );
         dataSourceList.setModel(elementsList);
         dataSourceList.repaint();
     }    
@@ -798,6 +862,7 @@ public class LayoutPanel extends javax.swing.JPanel {
         biggerMI = new javax.swing.JMenuItem();
         smallerMI = new javax.swing.JMenuItem();
         sameSizeMI = new javax.swing.JMenuItem();
+        setHeightMI = new javax.swing.JMenuItem();
         swapMenuItem = new javax.swing.JMenuItem();
         addHiddenMenuItem = new javax.swing.JMenuItem();
         bindingActionsMenu = new javax.swing.JPopupMenu();
@@ -806,6 +871,9 @@ public class LayoutPanel extends javax.swing.JPanel {
         jTable1 = new javax.swing.JTable();
         dataSourceActionsMenu = new javax.swing.JPopupMenu();
         editMenuItem = new javax.swing.JMenuItem();
+        annotationsActionsMenu = new javax.swing.JPopupMenu();
+        deleteAnnotationsMenuItem = new javax.swing.JMenuItem();
+        editAnnotationsMenuItem = new javax.swing.JMenuItem();
         jSplitPane1 = new javax.swing.JSplitPane();
         jPanel2 = new javax.swing.JPanel();
         jSplitPane3 = new javax.swing.JSplitPane();
@@ -815,6 +883,14 @@ public class LayoutPanel extends javax.swing.JPanel {
         jScrollPane4 = new javax.swing.JScrollPane();
         dataSourceList = new javax.swing.JList<>();
         jSplitPane2 = new javax.swing.JSplitPane();
+        jPanel3 = new javax.swing.JPanel();
+        jTabbedPane1 = new javax.swing.JTabbedPane();
+        jPanel6 = new javax.swing.JPanel();
+        jScrollPane5 = new javax.swing.JScrollPane();
+        annotationsListComponent = new javax.swing.JList<>();
+        jPanel5 = new javax.swing.JPanel();
+        jScrollPane2 = new javax.swing.JScrollPane();
+        bindingListComponent = new javax.swing.JList();
         jPanel1 = new javax.swing.JPanel();
         canvasLayoutPanel1 = new org.autoplot.util.CanvasLayoutPanel();
         tallerButton = new javax.swing.JButton();
@@ -824,9 +900,6 @@ public class LayoutPanel extends javax.swing.JPanel {
         fixLayoutButton = new javax.swing.JButton();
         deletePlotButton = new javax.swing.JButton();
         selectedPlotLabel = new javax.swing.JLabel();
-        jPanel3 = new javax.swing.JPanel();
-        jScrollPane2 = new javax.swing.JScrollPane();
-        bindingListComponent = new javax.swing.JList();
 
         plotMenu.setText("Plot");
 
@@ -889,6 +962,14 @@ public class LayoutPanel extends javax.swing.JPanel {
         });
         sizeMenu.add(sameSizeMI);
 
+        setHeightMI.setText("Set Height to 1em");
+        setHeightMI.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                setHeightMIActionPerformed(evt);
+            }
+        });
+        sizeMenu.add(setHeightMI);
+
         plotsMenu.add(sizeMenu);
 
         swapMenuItem.setText("Swap Position");
@@ -940,6 +1021,24 @@ public class LayoutPanel extends javax.swing.JPanel {
             }
         });
         dataSourceActionsMenu.add(editMenuItem);
+
+        annotationsActionsMenu.setToolTipText("Binding actions");
+
+        deleteAnnotationsMenuItem.setText("Delete Selected Annotations");
+        deleteAnnotationsMenuItem.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                deleteAnnotationsMenuItemActionPerformed(evt);
+            }
+        });
+        annotationsActionsMenu.add(deleteAnnotationsMenuItem);
+
+        editAnnotationsMenuItem.setText("Edit Annotation(s)");
+        editAnnotationsMenuItem.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                editAnnotationsMenuItemActionPerformed(evt);
+            }
+        });
+        annotationsActionsMenu.add(editAnnotationsMenuItem);
 
         jSplitPane1.setDividerLocation(330);
         jSplitPane1.setResizeWeight(0.5);
@@ -1008,6 +1107,66 @@ public class LayoutPanel extends javax.swing.JPanel {
         jSplitPane2.setDividerLocation(370);
         jSplitPane2.setOrientation(javax.swing.JSplitPane.VERTICAL_SPLIT);
         jSplitPane2.setResizeWeight(0.5);
+
+        jPanel3.setToolTipText("List of connections between DOM properties");
+
+        annotationsListComponent.setModel(new javax.swing.AbstractListModel<String>() {
+            String[] strings = { "Item 1", "Item 2", "Item 3", "Item 4", "Item 5" };
+            public int getSize() { return strings.length; }
+            public String getElementAt(int i) { return strings[i]; }
+        });
+        jScrollPane5.setViewportView(annotationsListComponent);
+
+        org.jdesktop.layout.GroupLayout jPanel6Layout = new org.jdesktop.layout.GroupLayout(jPanel6);
+        jPanel6.setLayout(jPanel6Layout);
+        jPanel6Layout.setHorizontalGroup(
+            jPanel6Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+            .add(jScrollPane5, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 322, Short.MAX_VALUE)
+        );
+        jPanel6Layout.setVerticalGroup(
+            jPanel6Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+            .add(jScrollPane5, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 168, Short.MAX_VALUE)
+        );
+
+        jTabbedPane1.addTab("Annotations", jPanel6);
+
+        bindingListComponent.setFont(bindingListComponent.getFont().deriveFont(bindingListComponent.getFont().getSize()-2f));
+        bindingListComponent.setModel(new javax.swing.AbstractListModel() {
+            String[] strings = { "Item 1", "Item 2", "Item 3", "Item 4", "Item 5" };
+            public int getSize() { return strings.length; }
+            public Object getElementAt(int i) { return strings[i]; }
+        });
+        jScrollPane2.setViewportView(bindingListComponent);
+
+        org.jdesktop.layout.GroupLayout jPanel5Layout = new org.jdesktop.layout.GroupLayout(jPanel5);
+        jPanel5.setLayout(jPanel5Layout);
+        jPanel5Layout.setHorizontalGroup(
+            jPanel5Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+            .add(0, 322, Short.MAX_VALUE)
+            .add(jPanel5Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+                .add(jScrollPane2, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 322, Short.MAX_VALUE))
+        );
+        jPanel5Layout.setVerticalGroup(
+            jPanel5Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+            .add(0, 168, Short.MAX_VALUE)
+            .add(jPanel5Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+                .add(org.jdesktop.layout.GroupLayout.TRAILING, jScrollPane2, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 168, Short.MAX_VALUE))
+        );
+
+        jTabbedPane1.addTab("Bindings", jPanel5);
+
+        org.jdesktop.layout.GroupLayout jPanel3Layout = new org.jdesktop.layout.GroupLayout(jPanel3);
+        jPanel3.setLayout(jPanel3Layout);
+        jPanel3Layout.setHorizontalGroup(
+            jPanel3Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+            .add(jTabbedPane1)
+        );
+        jPanel3Layout.setVerticalGroup(
+            jPanel3Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+            .add(jTabbedPane1)
+        );
+
+        jSplitPane2.setRightComponent(jPanel3);
 
         jPanel1.setBorder(javax.swing.BorderFactory.createTitledBorder("Plots [?]"));
         jPanel1.setToolTipText("<html>Layout of plots on the canvas<br>Click for help");
@@ -1088,7 +1247,7 @@ public class LayoutPanel extends javax.swing.JPanel {
         jPanel1Layout.setVerticalGroup(
             jPanel1Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
             .add(jPanel1Layout.createSequentialGroup()
-                .add(canvasLayoutPanel1, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 266, Short.MAX_VALUE)
+                .add(canvasLayoutPanel1, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 175, Short.MAX_VALUE)
                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
                 .add(selectedPlotLabel)
                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
@@ -1104,30 +1263,6 @@ public class LayoutPanel extends javax.swing.JPanel {
         );
 
         jSplitPane2.setTopComponent(jPanel1);
-
-        jPanel3.setBorder(javax.swing.BorderFactory.createTitledBorder("Bindings [?]"));
-        jPanel3.setToolTipText("List of connections between DOM properties");
-
-        bindingListComponent.setFont(bindingListComponent.getFont().deriveFont(bindingListComponent.getFont().getSize()-2f));
-        bindingListComponent.setModel(new javax.swing.AbstractListModel() {
-            String[] strings = { "Item 1", "Item 2", "Item 3", "Item 4", "Item 5" };
-            public int getSize() { return strings.length; }
-            public Object getElementAt(int i) { return strings[i]; }
-        });
-        jScrollPane2.setViewportView(bindingListComponent);
-
-        org.jdesktop.layout.GroupLayout jPanel3Layout = new org.jdesktop.layout.GroupLayout(jPanel3);
-        jPanel3.setLayout(jPanel3Layout);
-        jPanel3Layout.setHorizontalGroup(
-            jPanel3Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
-            .add(jScrollPane2, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 329, Short.MAX_VALUE)
-        );
-        jPanel3Layout.setVerticalGroup(
-            jPanel3Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
-            .add(org.jdesktop.layout.GroupLayout.TRAILING, jScrollPane2, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 82, Short.MAX_VALUE)
-        );
-
-        jSplitPane2.setRightComponent(jPanel3);
 
         jSplitPane1.setLeftComponent(jSplitPane2);
 
@@ -1308,14 +1443,15 @@ public class LayoutPanel extends javax.swing.JPanel {
         Object[] bindings= bindingListComponent.getSelectedValues();
         for ( Object o:bindings ) {
             BindingModel b= (BindingModel)o;
-            dom.getController().deleteBinding(b);
+            dom.getController().removeBinding(b);
         }
     }//GEN-LAST:event_deleteBindingsMenuItemActionPerformed
 
     private void plotElementListComponentValueChanged(javax.swing.event.ListSelectionEvent evt) {//GEN-FIRST:event_plotElementListComponentValueChanged
         logger.log(Level.FINE, "panelListComponentValueChanged {0}", evt.getValueIsAdjusting());
         if ( !evt.getValueIsAdjusting() ) {
-            updateSelected();
+            selectionChanged= true;
+            repaint();
         }
     }//GEN-LAST:event_plotElementListComponentValueChanged
 
@@ -1341,7 +1477,7 @@ public class LayoutPanel extends javax.swing.JPanel {
                 d2[0]= d1[0] + ( d2[0]-d1[0] ) * 1.25;
                 r.setBottom( DasDevicePosition.formatFormatStr(d2) );
             } catch ( ParseException ex ) {
-                logger.info("ParseException ignored");
+                logger.log(Level.INFO, "ParseException ignored: {0}", ex);
             }
         }
 
@@ -1374,7 +1510,7 @@ public class LayoutPanel extends javax.swing.JPanel {
                 emMaxTop= Math.max( emMaxTop, d2[1] );
                 n= n+1;
             } catch ( ParseException ex ) {
-                logger.info("ParseException ignored");
+                logger.log(Level.INFO, "ParseException ignored: {0}", ex);
             }
         }
 
@@ -1389,7 +1525,9 @@ public class LayoutPanel extends javax.swing.JPanel {
                 d1[1]= emMaxTop;
                 r.setBottom( DasDevicePosition.formatFormatStr(d2) );
                 r.setTop( DasDevicePosition.formatFormatStr(d1) );
-            } catch ( ParseException ex ) {}
+            } catch ( ParseException ex ) {
+                logger.log(Level.INFO, "ParseException ignored: {0}", ex);
+            }
         }
 
         if ( dom.getOptions().isAutolayout() ) org.autoplot.dom.DomOps.newCanvasLayout(dom);
@@ -1413,7 +1551,7 @@ public class LayoutPanel extends javax.swing.JPanel {
                 d2[0]= d1[0] + ( d2[0]-d1[0] ) * 0.80;
                 r.setBottom( DasDevicePosition.formatFormatStr(d2) );
             } catch ( ParseException ex ) {
-                logger.info("ParseException ignored");
+                logger.log(Level.INFO, "ParseException ignored: {0}", ex);
             }
         }
 
@@ -1476,32 +1614,97 @@ public class LayoutPanel extends javax.swing.JPanel {
         }
     }//GEN-LAST:event_editMenuItemActionPerformed
 
+    private void setHeightMIActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_setHeightMIActionPerformed
+        org.das2.util.LoggerManager.logGuiEvent(evt);                
+        
+        double emHeight= 1.0;
+        
+        List<Row> rows= new ArrayList<>();
+        for ( Plot p1: getSelectedPlots() ) {
+            if ( p1.isVisible() ) {
+                Row row= p1.getController().getRow();
+                if ( !rows.contains(row) ) rows.add(row);
+            }
+        }
+        
+        for ( Row r: rows ) {
+            try {
+                double[] d1= DasDevicePosition.parseLayoutStr( r.getTop() );
+                double[] d2= DasDevicePosition.parseLayoutStr( r.getBottom() );
+                d2[0]= d1[0];
+                d2[1]= d1[1]+emHeight;
+                d2[2]= 0;
+                r.setBottom( DasDevicePosition.formatFormatStr(d2) );
+            } catch ( ParseException ex ) {
+                logger.log(Level.INFO, "ParseException ignored: {0}", ex);
+            }
+        }
+
+        //if ( dom.getOptions().isAutolayout() ) org.autoplot.dom.DomOps.newCanvasLayout(dom);
+
+    }//GEN-LAST:event_setHeightMIActionPerformed
+
+    private void deleteAnnotationsMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_deleteAnnotationsMenuItemActionPerformed
+        org.das2.util.LoggerManager.logGuiEvent(evt);                
+        Object[] annotations= annotationsListComponent.getSelectedValues();
+        for ( Object o:annotations ) {
+            Annotation a= (Annotation)o;
+            dom.getController().deleteAnnotation(a);
+        }
+    }//GEN-LAST:event_deleteAnnotationsMenuItemActionPerformed
+
+    private void editAnnotationsMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_editAnnotationsMenuItemActionPerformed
+        Object[] annotations= annotationsListComponent.getSelectedValues();
+        PropertyEditor edit;
+        switch (annotations.length) {
+            case 0:
+                return;
+            case 1:
+                edit = new PropertyEditor(annotations[0]);
+                break;
+            default:
+                Annotation[] peers= new Annotation[annotations.length];
+                System.arraycopy( annotations, 0, peers, 0, annotations.length );
+                edit= PropertyEditor.createPeersEditor( annotationsListComponent.getSelectedValue(), peers );
+                break;
+        }
+        edit.showDialog(LayoutPanel.this);
+    }//GEN-LAST:event_editAnnotationsMenuItemActionPerformed
+
     // Variables declaration - do not modify//GEN-BEGIN:variables
     private javax.swing.JMenuItem addHiddenMenuItem;
     private javax.swing.JMenuItem addPlotsBelowMenuItem;
     private javax.swing.JButton addPlotsButton;
+    private javax.swing.JPopupMenu annotationsActionsMenu;
+    private javax.swing.JList<String> annotationsListComponent;
     private javax.swing.JMenuItem biggerMI;
     private javax.swing.JPopupMenu bindingActionsMenu;
     private javax.swing.JList bindingListComponent;
     private org.autoplot.util.CanvasLayoutPanel canvasLayoutPanel1;
     private javax.swing.JPopupMenu dataSourceActionsMenu;
     private javax.swing.JList<String> dataSourceList;
+    private javax.swing.JMenuItem deleteAnnotationsMenuItem;
     private javax.swing.JMenuItem deleteBindingsMenuItem;
     private javax.swing.JMenuItem deleteMenuItem;
     private javax.swing.JButton deletePlotButton;
+    private javax.swing.JMenuItem editAnnotationsMenuItem;
     private javax.swing.JMenuItem editMenuItem;
     private javax.swing.JButton fixLayoutButton;
     private javax.swing.JPanel jPanel1;
     private javax.swing.JPanel jPanel2;
     private javax.swing.JPanel jPanel3;
     private javax.swing.JPanel jPanel4;
+    private javax.swing.JPanel jPanel5;
+    private javax.swing.JPanel jPanel6;
     private javax.swing.JScrollPane jScrollPane1;
     private javax.swing.JScrollPane jScrollPane2;
     private javax.swing.JScrollPane jScrollPane3;
     private javax.swing.JScrollPane jScrollPane4;
+    private javax.swing.JScrollPane jScrollPane5;
     private javax.swing.JSplitPane jSplitPane1;
     private javax.swing.JSplitPane jSplitPane2;
     private javax.swing.JSplitPane jSplitPane3;
+    private javax.swing.JTabbedPane jTabbedPane1;
     private javax.swing.JTable jTable1;
     private javax.swing.JPopupMenu plotActionsMenu;
     private javax.swing.JList plotElementListComponent;
@@ -1512,6 +1715,7 @@ public class LayoutPanel extends javax.swing.JPanel {
     private javax.swing.JButton sameHeightButton;
     private javax.swing.JMenuItem sameSizeMI;
     private javax.swing.JLabel selectedPlotLabel;
+    private javax.swing.JMenuItem setHeightMI;
     private javax.swing.JButton shorterButton;
     private javax.swing.JMenu sizeMenu;
     private javax.swing.JMenuItem smallerMI;

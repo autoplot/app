@@ -3,7 +3,6 @@ package org.autoplot.renderer;
 
 import java.awt.Color;
 import java.beans.PropertyChangeEvent;
-import java.beans.PropertyChangeListener;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import org.das2.graph.Renderer;
@@ -15,10 +14,10 @@ import org.autoplot.PlotStylePanel;
 import org.autoplot.dom.PlotElement;
 
 /**
- * Style panel for orbit renderer
+ * Style panel for bounds renderer, which draws regions identified by bounds datasets.
  * @author jbf
  */
-public class BoundsStylePanel extends javax.swing.JPanel implements PlotStylePanel.StylePanel {
+public final class BoundsStylePanel extends javax.swing.JPanel implements PlotStylePanel.StylePanel {
 
     /**
      * Creates new form DigitalStylePanel
@@ -28,12 +27,16 @@ public class BoundsStylePanel extends javax.swing.JPanel implements PlotStylePan
         //note the colorPanel must have its layout set to BorderLayout.
         colorEditor1.setValue(Color.BLACK);
         colorPanel.add( colorEditor1.getSmallEditor() );
-        colorEditor1.addPropertyChangeListener( new PropertyChangeListener() {
-            @Override
-            public void propertyChange(PropertyChangeEvent evt) {
-                update();
-            }
+        colorEditor1.addPropertyChangeListener((PropertyChangeEvent evt) -> {
+            update();
         });
+        
+        colorEditor2.setValue(Color.BLACK);
+        fillColorPanel.add( colorEditor2.getSmallEditor() );
+        colorEditor2.addPropertyChangeListener((PropertyChangeEvent evt) -> {
+            update();
+        });
+        
         validate();
     }
 
@@ -66,13 +69,20 @@ public class BoundsStylePanel extends javax.swing.JPanel implements PlotStylePan
         Map<String,String> controls= new LinkedHashMap();
         controls.put( Renderer.CONTROL_KEY_COLOR, Renderer.encodeColorControl( (Color)colorEditor1.getValue() ) );
         //controls.put( "fillLabel", fillLabelTF.getText() );
+        controls.put( Renderer.CONTROL_KEY_FILL_COLOR, Renderer.encodeColorControl( (Color)colorEditor2.getValue() ) );
+        controls.put( Renderer.CONTROL_KEY_FILL_TEXTURE, String.valueOf( this.textureComboBox.getSelectedItem() ) );
+        controls.put( "polar", Renderer.encodeBooleanControl( polarCheckBox.isSelected() ) );
         String c= Renderer.formatControl(controls);
         this.control= c;
         firePropertyChange( Renderer.PROP_CONTROL, oldValue, c );
     }
+    
     private void updateGUI( Renderer renderer ) {
         this.control= renderer.getControl();
         colorEditor1.setValue( renderer.getColorControl( Renderer.CONTROL_KEY_COLOR, (Color)colorEditor1.getValue() ) );
+        colorEditor2.setValue( renderer.getColorControl( Renderer.CONTROL_KEY_FILL_COLOR, (Color)colorEditor2.getValue() ) );
+        this.textureComboBox.setSelectedItem( renderer.getControl("fillTexture", "" ) );
+        polarCheckBox.setSelected( renderer.getBooleanControl("polar",false) );
     }
     
     @Override
@@ -116,8 +126,14 @@ public class BoundsStylePanel extends javax.swing.JPanel implements PlotStylePan
     private void initComponents() {
 
         colorEditor1 = new org.das2.components.propertyeditor.ColorEditor();
+        colorEditor2 = new org.das2.components.propertyeditor.ColorEditor();
         jLabel2 = new javax.swing.JLabel();
         colorPanel = new javax.swing.JPanel();
+        jLabel1 = new javax.swing.JLabel();
+        fillColorPanel = new javax.swing.JPanel();
+        jLabel3 = new javax.swing.JLabel();
+        textureComboBox = new javax.swing.JComboBox<>();
+        polarCheckBox = new javax.swing.JCheckBox();
 
         setBorder(javax.swing.BorderFactory.createTitledBorder("Bounds"));
 
@@ -125,18 +141,51 @@ public class BoundsStylePanel extends javax.swing.JPanel implements PlotStylePan
 
         colorPanel.setLayout(new java.awt.BorderLayout());
 
+        jLabel1.setText("Fill Color:");
+
+        fillColorPanel.setLayout(new java.awt.BorderLayout());
+
+        jLabel3.setText("Fill Texture:");
+
+        textureComboBox.setModel(new javax.swing.DefaultComboBoxModel<>(new String[] { " ", "solid", "hash", "backhash", "crosshash" }));
+        textureComboBox.addItemListener(new java.awt.event.ItemListener() {
+            public void itemStateChanged(java.awt.event.ItemEvent evt) {
+                textureComboBoxItemStateChanged(evt);
+            }
+        });
+
+        polarCheckBox.setText("polar");
+        polarCheckBox.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                polarCheckBoxActionPerformed(evt);
+            }
+        });
+
         javax.swing.GroupLayout layout = new javax.swing.GroupLayout(this);
         this.setLayout(layout);
         layout.setHorizontalGroup(
             layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
             .addGroup(layout.createSequentialGroup()
                 .addContainerGap()
-                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING)
-                    .addComponent(colorPanel, javax.swing.GroupLayout.PREFERRED_SIZE, 100, javax.swing.GroupLayout.PREFERRED_SIZE)
+                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
                     .addGroup(layout.createSequentialGroup()
-                        .addComponent(jLabel2)
-                        .addGap(134, 134, 134)))
-                .addContainerGap(javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                        .addComponent(jLabel1)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                        .addComponent(fillColorPanel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                    .addGroup(layout.createSequentialGroup()
+                        .addComponent(jLabel3)
+                        .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                        .addComponent(textureComboBox, 0, 1, Short.MAX_VALUE))
+                    .addGroup(layout.createSequentialGroup()
+                        .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
+                            .addComponent(polarCheckBox)
+                            .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING)
+                                .addComponent(colorPanel, javax.swing.GroupLayout.PREFERRED_SIZE, 100, javax.swing.GroupLayout.PREFERRED_SIZE)
+                                .addGroup(layout.createSequentialGroup()
+                                    .addComponent(jLabel2)
+                                    .addGap(134, 134, 134))))
+                        .addGap(0, 0, Short.MAX_VALUE)))
+                .addContainerGap())
         );
         layout.setVerticalGroup(
             layout.createParallelGroup(javax.swing.GroupLayout.Alignment.LEADING)
@@ -146,14 +195,38 @@ public class BoundsStylePanel extends javax.swing.JPanel implements PlotStylePan
                         .addContainerGap()
                         .addComponent(jLabel2))
                     .addComponent(colorPanel, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
-                .addContainerGap(127, Short.MAX_VALUE))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.TRAILING)
+                    .addComponent(jLabel1)
+                    .addComponent(fillColorPanel, javax.swing.GroupLayout.PREFERRED_SIZE, 27, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addGroup(layout.createParallelGroup(javax.swing.GroupLayout.Alignment.BASELINE)
+                    .addComponent(jLabel3)
+                    .addComponent(textureComboBox, javax.swing.GroupLayout.PREFERRED_SIZE, javax.swing.GroupLayout.DEFAULT_SIZE, javax.swing.GroupLayout.PREFERRED_SIZE))
+                .addPreferredGap(javax.swing.LayoutStyle.ComponentPlacement.RELATED)
+                .addComponent(polarCheckBox)
+                .addContainerGap(39, Short.MAX_VALUE))
         );
     }// </editor-fold>//GEN-END:initComponents
+
+    private void textureComboBoxItemStateChanged(java.awt.event.ItemEvent evt) {//GEN-FIRST:event_textureComboBoxItemStateChanged
+        update();
+    }//GEN-LAST:event_textureComboBoxItemStateChanged
+
+    private void polarCheckBoxActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_polarCheckBoxActionPerformed
+        update();
+    }//GEN-LAST:event_polarCheckBoxActionPerformed
 
 
     // Variables declaration - do not modify//GEN-BEGIN:variables
     private org.das2.components.propertyeditor.ColorEditor colorEditor1;
+    private org.das2.components.propertyeditor.ColorEditor colorEditor2;
     private javax.swing.JPanel colorPanel;
+    private javax.swing.JPanel fillColorPanel;
+    private javax.swing.JLabel jLabel1;
     private javax.swing.JLabel jLabel2;
+    private javax.swing.JLabel jLabel3;
+    private javax.swing.JCheckBox polarCheckBox;
+    private javax.swing.JComboBox<String> textureComboBox;
     // End of variables declaration//GEN-END:variables
 }

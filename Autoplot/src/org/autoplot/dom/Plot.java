@@ -1,9 +1,7 @@
-/*
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
- */
+
 package org.autoplot.dom;
 
+import java.awt.Color;
 import java.util.ArrayList;
 import java.util.List;
 import org.das2.datum.DatumRange;
@@ -20,6 +18,7 @@ public class Plot extends DomNode {
 
     public Plot() {
     }
+    
     protected Axis xaxis = new Axis();
     public static final String PROP_XAXIS = "xaxis";
 
@@ -90,6 +89,53 @@ public class Plot extends DomNode {
         String oldFontSize = this.fontSize;
         this.fontSize = fontSize;
         propertyChangeSupport.firePropertyChange(PROP_FONTSIZE, oldFontSize, fontSize);
+    }
+    
+    /**
+     * font size for the legend.  This can be "" or "1em" meaning that the
+     * plot's font size should be used.
+     */
+    private String legendFontSize = "1em";
+
+    public static final String PROP_LEGENDFONTSIZE = "legendFontSize";
+
+    public String getLegendFontSize() {
+        return legendFontSize;
+    }
+
+    /**
+     * set the font size for the legend, using the conventions where 1em is
+     * the plot's font size:<ul>
+     * <li>1em same as plot font.
+     * <li>2em twice  plot font.
+     * <li>1em+2pt two points bigger than plot font.
+     * </ul>
+     * @see #setFontSize(java.lang.String) 
+     * @param legendFontSize 
+     */
+    public void setLegendFontSize(String legendFontSize) {
+        String oldLegendFontSize = this.legendFontSize;
+        this.legendFontSize = legendFontSize;
+        propertyChangeSupport.firePropertyChange(PROP_LEGENDFONTSIZE, oldLegendFontSize, legendFontSize);
+    }
+    
+    private Color background = new Color( 0, 0, 0, 0 );
+
+    public static final String PROP_BACKGROUND = "background";
+
+    public Color getBackground() {
+        return background;
+    }
+
+    /**
+     * set the background color for the plot.  This is normally transparent, so
+     * the canvas color is used, and can be reset with Color(0,0,0,0).
+     * @param background 
+     */
+    public void setBackground(Color background) {
+        Color oldBackground = this.background;
+        this.background = background;
+        propertyChangeSupport.firePropertyChange(PROP_BACKGROUND, oldBackground, background);
     }
     
     /**
@@ -212,6 +258,20 @@ public class Plot extends DomNode {
         propertyChangeSupport.firePropertyChange( PROP_COLORTABLE, oldVal, this.colortable );
     }
 
+    private String colorbarColumnPosition = "100%+1em,100%+2em";
+
+    public static final String PROP_COLORBARCOLUMNPOSITION = "colorbarColumnPosition";
+
+    public String getColorbarColumnPosition() {
+        return colorbarColumnPosition;
+    }
+
+    public void setColorbarColumnPosition(String colorbarColumnPosition) {
+        String oldColorbarColumnPosition = this.colorbarColumnPosition;
+        this.colorbarColumnPosition = colorbarColumnPosition;
+        propertyChangeSupport.firePropertyChange(PROP_COLORBARCOLUMNPOSITION, oldColorbarColumnPosition, colorbarColumnPosition);
+    }
+    
     private String rowId="";
     public static final String PROP_ROWID = "rowId";
 
@@ -275,6 +335,51 @@ public class Plot extends DomNode {
         propertyChangeSupport.firePropertyChange(PROP_TICKS_URI, old, ticksURI );
     }
 
+    /**
+     * -1 or the number of lines to allocate space for ephemeris.
+     */
+    private int ephemerisLineCount = -1;
+
+    public static final String PROP_EPHEMERISLINECOUNT = "ephemerisLineCount";
+
+    /**
+     * 0 or the number of lines to allocate space for ephemeris.  Note this is set automatically when the ephemeris is
+     * loaded.  This was introduced so that fixLayout could be performed without knowing what the TCA dataset contains.
+     * @return the line count or -1 if no lines are allocated.
+     */
+    public int getEphemerisLineCount() {
+        return ephemerisLineCount;
+    }
+
+    /**
+     * 0 or the number of lines to allocate space for ephemeris.  Note this is set automatically when the ephemeris is
+     * loaded.
+     * @param ephemerisLineCount 
+     */
+    public void setEphemerisLineCount(int ephemerisLineCount) {
+        int oldEphemerisLineCount = this.ephemerisLineCount;
+        this.ephemerisLineCount = ephemerisLineCount;
+        propertyChangeSupport.firePropertyChange(PROP_EPHEMERISLINECOUNT, oldEphemerisLineCount, ephemerisLineCount);
+    }
+
+    private String ephemerisLabels="";
+
+    public static final String PROP_EPHEMERIS_LABELS = "ephemerisLabels";
+
+    public String getEphemerisLabels() {
+        return ephemerisLabels;
+    }
+
+    /**
+     * explicitly set the label for each line of ephemeris, using a semi-colon delimited list of labels.
+     * @param ephemerisLabels 
+     */
+    public void setEphemerisLabels(String ephemerisLabels) {
+        String oldEphemerisLabels = this.ephemerisLabels;
+        this.ephemerisLabels = ephemerisLabels;
+        propertyChangeSupport.firePropertyChange(PROP_EPHEMERIS_LABELS, oldEphemerisLabels, ephemerisLabels);
+    }
+
     protected PlotController controller;
 
     public PlotController getController() {
@@ -293,7 +398,7 @@ public class Plot extends DomNode {
 
     @Override
     public void syncTo(DomNode n) {
-        syncTo( n, new ArrayList<String>() );
+        syncTo( n, new ArrayList<>() );
     }
 
     @Override
@@ -313,15 +418,20 @@ public class Plot extends DomNode {
         if (!exclude.contains(PROP_VISIBLE)) this.setVisible(that.isVisible());
         if (!exclude.contains(PROP_CONTEXT)) this.setContext(that.getContext());
         if (!exclude.contains(PROP_TICKS_URI)) this.setTicksURI(that.getTicksURI());
+        if (!exclude.contains(PROP_EPHEMERIS_LABELS)) this.setEphemerisLabels(that.getEphemerisLabels());
+        if (!exclude.contains(PROP_EPHEMERISLINECOUNT)) this.setEphemerisLineCount(that.getEphemerisLineCount());
         if (!exclude.contains(PROP_LEGENDPOSITION)) this.setLegendPosition(that.getLegendPosition());
+        if (!exclude.contains(PROP_COLORBARCOLUMNPOSITION)) this.setColorbarColumnPosition( that.getColorbarColumnPosition() );
         if (!exclude.contains(PROP_FONTSIZE) ) this.setFontSize(that.getFontSize());
+        if (!exclude.contains(PROP_LEGENDFONTSIZE) ) this.setLegendFontSize(that.getLegendFontSize());
         if (!exclude.contains(PROP_DISPLAYLEGEND)) this.setDisplayLegend(that.isDisplayLegend());
         if (!exclude.contains(PROP_DISPLAYTITLE)) this.setDisplayTitle(that.isDisplayTitle());
+        if (!exclude.contains(PROP_BACKGROUND)) this.setBackground(that.getBackground());
     }
 
     @Override
     public List<DomNode> childNodes() {
-        ArrayList<DomNode> result = new ArrayList<DomNode>();
+        ArrayList<DomNode> result = new ArrayList<>();
         result.add(xaxis);
         result.add(yaxis);
         result.add(zaxis);
@@ -362,14 +472,24 @@ public class Plot extends DomNode {
         if (!b) result.add(new PropertyChangeDiff(PROP_CONTEXT, that.context, this.context));
         b= that.ticksURI.equals(this.ticksURI);
         if (!b) result.add(new PropertyChangeDiff(PROP_TICKS_URI, that.ticksURI, this.ticksURI));
+        b= that.ephemerisLabels.equals(this.ephemerisLabels);
+        if (!b) result.add(new PropertyChangeDiff(PROP_EPHEMERIS_LABELS, that.ephemerisLabels, this.ephemerisLabels));
+        b= that.ephemerisLineCount==this.ephemerisLineCount;
+        if (!b) result.add(new PropertyChangeDiff(PROP_EPHEMERISLINECOUNT, that.ephemerisLineCount, this.ephemerisLineCount));
         b= that.legendPosition.equals(this.legendPosition);
         if (!b) result.add(new PropertyChangeDiff(PROP_LEGENDPOSITION, that.legendPosition, this.legendPosition ));
+        b= that.colorbarColumnPosition.equals(this.colorbarColumnPosition);
+        if (!b) result.add(new PropertyChangeDiff(PROP_COLORBARCOLUMNPOSITION, that.colorbarColumnPosition, this.colorbarColumnPosition ));
         b= that.displayLegend==this.displayLegend;        
         if (!b) result.add(new PropertyChangeDiff(PROP_DISPLAYLEGEND, that.displayLegend, this.displayLegend ));
         b=  that.fontSize.equals(this.fontSize) ;
         if ( !b ) result.add(new PropertyChangeDiff( PROP_FONTSIZE, that.fontSize , this.fontSize ) );        
+        b=  that.legendFontSize.equals(this.legendFontSize) ;
+        if ( !b ) result.add(new PropertyChangeDiff( PROP_LEGENDFONTSIZE, that.legendFontSize , this.legendFontSize ) );        
         b= that.displayTitle==this.displayTitle;
         if (!b) result.add(new PropertyChangeDiff(PROP_DISPLAYTITLE, that.displayTitle, this.displayTitle ));
+        b= that.background.equals(this.background);
+        if (!b) result.add(new PropertyChangeDiff(PROP_BACKGROUND, that.background, this.background ));
         result.addAll(DomUtil.childDiffs( PROP_XAXIS, this.getXaxis().diffs(that.getXaxis())));
         result.addAll(DomUtil.childDiffs( PROP_YAXIS, this.getYaxis().diffs(that.getYaxis())));
         result.addAll(DomUtil.childDiffs( PROP_ZAXIS, this.getZaxis().diffs(that.getZaxis())));

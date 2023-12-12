@@ -8,15 +8,10 @@
  */
 package org.autoplot;
 
-import org.autoplot.renderer.ColorScatterStylePanel;
-import org.autoplot.renderer.SpectrogramStylePanel;
-import org.autoplot.renderer.SeriesStylePanel;
-import org.autoplot.renderer.HugeScatterStylePanel;
-import ZoeloeSoft.projects.JFontChooser.JFontChooser;
-import java.awt.Color;
 import java.awt.Component;
 import java.awt.Font;
 import java.awt.Frame;
+import java.awt.GridLayout;
 import java.awt.HeadlessException;
 import java.awt.Image;
 import java.awt.Toolkit;
@@ -64,10 +59,10 @@ import javax.swing.ComponentInputMap;
 import javax.swing.DefaultComboBoxModel;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.InputMap;
+import javax.swing.JCheckBox;
 import javax.swing.JCheckBoxMenuItem;
 import javax.swing.JComboBox;
 import javax.swing.JComponent;
-import javax.swing.JDialog;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
@@ -84,52 +79,9 @@ import javax.swing.SwingUtilities;
 import javax.swing.event.MenuEvent;
 import javax.swing.event.MenuListener;
 import javax.swing.filechooser.FileFilter;
-import org.autoplot.renderer.ContourStylePanel;
-import org.autoplot.renderer.DigitalStylePanel;
-import org.autoplot.renderer.EventsStylePanel;
-import org.autoplot.renderer.ImageStylePanel;
-import org.autoplot.renderer.OrbitStylePanel;
-import org.autoplot.renderer.PitchAngleDistributionStylePanel;
-import org.autoplot.renderer.StackedHistogramStylePanel;
-import org.das2.DasApplication;
-import org.das2.components.DasProgressPanel;
-import org.das2.components.propertyeditor.PropertyEditor;
-import org.das2.datum.DatumRange;
-import org.das2.datum.Units;
-import org.das2.datum.UnitsUtil;
-import org.das2.event.DasMouseInputAdapter;
-import org.das2.event.MouseModule;
-import org.das2.event.PointSlopeDragRenderer;
-import org.das2.graph.BorderType;
-import org.das2.graph.DasAxis;
-import org.das2.graph.DasCanvas;
-import org.das2.graph.DasPlot;
-import org.das2.system.RequestProcessor;
-import org.das2.util.Entities;
-import org.das2.util.awt.PdfGraphicsOutput;
-import org.das2.util.monitor.NullProgressMonitor;
-import org.das2.util.monitor.ProgressMonitor;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import org.autoplot.bookmarks.Bookmark;
 import org.autoplot.bookmarks.BookmarksException;
-import org.autoplot.dom.Annotation;
-import org.autoplot.dom.Application;
-import org.autoplot.dom.ApplicationController;
-import org.autoplot.dom.Axis;
-import org.autoplot.dom.BindingModel;
-import org.autoplot.dom.Canvas;
-import org.autoplot.dom.Connector;
-import org.autoplot.dom.DataSourceFilter;
-import org.autoplot.dom.DomUtil;
-import org.autoplot.dom.OptionsPrefsController;
-import org.autoplot.dom.Plot;
-import org.autoplot.dom.PlotController;
-import org.autoplot.dom.PlotElement;
-import org.autoplot.layout.LayoutConstants;
-import org.autoplot.state.StatePersistence;
-import org.autoplot.transferrable.ImageSelection;
-import org.das2.qds.DataSetOps;
-import org.das2.qds.QDataSet;
-import org.das2.qds.SemanticOps;
 import org.autoplot.datasource.AutoplotSettings;
 import org.autoplot.datasource.DataSetSelector;
 import org.autoplot.datasource.DataSetURI;
@@ -142,9 +94,60 @@ import org.autoplot.datasource.DataSourceUtil;
 import org.autoplot.datasource.URISplit;
 import org.autoplot.datasource.WindowManager;
 import org.autoplot.datasource.capability.TimeSeriesBrowse;
+import org.autoplot.dom.Annotation;
+import org.autoplot.dom.Application;
+import org.autoplot.dom.ApplicationController;
+import org.autoplot.dom.Axis;
+import org.autoplot.dom.BindingModel;
+import org.autoplot.dom.Canvas;
+import org.autoplot.dom.ChangesSupport.DomLock;
+import org.autoplot.dom.Connector;
+import org.autoplot.dom.DataSourceFilter;
+import org.autoplot.dom.DomUtil;
+import org.autoplot.dom.Plot;
+import org.autoplot.dom.PlotController;
+import org.autoplot.dom.PlotElement;
+import org.autoplot.layout.LayoutConstants;
 import org.autoplot.renderer.BoundsStylePanel;
+import org.autoplot.renderer.ColorScatterStylePanel;
+import org.autoplot.renderer.ContourStylePanel;
+import org.autoplot.renderer.DigitalStylePanel;
+import org.autoplot.renderer.EventsStylePanel;
+import org.autoplot.renderer.HugeScatterStylePanel;
+import org.autoplot.renderer.ImageStylePanel;
 import org.autoplot.renderer.InternalStylePanel;
+import org.autoplot.renderer.OrbitStylePanel;
+import org.autoplot.renderer.PitchAngleDistributionStylePanel;
+import org.autoplot.renderer.SeriesStylePanel;
+import org.autoplot.renderer.SpectrogramStylePanel;
+import org.autoplot.renderer.StackedHistogramStylePanel;
+import org.autoplot.state.StatePersistence;
+import org.autoplot.transferrable.ImageSelection;
+import org.autoplot.util.GraphicsUtil;
+import org.das2.DasApplication;
+import org.das2.components.DasProgressPanel;
+import org.das2.components.propertyeditor.PropertyEditor;
+import org.das2.datum.DatumRange;
+import org.das2.datum.Units;
+import org.das2.datum.UnitsUtil;
+import org.das2.event.DasMouseInputAdapter;
+import org.das2.event.MouseModule;
+import org.das2.event.PointSlopeDragRenderer;
+import org.das2.graph.DasAxis;
+import org.das2.graph.DasCanvas;
+import org.das2.graph.DasPlot;
+import org.das2.qds.DataSetOps;
+import org.das2.qds.QDataSet;
+import org.das2.qds.SemanticOps;
+import org.das2.system.RequestProcessor;
+import org.das2.util.Entities;
+import org.das2.util.awt.PdfGraphicsOutput;
+import org.das2.util.monitor.NullProgressMonitor;
+import org.das2.util.monitor.ProgressMonitor;
 import org.xml.sax.SAXException;
+import ZoeloeSoft.projects.JFontChooser.JFontChooser;
+import org.das2.components.propertyeditor.EnumerationEditor;
+import org.das2.graph.DasColorBar;
 
 /**
  * Extra methods to support AutoplotUI.
@@ -183,8 +186,19 @@ public class GuiSupport {
         }
     }
 
+    /**
+     * copy the current URI to the system clipboard.
+     */
     public void doCopyDataSetURL() {
-        StringSelection stringSelection = new StringSelection( DataSetURI.toUri(parent.dataSetSelector.getValue()).toString() );
+        setClipboard( DataSetURI.toUri(parent.dataSetSelector.getValue()).toString() );
+    }
+    
+    /**
+     * set the system clipboard (cut-n-paste mouse buffer).
+     * @param s 
+     */
+    public static void setClipboard( String s ) {
+        StringSelection stringSelection = new StringSelection( s );
         Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
         clipboard.setContents(stringSelection, new ClipboardOwner() {
             @Override
@@ -227,7 +241,8 @@ public class GuiSupport {
             return null;
         }
     }
-
+    
+    
     /**
      * return a GUI controller for the RenderType.
      * @param renderType the render type, such as RenderType.colorScatter
@@ -427,7 +442,7 @@ public class GuiSupport {
                 Logger.getLogger(AutoplotUI.class.getName()).log(Level.SEVERE, null, ex);
             }
         }
-        Application dom= parent.getDocumentModel();
+        Application dom= parent.getDom();
         String uri= furi;
         DatumRange dr;
         if ( !(dom.getTimeRange()==Application.DEFAULT_TIME_RANGE) && !dom.getTimeRange().equals( uriRange ) ) {
@@ -501,7 +516,7 @@ public class GuiSupport {
                     logger.fine("looks like a TSB is used, but the data is not a time series, don't reload");
                 } else {
                     dsf.getController().getTsb().setTimeResolution(null);
-                    mon= DasProgressPanel.createFramed(parent, "reloading timeseries at native resolution");
+                    mon= DasProgressPanel.createFramed(parent, "reloading data at native resolution");
                     ds= dss.getDataSet( mon );
                     if ( mon.isCancelled() ) {
                         parent.setStatus( "export data cancelled" );
@@ -515,6 +530,7 @@ public class GuiSupport {
             switch (dscontrol) {
                 case "plotElementTrim":
                     {
+                        // see also CreatePngWalk's isDataVisible
                         DasPlot p= pe.getController().getDasPlot();
                         DatumRange xbounds= p.getXAxis().getDatumRange();
                         QDataSet dsout=  pe.getController().getDataSet();
@@ -523,7 +539,8 @@ public class GuiSupport {
                         if ( SemanticOps.isRank2Waveform(dsout) ) {
                             dsout= DataSetOps.flattenWaveform(dsout);
                             //dsout= ArrayDataSet.copy( dsout );
-                        }       dsout= SemanticOps.trim( dsout, xbounds, null );
+                        }       
+                        dsout= SemanticOps.trim( dsout, xbounds, null );
                         format.formatData( uriOut, dsout, mon );
                         logger.log( Level.FINE, "format in {0} millis", (System.currentTimeMillis()-t0));
                         break;
@@ -610,7 +627,7 @@ public class GuiSupport {
                     URISplit split= URISplit.parse(currentFileString);
                     edp.getFilenameTF().setText(split.file);
                     edp.getFormatDL().setSelectedItem( "." + split.ext );
-                    if ( currentFileString.contains("/") && currentFileString.startsWith("file:")) {
+                    if ( currentFileString.contains("/") && ( currentFileString.startsWith("file:") || currentFileString.startsWith("/") ) ) {
                         edp.setFile( currentFileString );
                         if ( split.params!=null && edp.getDataSourceFormatEditorPanel()!=null ) {
                             edp.getDataSourceFormatEditorPanel().setURI(currentFileString);
@@ -652,7 +669,7 @@ public class GuiSupport {
                         final DataSourceFormat formata= DataSetURI.getDataSourceFormat( new URI(s) );
                         
                         DataSourceFormatEditorPanel opts= edp.getDataSourceFormatEditorPanel();
-                        if ( opts!=null ) {
+                        if ( opts!=null ) { // See PlotElementController.java line 3141, where this code is repeated.
                             URISplit splitopts= URISplit.parse(opts.getURI());
                             if ( splitopts.params!=null && splitopts.params.length()==0 ) {
                                 splitopts.params= null;
@@ -725,7 +742,7 @@ public class GuiSupport {
                 
                 edw.setUris( uris.toArray(new String[uris.size()]) );
                 
-                if ( JOptionPane.showConfirmDialog( parent, edw, "export all", JOptionPane.OK_CANCEL_OPTION )==JOptionPane.OK_OPTION ) {
+                if ( AutoplotUtil.showConfirmDialog( parent, edw, "Export All", JOptionPane.OK_CANCEL_OPTION )==JOptionPane.OK_OPTION ) {
                     try {
                         ScriptContext.formatDataSet( edw.getDataSet(), edw.getUri() );
                         parent.setStatus("Wrote " + org.autoplot.datasource.DataSourceUtil.unescape(edw.getUri()) );
@@ -758,17 +775,29 @@ public class GuiSupport {
                 Runnable run= new Runnable() {
                     @Override
                     public void run() {
+                        parent.resizeForCanvasSize(parent.dom.getOptions().getWidth(), parent.dom.getOptions().getHeight()); 
                         parent.dom.getController().reset();
                         parent.undoRedoSupport.resetHistory();
                         parent.applicationModel.setVapFile(null);
                         parent.stateSupport.close();
-                        parent.tickleTimer.tickle();
+                        parent.tickleTimer.tickle("resetWindow801");
+                        if ( parent.isExpertMode() ) {
+                            parent.setEditorCard(AutoplotUI.CARD_DATA_SET_SELECTOR);
+                        }
+                        Runnable run2= new Runnable() {
+                            @Override
+                            public void run() {
+                                parent.resizeForDefaultCanvasSize();
+                            }
+                        };
+                        SwingUtilities.invokeLater(run2);
+
                     }
                 };
 
                 // https://sourceforge.net/tracker/?func=detail&aid=3557440&group_id=199733&atid=970682
-                new Thread(run).start(); // allow reset when all the request processor threads are full.  TODO: I'm not sure why this appeared to be the case.
-                //RequestProcessor.invokeLater(run);
+                new Thread(run).start(); 
+                
             }
         };
     }
@@ -793,8 +822,6 @@ public class GuiSupport {
                 p.translate( 20,20 );
                 view.setLocation( p );
                 view.setVisible(true);
-                OptionsPrefsController opc= new OptionsPrefsController( model.dom.getOptions() );
-                opc.loadPreferencesWithEvents();
                 view.setMessage("ready");
                 AutoplotUI.checkStatusLoop(view);
             }
@@ -813,7 +840,7 @@ public class GuiSupport {
 
     /**
      * clone the application into a new AutoplotUI
-     * @return
+     * @return the new application
      */
     ApplicationModel cloneApplication() {
         final ApplicationModel model = new ApplicationModel();
@@ -831,14 +858,14 @@ public class GuiSupport {
                 p.translate( 20,20 );
                 view.setLocation( p );
                 view.setVisible(true);
-                OptionsPrefsController opc= new OptionsPrefsController( model.dom.getOptions() );
-                opc.loadPreferencesWithEvents();
                 view.setMessage("ready");
                 AutoplotUI.checkStatusLoop(view);
                 Canvas size= parent.applicationModel.dom.getCanvases(0);
-                view.resizeForCanvasSize( size.getWidth(), size.getHeight() );
-            }
-        };
+                int extraWidth= GuiSupport.this.parent.getWindowExtraWidth();
+                int extraHeight= GuiSupport.this.parent.getWindowExtraHeight();
+                view.resizeForCanvasSize( size.getWidth(), size.getHeight(), extraWidth, extraHeight  );
+                }
+            };
         try {
             if ( SwingUtilities.isEventDispatchThread() ) {
                 run.run();
@@ -849,6 +876,7 @@ public class GuiSupport {
             throw new RuntimeException(ex);
         }
         model.dom.syncTo( parent.applicationModel.dom );
+        DomUtil.copyOverInternalData( parent.applicationModel.dom, model.dom );
         return model;
     }
     
@@ -863,7 +891,7 @@ public class GuiSupport {
     }
 
     public Action createCloneApplicationAction() {
-        return new AbstractAction("Clone to New Window") {
+        return new AbstractAction("Duplicate in New Window") {
             @Override
             public void actionPerformed( ActionEvent e ) {
                 org.das2.util.LoggerManager.logGuiEvent(e);        
@@ -887,6 +915,7 @@ public class GuiSupport {
         tt.put( "Image", RenderType.image);
         tt.put( "Pitch Angle Distribution", RenderType.pitchAngleDistribution);
         tt.put( "Orbit Plot", RenderType.orbitPlot );
+        tt.put( "Bounds", RenderType.bounds );
         tt.put( "Contour Plot", RenderType.contour);
         tt.put( "Stacked Histogram", RenderType.stackedHistogram);
         return tt;
@@ -894,7 +923,8 @@ public class GuiSupport {
 
     public static JMenu createEZAccessMenu(final Plot plot) {
 
-        JMenu result = new JMenu("Plot Style");
+        JMenu result = new JMenu("Plot Element Type");
+        result.setToolTipText("Plot Element Type was formerly the Plot Style menu");
         JMenuItem mi;
 
         result.setName(plot.getId()+"_ezaccessmenu");
@@ -1014,18 +1044,7 @@ public class GuiSupport {
 
     protected void exportRecent(Component c) {
         JFileChooser chooser = new JFileChooser();
-        chooser.setFileFilter(new javax.swing.filechooser.FileFilter() {
-            @Override
-            public boolean accept(File f) {
-                String s= f.toString();
-                if ( s==null ) return false; // Findbugs OK: There was a Windows bug where file.toString could return null.
-                return f.isDirectory() || s.endsWith(".xml");
-            }
-            @Override
-            public String getDescription() {
-                return "bookmarks files (*.xml)";
-            }
-        });
+        chooser.setFileFilter( new FileNameExtensionFilter("bookmarks files", "xml" ) );
         int r = chooser.showSaveDialog(c);
         if (r == JFileChooser.APPROVE_OPTION) {
             try {
@@ -1042,12 +1061,17 @@ public class GuiSupport {
         }
     }
 
-    private static FileFilter getFileNameExtensionFilter(final String description, final String ext) {
+    /**
+     * get simple filter based on extension for use with JFileChooser.
+     * @param description descriptions, like "png image file"
+     * @param ext file extension, like ".png"
+     * @return the FileFilter 
+     */
+    public static FileFilter getFileNameExtensionFilter(final String description, final String ext) {
         return new FileFilter() {
             @Override
             public boolean accept(File f) {
-                String s= f.toString();
-                if ( s==null ) return false;// Findbugs OK: There was a Windows bug where file.toString could return null.
+                String s= f.getName();
                 return f.isDirectory() || s.endsWith(ext);
             }
             @Override
@@ -1059,6 +1083,13 @@ public class GuiSupport {
 
     private static File currentFile;
 
+    /**
+     * return an action which will send the canvas to the printer. 
+     * @param app app containing the canvas
+     * @param parent the focus dialog
+     * @param ext extention like "svg" or "pdf" or "png"
+     * @return 
+     */
     public static Action getPrintAction( final Application app, final Component parent,final String ext) {
         return new AbstractAction("Print as "+ext.toUpperCase()) {
             @Override
@@ -1068,8 +1099,8 @@ public class GuiSupport {
                 final DasCanvas canvas = app.getController().getDasCanvas();
                 final JFileChooser fileChooser = new JFileChooser();
                 fileChooser.setDialogTitle("Print to "+ext.toUpperCase());
-                fileChooser.setFileFilter(getFileNameExtensionFilter( ext + " files", ext ));
-                Preferences prefs = AutoplotSettings.settings().getPreferences(DasCanvas.class);
+                fileChooser.setFileFilter( new FileNameExtensionFilter( ext + " files", ext )) ;
+                Preferences prefs = AutoplotSettings.getPreferences(DasCanvas.class);
                 String savedir = prefs.get("savedir", null);
                 if (savedir != null) fileChooser.setCurrentDirectory(new File(savedir));
                 if (currentFile != null) {
@@ -1175,13 +1206,16 @@ public class GuiSupport {
             if ( d.showDialog( SwingUtilities.getWindowAncestor( dom.getController().getDasCanvas() ) )==JOptionPane.OK_OPTION ) {
                 String lock= "merging vaps";
                 dom.getController().registerPendingChange( d,lock );
-                dom.getController().performingChange( d, lock );
-                List<String> uris= d.getSelectedURIs();
-                for ( String uri: uris ) {
-                    dom.getController().doplot( plot, pelement, uri );
-                    pelement= null; //otherwise we'd clobber last dataset.
+                try {
+                    dom.getController().performingChange( d, lock );
+                    List<String> uris= d.getSelectedURIs();
+                    for ( String uri: uris ) {
+                        dom.getController().doplot( plot, pelement, uri );
+                        pelement= null; //otherwise we'd clobber last dataset.
+                    }
+                } finally {
+                    dom.getController().changePerformed( d, lock );
                 }
-                dom.getController().changePerformed( d, lock );
             }
         } catch (IOException ex) {
             logger.log(Level.SEVERE, ex.getMessage(), ex);
@@ -1247,7 +1281,7 @@ public class GuiSupport {
         int modifiers = dia.getModifiers();
         if ( (modifiers & KeyEvent.CTRL_MASK) == KeyEvent.CTRL_MASK && (modifiers & KeyEvent.SHIFT_MASK) == KeyEvent.SHIFT_MASK ) {
             // reserve this for plot above, which we'll add soon.
-            plot = null;
+            plot = dom.getController().addPlot(LayoutConstants.ABOVE);
             pelement = null;
         } else if ((modifiers & KeyEvent.CTRL_MASK) == KeyEvent.CTRL_MASK) {
             // new plot
@@ -1291,9 +1325,14 @@ public class GuiSupport {
             Runnable run;
             switch (depCount) {
                 case 0:
+                    applicationModel.addRecent(uris[0]);
                     String val= uris[0];
                     if ( val.endsWith(".vap") ) {
-                        mergeVap(dom,lplot, lpelement, val);
+                        try {
+                            mergeVap(dom,lplot, lpelement, val);
+                        } finally {
+                            dom.getController().changePerformed( dom, lock );
+                        }
                     } else {
                         final String lval= val;
                         run= new Runnable() {
@@ -1394,13 +1433,15 @@ public class GuiSupport {
             //    pelement = dom.getController().addPlotElement(plot, null);
             //}
                 case -1:
+                    dom.getController().changePerformed( dom, lock );
                     break;
                 default:
+                    dom.getController().changePerformed( dom, lock );
                     break;
             }
         } catch ( IllegalArgumentException ex ) { // TODO: the IllegalArgumentException is wrapped in a RuntimeException, I don't know why.  I should have MalformedURIException
             applicationModel.showMessage( ex.getMessage(), "Illegal Argument", JOptionPane.ERROR_MESSAGE );
-        }
+        } 
     }
 
     /**
@@ -1459,6 +1500,23 @@ public class GuiSupport {
         
         mouseAdapter.addMenuItem(new JSeparator());
 
+        item= new JMenuItem( new AbstractAction("Reset Zoom" ) {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                org.das2.util.LoggerManager.logGuiEvent(e);                
+                if ( plot.getZaxis()==axis ) {
+                    AutoplotUtil.resetZoomZ( controller.getApplication(), plot );
+                } else {
+                    if ( axis==plot.getXaxis() ) {
+                        AutoplotUtil.resetZoomX( controller.getApplication(), plot );
+                    } else {
+                        AutoplotUtil.resetZoomY( controller.getApplication(), plot );
+                    }
+                }
+            }            
+        } );
+        mouseAdapter.addMenuItem(item);
+                
         if (axis == plot.getXaxis()) {
             JMenu addPlotMenu = new JMenu("Add Plot");
             mouseAdapter.addMenuItem(addPlotMenu);
@@ -1475,6 +1533,24 @@ public class GuiSupport {
             expertMenuItems.add( addPlotMenu );
         }
 
+        if (axis == plot.getZaxis()) {
+            JMenuItem addPlotMenu = new JMenuItem( new AbstractAction("Set Colorbar...") {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    org.das2.util.LoggerManager.logGuiEvent(e);
+                    EnumerationEditor edit = new EnumerationEditor();
+                    edit.setValue( ((DasColorBar)dasAxis).getType() );
+                    if ( JOptionPane.OK_OPTION
+                            ==JOptionPane.showConfirmDialog( dasAxis.getCanvas(), edit.getCustomEditor(), "Set Colortable", JOptionPane.OK_CANCEL_OPTION ) ) {
+                        ((DasColorBar)dasAxis).setType((DasColorBar.Type) edit.getValue());
+                    }
+                }
+            });
+            item.setToolTipText("reset the colorbar");
+            mouseAdapter.addMenuItem(addPlotMenu);
+            expertMenuItems.add( addPlotMenu );
+        }
+        
         JMenu bindingMenu = new JMenu("Binding");
 
         mouseAdapter.addMenuItem(bindingMenu);
@@ -1561,6 +1637,7 @@ public class GuiSupport {
             }
         });
         bindingMenu.add(item);
+        
         item = new JMenuItem(new AbstractAction("Bind Scale to Plot Below") {
             @Override
             public void actionPerformed(ActionEvent e) {
@@ -1571,6 +1648,16 @@ public class GuiSupport {
                 } else {
                     bindToPlotPeer(controller,dstPlot, plot, axis, new String[] { Axis.PROP_LOG, Axis.PROP_SCALE });
                 }
+            }
+        });
+        bindingMenu.add(item);
+
+        item = new JMenuItem(new AbstractAction("Bind Scale to Opposite Axis") {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                org.das2.util.LoggerManager.logGuiEvent(e);                
+                controller.bind( plot.getXaxis(), Axis.PROP_LOG, plot.getYaxis(), Axis.PROP_LOG );
+                controller.bind( plot.getXaxis(), Axis.PROP_SCALE, plot.getYaxis(), Axis.PROP_SCALE );
             }
         });
         bindingMenu.add(item);
@@ -1681,7 +1768,25 @@ public class GuiSupport {
                 org.das2.util.LoggerManager.logGuiEvent(e);                
                 Units u= dasAxis.getUnits();
                 Units[] uu= u.getConvertibleUnits();
-
+                List<Units> uus= new ArrayList<>( Arrays.asList(uu) );
+                
+                // offer to change to a unit which is convertible to the data.
+                List<PlotElement> pes= DomUtil.getPlotElementsFor( controller.getApplication(), plot );
+                for ( PlotElement pe : pes ) {
+                    Units u1;
+                    if ( dasAxis.isHorizontal() ) {
+                        u1= pe.getPlotDefaults().getXaxis().getRange().getUnits();
+                    } else if ( dasPlot.getYAxis()==dasAxis ) {
+                        u1= pe.getPlotDefaults().getYaxis().getRange().getUnits();
+                    } else {
+                        u1= pe.getPlotDefaults().getZaxis().getRange().getUnits();
+                    }
+                    if ( !uus.contains(u1) && !u1.equals(u) 
+                            && UnitsUtil.isIntervalOrRatioMeasurement(u1) ) uus.add(u1);
+                }
+                
+                uu= uus.toArray(new Units[uus.size()]);
+                
                 Component p= (JFrame)SwingUtilities.getWindowAncestor( controller.getDasCanvas().getParent());
                 
                 if ( uu.length<1 ) {
@@ -1698,13 +1803,20 @@ public class GuiSupport {
                     l.setAlignmentX(0.f);
                     p1.add(l);
                     JComboBox cb= new JComboBox(uu);
+                    cb.setSelectedItem(u);
                     cb.setAlignmentX(0.f);
                     p1.add(cb);
                     if ( JOptionPane.OK_OPTION==JOptionPane.showConfirmDialog( p,
                                 p1,
                                 "Reset axis units", JOptionPane.OK_CANCEL_OPTION ) ) {
                         Units nu= (Units)cb.getSelectedItem();
-                        axis.getController().resetAxisUnits(nu);
+                        if ( nu.isConvertibleTo(u) ) {
+                            axis.getController().resetAxisUnits(nu);
+                        } else {
+                            DatumRange oldRange= dasAxis.getDatumRange();
+                            DatumRange newRange= new DatumRange( oldRange.min().value(), oldRange.max().value(), nu );
+                            axis.getController().resetAxisRange(newRange);
+                        }
                     }
                 }
             }            
@@ -1718,32 +1830,140 @@ public class GuiSupport {
         plotController.setExpertMenuItems( expertMenuItemsList.toArray(new JMenuItem[expertMenuItemsList.size()] )  );
 
     }
-
-    public static void pasteClipboardIntoPlot( Component app, ApplicationController controller, Plot newP ) throws HeadlessException {
+    
+    private static boolean isStringVap( String s ) {
+        return s.startsWith("<?xml");
+    }
+            
+    /**
+     * replace the plot with the plot stored in the clipboard.  This plot
+     * in the clipboard is simply a one-plot .vap file.  
+     * 
+     * @param app component parent for dialogs.
+     * @param controller the application controller where we 
+     * @param newP the plotElements are added to this plot 
+     * @throws HeadlessException 
+     */
+    public static void pasteClipboardIntoPlot( final Component app, 
+            final ApplicationController controller, 
+            final Plot newP ) throws HeadlessException {
         try {
             Clipboard clpbrd= Toolkit.getDefaultToolkit().getSystemClipboard();
-            String s;
+            final String thevap;
             if ( clpbrd.isDataFlavorAvailable(DataFlavor.stringFlavor) ) {
-                s= (String) clpbrd.getData(DataFlavor.stringFlavor);
-                if ( !s.startsWith("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<vap") ) {
-                    JOptionPane.showMessageDialog(app,"Use \"Edit Plot\"->\"Copy Plot to Clipboard\"");
+                thevap= (String) clpbrd.getData(DataFlavor.stringFlavor);
+                if ( !isStringVap(thevap) ) {
+                    JOptionPane.showMessageDialog(app,
+                            "Use \"Edit Plot\"->\"Copy Plot to Clipboard\"<br>(Pasted content should be XML.)");
                     return;
                 }
             } else {
-                JOptionPane.showMessageDialog(app,"Use \"Edit Plot\"->\"Copy Plot to Clipboard\"");
+                JOptionPane.showMessageDialog(app,
+                        "Use \"Edit Plot\"->\"Copy Plot to Clipboard\"");
                 return;
             }
             
-            List<PlotElement> pes= controller.getPlotElementsFor(newP);
-            for ( PlotElement pe: pes ) {
+            Runnable run= new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        insertStringVapIntoPlot( app, controller, newP, thevap );
+                    } catch ( IllegalArgumentException ex ) {
+                        JOptionPane.showMessageDialog(app,"Use \"Edit Plot\"->\"Copy Plot to Clipboard\"<br>(Pasted content is not XML containing a plot.)");
+                    } catch (HeadlessException | IOException ex) {
+                        Logger.getLogger(GuiSupport.class.getName()).log(Level.SEVERE, null, ex);
+                    }
+                }
+            };
+            
+            SwingUtilities.invokeLater(run);
+
+        } catch (UnsupportedFlavorException | IOException ex) {
+            Logger.getLogger(GuiSupport.class.getName()).log(Level.SEVERE, null, ex);
+        }
+    }  
+
+    /**
+     * make the plot <code>newP</code> reflect the state in String 
+     * <code>theVap</code>.  This should be called from the event thread.
+     * @param app GUI component used as the client for the lock.
+     * @param controller
+     * @param targetPlot the plot to insert plot elements.
+     * @param theVap string containing a single-plot vap.
+     * @throws HeadlessException
+     * @throws IOException 
+     * @throws IllegalArgumentException if the string is not a vap.
+     */
+    private static void insertStringVapIntoPlot( 
+            Component app, 
+            ApplicationController controller, 
+            Plot targetPlot, 
+            String theVap ) throws HeadlessException, IOException, IllegalArgumentException {
+        Application state;
+        
+        state = (Application)StatePersistence.restoreState(new ByteArrayInputStream(theVap.getBytes()));
+        
+        Object lockObject= "pasteClipboard";
+        
+        controller.registerPendingChange( app, lockObject );
+        DomLock lock= controller.mutatorLock();
+        
+        try {
+            lock.lock("pasting plot");
+            controller.performingChange( app, lockObject );
+
+            List<PlotElement> pes= controller.getPlotElementsFor(targetPlot);
+            pes.forEach((pe) -> {
                 controller.deletePlotElement(pe);
+            });
+
+            Plot srcPlot= state.getPlots(0);
+            List<String> exclude= Arrays.asList(Plot.PROP_ID,
+                    Axis.PROP_DRAWTICKLABELS, Axis.PROP_VISIBLE, Axis.PROP_OPPOSITE );
+            if ( targetPlot.getXaxis().getRange().getUnits().isConvertibleTo( srcPlot.getXaxis().getRange().getUnits() ) ) {
+                srcPlot.getXaxis().setRange(targetPlot.getXaxis().getRange());
+                srcPlot.getXaxis().setLog(targetPlot.getXaxis().isLog());
+            }
+            targetPlot.getXaxis().syncTo( srcPlot.getXaxis(), exclude );
+            
+            if ( targetPlot.getYaxis().getRange().getUnits().isConvertibleTo( srcPlot.getYaxis().getRange().getUnits() ) ) {
+                if ( !targetPlot.getYaxis().isAutoRange() ) {
+                    srcPlot.getYaxis().setRange(targetPlot.getYaxis().getRange());
+                    srcPlot.getYaxis().setLog(targetPlot.getYaxis().isLog());
+                }
+            }
+            targetPlot.getYaxis().syncTo( srcPlot.getYaxis(), exclude );
+            
+            exclude= Arrays.asList(Plot.PROP_ID,
+                    Plot.PROP_ROWID,Plot.PROP_COLUMNID,
+                    Plot.PROP_TICKS_URI,
+                    Plot.PROP_EPHEMERIS_LABELS,Plot.PROP_EPHEMERISLINECOUNT,
+                    Plot.PROP_XAXIS, Plot.PROP_YAXIS );
+            targetPlot.syncTo( srcPlot,exclude );
+            targetPlot.setTicksURI("");
+            targetPlot.setEphemerisLabels("");
+            targetPlot.setEphemerisLineCount(-1);
+            
+            // if everything else is bound, then bind this one too.
+            Application dom= controller.getApplication();
+            boolean doBindX= dom.getController().findBindings( dom, Application.PROP_TIMERANGE ).size()>0 &&
+                    dom.getController().findBindings( targetPlot, Plot.PROP_CONTEXT ).isEmpty() &&
+                    UnitsUtil.isTimeLocation( targetPlot.getXaxis().getRange().getUnits() ) &&
+                    UnitsUtil.isTimeLocation( dom.getTimeRange().getUnits() );
+            if ( doBindX ) {
+                targetPlot.getXaxis().setRange( dom.getTimeRange() );
+                controller.getApplication().getController().bind( dom, Application.PROP_TIMERANGE, targetPlot.getXaxis(), Axis.PROP_RANGE );
+            } else {
+                if ( dom.getController().findBindings( dom, Application.PROP_TIMERANGE, targetPlot, Plot.PROP_CONTEXT ).size()==1 &&
+                    UnitsUtil.isTimeLocation( targetPlot.getXaxis().getRange().getUnits() ) ) {
+                    dom.setTimeRange( targetPlot.getXaxis().getRange() );
+                    controller.getApplication().getController().unbind( dom, Application.PROP_TIMERANGE, targetPlot, Plot.PROP_CONTEXT );
+                    controller.getApplication().getController().bind( dom, Application.PROP_TIMERANGE, targetPlot.getXaxis(), Axis.PROP_RANGE );
+                }
             }
             
-            Application state= (Application)StatePersistence.restoreState(new ByteArrayInputStream(s.getBytes()));
-            Plot p= state.getPlots(0);
-            newP.syncTo(p,Arrays.asList("id","rowId","columnId") );
             Map<String,String> nameMap= new HashMap<>();
-            nameMap.put( p.getId(), newP.getId() );
+            nameMap.put( srcPlot.getId(), targetPlot.getId() );
             //List<DataSourceFilter> unresolved= new ArrayList<>();
             for ( int i=0; i<state.getDataSourceFilters().length; i++ ) {
                 DataSourceFilter newDsf= controller.addDataSourceFilter();
@@ -1756,7 +1976,7 @@ public class GuiSupport {
                 }
                 nameMap.put( stateDsf.getId(), newDsf.getId() );
             }
-            for ( int i=0; i<state.getDataSourceFilters().length; i++ ) {
+            for ( int i=0; i<state.getDataSourceFilters().length; i++ ) { //implement vap+internal stuff, which are the remaining ones.
                 DataSourceFilter stateDsf= state.getDataSourceFilters(i);
                 if ( stateDsf!=null ) {
                     String uri= stateDsf.getUri();
@@ -1777,21 +1997,164 @@ public class GuiSupport {
                 DataSourceFilter dsf1= 
                         (DataSourceFilter) DomUtil.getElementById( theApp,nameMap.get(pe1.getDataSourceFilterId()) );
                 Plot plot1= (Plot) DomUtil.getElementById( theApp, nameMap.get(pe1.getPlotId()) );
-                PlotElement pe= controller.addPlotElement( plot1, dsf1 );
+                List<PlotElement> recyclePes= controller.getPlotElementsFor(plot1);
+                PlotElement pe;
+                if ( i<recyclePes.size() ) {
+                    pe= recyclePes.get(i);
+                    pe.setDataSourceFilterId( dsf1.getId() );
+                    pe.setPlotId( plot1.getId() );
+                } else {
+                    pe= controller.addPlotElement( plot1, dsf1 );
+                }
                 pe.syncTo( pe1, Arrays.asList( "id", "plotId", "dataSourceFilterId") );
                 if ( i==0 ) {
                     plot1.setAutoBinding(true); // kludge
                     plot1.getController().setAutoBinding(true); // TODO: check on why there are two autoBinding properties
                 }
-                pe.setPlotDefaults( pe1.getPlotDefaults() );
-
+                pe.getController().setResetPlotElement(false);
+                pe.getController().setResetRanges(false); // See https://sourceforge.net/p/autoplot/bugs/2249/
             }
-
-
+        } finally {
+            controller.changePerformed( app, lockObject );
+            lock.unlock();
+        }
+    }
+        
+    /**
+     * allow plot elements from the clipboard single-plot .vap into the target plot.
+     * This will just insert new plot elements which point at the same data source.
+     * This was added to make it easier to add reference lines (Fce, Fuh) to
+     * spectrograms of each B-field component.
+     * @param app component parent for dialogs.
+     * @param controller the application controller where we 
+     * @param targetPlot the plotElements are added to this plot 
+     * @throws HeadlessException 
+     */
+    public static void pasteClipboardPlotElementsIntoPlot( Component app, ApplicationController controller, Plot targetPlot )  {
+        try {
+            Clipboard clpbrd= Toolkit.getDefaultToolkit().getSystemClipboard();
+            String s;
+            if ( clpbrd.isDataFlavorAvailable(DataFlavor.stringFlavor) ) {
+                s= (String) clpbrd.getData(DataFlavor.stringFlavor);
+                if ( !isStringVap(s) ) {
+                    JOptionPane.showMessageDialog(app,"<html>Use \"Edit Plot\"->\"Copy Plot to Clipboard\"<br>(Pasted content should be XML.)");
+                    return;
+                }
+            } else {
+                JOptionPane.showMessageDialog(app,"<html>Use \"Edit Plot\"->\"Copy Plot to Clipboard\"<br>(Content should be a string.)");
+                return;
+            }
+            
+            Application state;
+            try {
+                state= (Application)StatePersistence.restoreState(new ByteArrayInputStream(s.getBytes()));
+            } catch ( IllegalArgumentException ex ) {
+                JOptionPane.showMessageDialog(app,"<html>Use \"Edit Plot\"->\"Copy Plot to Clipboard\"<br>("+ex.getMessage()+")" );
+                return;
+            }
+            
+            PlotElement[] pes= state.getPlotElements();
+            
+            JPanel panel= new JPanel();
+            //panel.setLayout( new BoxLayout(panel,BoxLayout.Y_AXIS) );
+            JCheckBox[] cbs= new JCheckBox[pes.length];
+            GridLayout gl= new GridLayout( pes.length, 2 );
+            panel.setLayout(gl);
+            for ( int i=0; i<pes.length; i++ ) {
+                javax.swing.Icon icon= GraphicsUtil.guessIconFor(pes[i]);
+                cbs[i]= new JCheckBox( "", true);
+                panel.add( cbs[i] );
+                
+                if ( icon!=null ) {
+                    JLabel x= new JLabel(pes[i].getRenderType().toString() ) ;
+                    x.setIcon(icon);
+                    panel.add( x ); 
+                } else {
+                    panel.add( new JLabel(pes[i].getRenderType().toString() ) ); 
+                }
+                
+            }
+            if ( JOptionPane.showConfirmDialog( app, panel, "Add Plot Elements", JOptionPane.OK_CANCEL_OPTION )==JOptionPane.OK_OPTION ) {
+                boolean[] selected= new boolean[pes.length];
+                for ( int i=0; i<pes.length; i++ ) {
+                    selected[i]= cbs[i].isSelected();
+                }
+                doPasteClipboardPlotElementsIntoPlot(app, controller, state, pes, selected, targetPlot );
+            }
+            
         } catch (UnsupportedFlavorException | IOException ex) {
             Logger.getLogger(GuiSupport.class.getName()).log(Level.SEVERE, null, ex);
         }
-    }    
+    }  
+    
+    /**
+     * do not use, this is introduced for testing.
+     * @param client just used as lock object
+     * @param controller the drop target's controller.
+     * @param state the DOM we are merging in.
+     * @param pes the plotElements from state.
+     * @param selected 
+     * @param targetPlot
+     */
+    public static void doPasteClipboardPlotElementsIntoPlot( Object client, ApplicationController controller, Application state, PlotElement[] pes, boolean[] selected, Plot targetPlot) {
+        Object lockObject = "addPlotElements";        
+
+        controller.registerPendingChange(client, lockObject);
+        DomLock lock = controller.mutatorLock();
+
+        try {
+            lock.lock("pasting plot elements");
+            controller.performingChange(client, lockObject);
+
+            Map<String, String> nameMap = new HashMap<>();
+
+            for (int i = 0; i < state.getDataSourceFilters().length; i++) {
+                DataSourceFilter stateDsf = state.getDataSourceFilters(i);
+                List<PlotElement> pes1 = DomUtil.getPlotElementsFor(state, stateDsf);
+                boolean inUse = false;
+                for (PlotElement pe1 : pes1) {
+                    for (int j = 0; j < pes.length; j++) {
+                        if (pes[j] == pe1) {
+                            if (selected[j]) {
+                                inUse = true;
+                            }
+                        }
+                    }
+                }
+                if (inUse) {
+                    DataSourceFilter newDsf = controller.addDataSourceFilter();
+
+                    if (stateDsf.getUri().startsWith("vap+internal:")) {
+                        //unresolved.add(stateDsf);
+                    } else {
+                        newDsf.syncTo(stateDsf, Collections.singletonList("id"));
+                        state.setDataSourceFilters(i, null); // mark as done
+                    }
+                    nameMap.put(stateDsf.getId(), newDsf.getId());
+                }
+            }
+            //TODO: vap+internal:data_1,data_2
+            for (int i = 0; i < pes.length; i++) {
+                if (selected[i]) {
+                    PlotElement peNew = controller.addPlotElement(targetPlot, null, null);
+                    peNew.syncTo(pes[i], Arrays.asList("id", "plotId", "dataSourceFilterId"));
+                    String mappedName= nameMap.get(pes[i].getDataSourceFilterId());
+                    if ( mappedName!=null ) {
+                        peNew.setDataSourceFilterId(mappedName);
+                    } else {
+                        logger.warning("no DSF ID mapping--something has gone horribly wrong.");
+                    }
+                    peNew.getController().setResetPlotElement(false); // this seems a bit of a kludge.  Also resetting the ID (to mappedName) resets this flag.
+                    peNew.getController().setResetRanges(false);
+                }
+            }
+        } finally {
+            controller.changePerformed(client, lockObject);
+            lock.unlock();
+        }
+
+    }
+    
     /**
      * Add items to the plot context menu, such as properties and add plot.
      * @param controller
@@ -1817,10 +2180,7 @@ public class GuiSupport {
             public void actionPerformed(ActionEvent e) {
                 org.das2.util.LoggerManager.logGuiEvent(e);                
                 PropertyEditor pp = new PropertyEditor(domPlot);
-                JDialog d= pp.getDialog(plot.getCanvas());
-                WindowManager.getInstance().recallWindowSizePosition(d);
-                d.setVisible(true);
-                WindowManager.getInstance().recordWindowSizePosition(d);
+                pp.showDialog(plot.getCanvas());
             }
         });
         plot.getDasMouseInputAdapter().addMenuItem(mi);
@@ -1832,10 +2192,7 @@ public class GuiSupport {
                 org.das2.util.LoggerManager.logGuiEvent(e);
                 PlotElement p = controller.getPlotElement();
                 PropertyEditor pp = new PropertyEditor(p);
-                JDialog d= pp.getDialog(plot.getCanvas());
-                WindowManager.getInstance().recallWindowSizePosition(d);
-                d.setVisible(true);
-                WindowManager.getInstance().recordWindowSizePosition(d);
+                pp.showDialog(plot.getCanvas());
             }
         } );
         plot.getDasMouseInputAdapter().addMenuItem( mi );
@@ -1847,9 +2204,12 @@ public class GuiSupport {
             public void actionPerformed(ActionEvent e) {
                 org.das2.util.LoggerManager.logGuiEvent(e);
                 PlotElement p = controller.getPlotElement();
+                PlotElement oldP= (PlotElement)p.copy();
                 PlotStylePanel.StylePanel editorPanel= getStylePanel( p.getRenderType() );
                 editorPanel.doElementBindings(p);
-                AutoplotUtil.showMessageDialog( app, editorPanel, p.getRenderType() + " Style", JOptionPane.OK_OPTION );
+                if ( JOptionPane.CANCEL_OPTION==AutoplotUtil.showConfirmDialog( app, editorPanel, p.getRenderType() + " Style", JOptionPane.OK_CANCEL_OPTION ) ) {
+                    p.syncTo(oldP);
+                }
             }
         });
         plotController.setPlotElementPropsMenuItem(panelPropsMenuItem);        
@@ -1950,6 +2310,19 @@ public class GuiSupport {
             }
         } );
         item.setToolTipText("Add a plot at an arbitrary position.");
+        addPlotMenu.add(item);
+
+        item = new JMenuItem( new AbstractAction("Add Right Axis Plot") {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                Plot p= controller.addPlot( domPlot, null );
+                PlotElement pe= controller.addPlotElement( p, null );
+                logger.log(Level.FINE, "created new plotElement: {0}", pe);
+                p.getYaxis().setOpposite( true );
+                controller.bind( domPlot.getXaxis(), Axis.PROP_RANGE, p.getXaxis(), Axis.PROP_RANGE  );
+            }
+        } );
+        item.setToolTipText("Add a plot in the same position but with its own axis on right side.");
         addPlotMenu.add(item);
         
 //        item = new JMenuItem(new AbstractAction("Copy Plot Elements Right") {
@@ -2131,7 +2504,6 @@ public class GuiSupport {
                     Annotation ann= controller.addAnnotation( domPlot, dia.getText() );
                     dia.configure(ann);
                     ann.setAnchorOffset("1em,1em");
-                    ann.setBorderType(BorderType.ROUNDED_RECTANGLE);
                     ann.setFontSize("1.4em");
                 }
             }
@@ -2156,22 +2528,8 @@ public class GuiSupport {
             chooser.setSelectedFile( new File( lcurrentFile ) );
         }
         
-        FileFilter ff = new FileFilter() {
-
-            @Override
-            public boolean accept(File f) {
-                String s= f.toString();
-                if ( s==null ) return false; // Old Windows bug.  FINDBUGS OKAY
-                return s.endsWith(".vap") || f.isDirectory();
-            }
-
-            @Override
-            public String getDescription() {
-                return "*.vap";
-            }
-        };
+        FileFilter ff = new FileNameExtensionFilter("vap files","vap");
         chooser.addChoosableFileFilter(ff);
-
         chooser.setFileFilter(ff);
         
         if ( JFileChooser.APPROVE_OPTION==chooser.showOpenDialog(parent) ) {

@@ -2,13 +2,19 @@
 package org.autoplot.datasource;
 
 import java.awt.Component;
+import java.io.File;
+import java.io.IOException;
 import java.lang.reflect.Constructor;
 import java.net.URI;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.swing.JPanel;
 import org.das2.util.LoggerManager;
 import org.das2.util.monitor.NullProgressMonitor;
 import org.autoplot.aggregator.AggregatingDataSourceEditorPanel;
+import org.autoplot.aggregator.AggregatingDataSourceFactory;
+import static org.autoplot.datasource.DataSetSelector.logger;
+import org.das2.util.monitor.AlertNullProgressMonitor;
 
 /**
  * Utilities for URLs.
@@ -27,6 +33,9 @@ public class DataSourceEditorPanelUtil {
      */
     public static DataSourceEditorPanel getDataSourceEditorPanel( JPanel parent, String uri ) {
         logger.entering("org.autoplot.datasource.DataSourceEditorPanelUtil", "getDataSourceEditorPanel");
+        if ( parent==null ) {
+            throw new IllegalArgumentException("parent is null");
+        }
         DataSourceEditorPanel edit;
         edit = DataSourceEditorPanelUtil.getDataSourceEditorPanel( uri );
         if ( edit==null ) {
@@ -64,6 +73,27 @@ public class DataSourceEditorPanelUtil {
         String surl = suri;
         String ext = DataSetURI.getExt(surl);
 
+        if (  ext!=null && ( ext.equals(DataSetURI.RECOGNIZE_FILE_EXTENSION_JSON) || ext.equals( DataSetURI.RECOGNIZE_FILE_EXTENSION_XML ) ) ) {
+            try {
+                if ( DataSetURI.isAggregating(surl) ) {
+                    String delegateUri = AggregatingDataSourceFactory.getDelegateDataSourceFactoryUri(surl, new NullProgressMonitor() );
+                    File f= DataSetURI.getFile(delegateUri,new AlertNullProgressMonitor("download on event thread"));
+                    String ext2= DataSourceRecognizer.guessDataSourceType(f);
+                    if ( ext2!=null ) {
+                        ext= ext2;
+                    }                    
+                } else {
+                    File f= DataSetURI.getFile(suri,new AlertNullProgressMonitor("download on event thread"));
+                    String ext2= DataSourceRecognizer.guessDataSourceType(f);
+                    if ( ext2!=null ) {
+                        ext= ext2;
+                    }                    
+                }
+            } catch (IOException ex) {
+                logger.log(Level.SEVERE, null, ex);
+            }
+        }
+        
         if (  DataSetURI.isAggregating(surl) ) {
             String eext = DataSetURI.getExplicitExt(surl);
             if (eext != null) {
@@ -71,6 +101,14 @@ public class DataSourceEditorPanelUtil {
                 DataSourceEditorPanel edit = getEditorByExt(eext);
                 if (edit != null) {
                     result.setDelegateEditorPanel(edit);
+                    try {
+                        String delegateUri = AggregatingDataSourceFactory.getDelegateDataSourceFactoryUri(surl, new NullProgressMonitor() );
+                        if ( edit.reject(delegateUri) ) { // contracts say that reject should be called before getPanel.
+                            logger.log( Level.WARNING, null, "delegate editor rejects URI, ignoring: " +suri );   
+                        }
+                    } catch (Exception ex) {
+                        logger.log( Level.WARNING, null, ex );
+                    }
                     result.setName( edit.getPanel().getName() );
                 }
                 return result;

@@ -1,11 +1,8 @@
 
 package org.autoplot;
 
-import org.autoplot.AutoplotUtil;
-import org.autoplot.RenderType;
-import org.autoplot.ApplicationModel;
-import org.autoplot.AppManager;
 import java.awt.Dimension;
+import java.awt.Graphics2D;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.das2.dataset.DataSet;
@@ -34,11 +31,13 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.concurrent.locks.Lock;
+import javax.swing.JButton;
 import javax.swing.JComponent;
 import javax.swing.JDialog;
 import javax.swing.JFrame;
 import javax.swing.JOptionPane;
 import javax.swing.JScrollPane;
+import javax.swing.JTextArea;
 import javax.swing.SwingUtilities;
 import org.das2.DasApplication;
 import org.das2.util.awt.PdfGraphicsOutput;
@@ -51,7 +50,6 @@ import org.python.core.PyJavaInstance;
 import org.autoplot.dom.Application;
 import org.autoplot.dom.DataSourceFilter;
 import org.autoplot.scriptconsole.ExitExceptionHandler;
-import org.das2.qds.ArrayDataSet;
 import org.das2.dataset.DataSetAdapter;
 import org.das2.datum.InconvertibleUnitsException;
 import org.das2.event.BoxRenderer;
@@ -66,6 +64,7 @@ import org.jdesktop.beansbinding.Converter;
 import org.python.core.Py;
 import org.python.core.PyFunction;
 import org.autoplot.ApplicationModel.ResizeRequestListener;
+import org.autoplot.datasource.AnonymousDataSource;
 import org.autoplot.dom.DomNode;
 import org.autoplot.dom.DomUtil;
 import org.autoplot.dom.Plot;
@@ -73,12 +72,20 @@ import org.autoplot.dom.PlotElement;
 import org.autoplot.state.StatePersistence;
 import org.das2.qds.QDataSet;
 import org.autoplot.datasource.DataSetURI;
+import org.autoplot.datasource.DataSource;
 import org.autoplot.datasource.DataSourceFormat;
 import org.autoplot.datasource.FileSystemUtil;
+import org.autoplot.datasource.GuiUtil;
 import org.autoplot.datasource.URISplit;
+import org.das2.components.DataPointRecorder;
+import org.das2.datum.Units;
+import org.das2.graph.DasColorBar;
+import org.das2.graph.Painter;
 import org.das2.qds.DataSetOps;
 import org.das2.qds.DataSetUtil;
+import org.das2.qds.DataSetWrapper;
 import org.das2.qds.MutablePropertyDataSet;
+import org.das2.qds.SemanticOps;
 import org.das2.qds.ops.Ops;
 import org.das2.qstream.SimpleStreamFormatter;
 import org.das2.qstream.StreamException;
@@ -86,16 +93,20 @@ import org.das2.util.filesystem.FileSystem;
 
 /**
  * ScriptContext provides the API to perform abstract functions with 
- * the application.  For example, <tt>
- *   ScriptContext.load('http://autoplot.org/data/somedata.dat')
- *   ScriptContext.writeToPdf('/tmp/foo.pdf')
- * </tt>
+ * the application.  For example, 
+ * 
+ *<blockquote><pre><small>{@code
+ ScriptContext.load('http://autoplot.org/data/somedata.dat')
+ ScriptContext.writeToPdf('/tmp/foo.pdf')
+ *}</small></pre></blockquote>
+ * 
  * @author jbf
  */
 public class ScriptContext extends PyJavaInstance {
 
-    private static final Logger logger= org.das2.util.LoggerManager.getLogger("autoplot");
-
+    private static final Logger logger= org.das2.util.LoggerManager.getLogger("autoplot.script");
+    private static final Logger resizeLogger= Logger.getLogger("autoplot.dom.canvas.resize");
+    
     private static ApplicationModel model = null;
     private static Application dom= null;
 
@@ -157,6 +168,7 @@ public class ScriptContext extends PyJavaInstance {
     public static synchronized void setApplication( AutoplotUI app ) {
         setApplicationModel(app.applicationModel);
         setView(app);        
+        appLookup.put( app.applicationModel, app );
     }
     
     /**
@@ -297,6 +309,7 @@ public class ScriptContext extends PyJavaInstance {
         result.setResizeRequestListener( new ResizeRequestListener() {
             @Override
             public double resize(int width, int height) {
+                resizeLogger.log(Level.FINE, "resize1 ({0},{1})", new Object[]{width,height});
                 if ( p!=null ) {
                     Dimension windowDimension= p.getSize();
                     Dimension canvasDimension= model.canvas.getSize();        
@@ -308,7 +321,7 @@ public class ScriptContext extends PyJavaInstance {
         } );
         return result;
     }
-    
+
     /**
      * create a new window.
      * @param id identifier for the window
@@ -366,6 +379,7 @@ public class ScriptContext extends PyJavaInstance {
             result.setResizeRequestListener( new ResizeRequestListener() {
                 @Override
                 public double resize(int width, int height) {
+                    resizeLogger.log(Level.FINE, "resize2 ({0},{1})", new Object[]{width,height});
                     if ( j!=null ) {
                         Dimension windowDimension= j.getSize();
                         Dimension canvasDimension= model.canvas.getSize();        
@@ -503,7 +517,7 @@ public class ScriptContext extends PyJavaInstance {
      */
     public static void plot(String suri) {
         maybeInitModel();
-        if ( view!=null ) {
+        if ( view!=null && view.isExpertMode() ) {
             view.dataSetSelector.setValue(suri);
         }
         model.resetDataSetSourceURL(suri, new NullProgressMonitor());
@@ -611,31 +625,73 @@ public class ScriptContext extends PyJavaInstance {
         plot( chNum, (String)null, x, y, z );
     }
 
-    private static MutablePropertyDataSet ensureMutable( QDataSet ds ) {
-        if ( ds==null ) return null;
-        if ( DataSetUtil.isQube(ds) ) {
-            if ( ds instanceof MutablePropertyDataSet ) {
-                MutablePropertyDataSet mpds= (MutablePropertyDataSet)ds;
-                if ( mpds.isImmutable() ) {
-                    return DataSetOps.makePropertiesMutable(mpds);
-                } else {
-                    return mpds; // TODO: make sure that plot doesn't mutate
+    /**
+     * returns a color table with the given name.  If the name is already registered,
+     * then the registered colortable is returned.
+     * using QDataSets as inputs to make it easier to use in scripts.
+     * 
+     * @param name the name for the colortable.   
+     * @param index control points for the colors, or None
+     * @param rgb dataset of ds[N,3] where N is the number of colors
+     * @return object representing the color table.
+     * @see rgbColorDataset
+     */
+    public static DasColorBar.Type makeColorTable( String name, QDataSet index, QDataSet rgb ) {
+        boolean implicitWarn= false;
+        if ( index==null ) {
+            index= Ops.indgen(rgb.length());
+            implicitWarn= true;
+        }
+        int[] iindex= new int[index.length()];
+        int[] red= new int[rgb.length()];
+        int[] green= new int[rgb.length()];
+        int[] blue= new int[rgb.length()];
+
+        int bottom= 0;
+        int top= 0;
+        if ( rgb.rank()==1 ) {
+            if ( SemanticOps.getUnits(rgb)==Units.rgbColor ) {
+                for ( int i=0; i<iindex.length; i++ ) {
+                    iindex[i]= (int)Math.round(index.value(i));
+                    red[i]= ( (int)rgb.value(i) & 0xFF0000 ) >> 16;
+                    green[i]= ( (int)rgb.value(i) & 0x00FF00 ) >> 8;
+                    blue[i]= ( (int)rgb.value(i) & 0x0000FF );
+                    top= Math.max( top, iindex[i] );
                 }
             } else {
-                return DataSetOps.makePropertiesMutable(ds);
+                throw new IllegalArgumentException("only rank 2 bundle of R,G,B or rank 1 data with Units.rgbColor.");
             }
         } else {
-            if ( ds instanceof MutablePropertyDataSet ) {
-                MutablePropertyDataSet mpds= (MutablePropertyDataSet)ds;
-                if ( mpds.isImmutable() ) {
-                    return DataSetOps.makePropertiesMutable(mpds);
-                } else {
-                    return mpds; // TODO: make sure that plot doesn't mutate
-                }
-            } else {
-                return DataSetOps.makePropertiesMutable(ds);
+            for ( int i=0; i<iindex.length; i++ ) {
+                iindex[i]= (int)Math.round(index.value(i));
+                red[i]= (int)Math.round(rgb.value(i,0));
+                green[i]= (int)Math.round(rgb.value(i,1));
+                blue[i]= (int)Math.round(rgb.value(i,2));
+                top= Math.max( top, iindex[i] );
             }
         }
+        if ( top>254 ) {
+            if ( implicitWarn ) {
+                throw new IllegalArgumentException("no more than 254 colors.");
+            } else {
+                throw new IllegalArgumentException("the top index must be less than 254.");
+            }
+        } 
+        try {
+            DasColorBar.Type t= DasColorBar.Type.parse( name );
+            return t;
+            
+        } catch ( IllegalArgumentException e ) {
+            logger.log(Level.FINE, "creating type \"{0}\"", name);
+            int[] tt= DasColorBar.Type.makeColorTable( iindex, red, green, blue, top, bottom, top );
+            return new DasColorBar.Type( name, tt );
+        }
+        
+    }    
+    
+    private static MutablePropertyDataSet ensureMutable( QDataSet ds ) {
+        if ( ds==null ) return null;
+        return Ops.copy(ds);
     }
     
     private static void ensureImmutable( QDataSet ... dss ) {
@@ -672,13 +728,7 @@ public class ScriptContext extends PyJavaInstance {
      * @param y QDataSet for the independent parameter for the Y values
      */
     public static void plot( int chNum, String label, QDataSet x, QDataSet y ) {
-        maybeInitModel();
-        MutablePropertyDataSet yds= ensureMutable(y);
-        QDataSet xds= x;
-        if ( xds!=null ) yds.putProperty( QDataSet.DEPEND_0, xds );
-        model.setDataSet( chNum, label, yds);
-        ensureImmutable(x,y);
-        if ( !SwingUtilities.isEventDispatchThread() ) model.waitUntilIdle();
+        plot( chNum, label, x, y, (String)null );
     }
 
     /**
@@ -691,13 +741,33 @@ public class ScriptContext extends PyJavaInstance {
      * @param renderType string explicitly controlling the renderType and hints.
      */    
     public static void plot( int chNum, String label, QDataSet x, QDataSet y, String renderType ) {
+        plot( chNum, label, x, y, renderType, true );
+    }
+
+    /**
+     * plot the dataset in the specified  dataSource node.  Note this should not
+     * be called from the event thread.
+     * @param chNum the plot to use.  Plots and plot elements are added as necessary to plot the data.
+     * @param label the label for the plot dependent parameter
+     * @param x QDataSet for the independent parameter for the X values, or null.
+     * @param y QDataSet for the independent parameter for the Y values, or null.
+     * @param renderType string explicitly controlling the renderType and hints.
+     * @param reset reset by autoranging, autolabelling, etc.
+     */    
+    public static void plot( int chNum, String label, QDataSet x, QDataSet y, String renderType, boolean reset ) {        
         maybeInitModel();
         if ( x==null && renderType==null ) {
-            model.setDataSet( chNum, label, y);
+            model.setDataSet( chNum, label, y, reset );
         } else {
             QDataSet xds= x;
             MutablePropertyDataSet yds= ensureMutable(y);
-            if ( xds!=null && yds!=null ) yds.putProperty( QDataSet.DEPEND_0,xds );
+            if ( xds!=null && yds!=null ) {
+                if ( yds.rank()==0 ) {
+                    yds.putProperty( QDataSet.CONTEXT_0,xds );
+                } else {
+                    yds.putProperty( QDataSet.DEPEND_0,xds );
+                }
+            }
             if ( ( yds!=null ) && ( xds!=null || renderType!=null ) ) yds.putProperty( QDataSet.RENDER_TYPE, renderType ); // plot command calls this with all-null arguments, and we don't when RENDER_TYPE setting to be nulled.
             model.setDataSet( chNum, label, yds);
         }
@@ -783,6 +853,53 @@ public class ScriptContext extends PyJavaInstance {
     }
 
     /**
+     * plot the dataset in the specified dataSource node, using the render type
+     * specified.  The renderType parameter is a string identifier, and currently the following are
+     * used: digital spectrogram nnSpectrogram hugeScatter series scatter colorScatter stairSteps
+     * fillToZero digital image  pitchAngleDistribution eventsBar vectorPlot orbitPlot contour
+     *<blockquote><pre><small>{@code
+     *plot( 0, 'label', findgen(20), ripples(20), ripples(20), 'digital' )
+     *from org.autoplot import RenderType
+     *plot( 0, 'label', findgen(20), ripples(20), ripples(20), RenderType.digital.toString() )
+     *}</small></pre></blockquote>
+     *
+     * @param chNum the plot to use.  Plots and plot elements are added as necessary to plot the data.
+     * @param label the label for the dependent parameter
+     * @param x QDataSet for the independent parameter for the X values
+     * @param y QDataSet for the independent parameter for the Y values
+     * @param z Rank 1 or Rank 2 QDataSet for the dependent parameter, or null.
+     * @param renderType hint at the render type to use, such as "nnSpectrogram" or "digital", 
+     * @param reset reset by autoranging, autolabelling, etc.
+     */
+    public static void plot( int chNum, String label, QDataSet x, QDataSet y, QDataSet z, String renderType, boolean reset ) {
+        maybeInitModel();
+        QDataSet xds= x;
+        MutablePropertyDataSet zds= ensureMutable(z);
+        if ( zds==null ) {
+            MutablePropertyDataSet yds= ensureMutable(y);
+            if ( yds==null ) throw new IllegalArgumentException("y cannot be null if z is null");
+            yds.putProperty( QDataSet.RENDER_TYPE, renderType );
+            yds.putProperty( QDataSet.DEPEND_0, xds );
+            model.setDataSet(chNum, label, yds, reset);
+        } else if ( zds.rank()==1 ) {           
+            MutablePropertyDataSet yds= ensureMutable(y);
+            if ( yds==null ) throw new IllegalArgumentException("y cannot be null if z is null");
+            yds.putProperty( QDataSet.RENDER_TYPE, renderType );
+            yds.putProperty( QDataSet.DEPEND_0, xds );
+            yds.putProperty( QDataSet.PLANE_0, zds );
+            model.setDataSet(chNum, label, yds, reset);
+        } else {
+            QDataSet yds= y;
+            zds.putProperty( QDataSet.RENDER_TYPE, renderType );
+            if ( x!=null ) zds.putProperty( QDataSet.DEPEND_0, xds );
+            if ( y!=null ) zds.putProperty( QDataSet.DEPEND_1, yds );
+            model.setDataSet(chNum, label, zds, reset);
+        }
+        ensureImmutable(x,y,z);
+        if ( !SwingUtilities.isEventDispatchThread() ) model.waitUntilIdle();
+    }
+    
+    /**
      * "overplot" by adding another PlotElement to the plot and setting the data to this PlotElement.
      * @param chNum the focus 
      * @return the channel number for the new plot element.
@@ -828,18 +945,15 @@ addMouseModule( dom.plots[0], 'Box Lookup', boxLookup )
      * @param label a label for the mouse module.
      * @param listener the PyFunction to call with new events.
      * @return the mouse module.  
-     * @see org.das2.event.MouseModule#setDragRenderer(org.das2.event.DragRenderer) 
-     * @see org.das2.event.BoxSelectionEvent for the methods of the event.
+     * @see org.das2.event.MouseModule#setDragRenderer(org.das2.event.DragRenderer) setDragRenderer to see how to set how feedback can be provided.
+     * @see org.das2.event.BoxSelectionEvent BoxSelectionEvent for the methods of the event.
      * 
      */
     public static MouseModule addMouseModule( Plot plot, String label, final PyFunction listener ) {
         DasPlot p= plot.getController().getDasPlot();
         BoxSelectorMouseModule mm= new BoxSelectorMouseModule( p, p.getXAxis(), p.getYAxis(), null, new BoxRenderer(p), label );
-        BoxSelectionListener bsl= new BoxSelectionListener() {
-            @Override
-            public void boxSelected(BoxSelectionEvent e) {
-                listener.__call__(Py.java2py(e));
-            }
+        BoxSelectionListener bsl= (BoxSelectionEvent e) -> {
+            listener.__call__(Py.java2py(e));
         };
         mm.addBoxSelectionListener(bsl);
         p.getDasMouseInputAdapter().setPrimaryModule(mm);
@@ -847,9 +961,148 @@ addMouseModule( dom.plots[0], 'Box Lookup', boxLookup )
     }
     
     /**
+     * add code that will paint custom graphics on the canvas or on a plot.
+     * The command will be invoked after all other painting is done, making
+     * the decoration to be on top.  Note plots can only have one decoration,
+     * and the Canvas can have any number.  Calling reset() will remove all
+     * decorations.
+     *<blockquote><pre><small>{@code
+def paint(g):
+    for i in xrange(0,1000,100):
+        g.drawOval(500-i/2,500-i/2,i,i)
+
+addTopDecoration( dom.canvases[0], paint )
+     *}</small></pre></blockquote>
+     * @param node the plot or canvas over which to plot
+     * @param painter the PyFunction to call when painting
+     * @see https://github.com/autoplot/dev/blob/master/demos/2020/20200229/demoAddBottomDecoration.jy
+     * 
+     */
+    public static void addTopDecoration( DomNode node, final PyFunction painter ) {
+        if ( !( node instanceof Plot ) && ! ( node instanceof org.autoplot.dom.Canvas ) ) {
+            throw new IllegalArgumentException("first argument must be plot or canvas");
+        }
+        if ( node instanceof Plot ) {
+            final Plot p= (Plot)node;
+            Painter thep= new Painter() {
+                @Override
+                public void paint(Graphics2D g) {
+                    painter.__call__(Py.java2py(g));
+                }   
+            };
+            p.getController().getDasPlot().setTopDecorator(thep);
+        } else if ( node instanceof org.autoplot.dom.Canvas ) {
+            final org.autoplot.dom.Canvas c= (org.autoplot.dom.Canvas)node;
+            Painter thep= new Painter() {
+                @Override
+                public void paint(Graphics2D g) {
+                    painter.__call__(Py.java2py(g));
+                }   
+            };
+            c.getController().getDasCanvas().addTopDecorator(thep);
+        }
+    }
+    
+    /**
+     * add code that will paint custom graphics on the canvas or on a plot.
+     * The command will be invoked after all other painting is done, making
+     * the decoration to be on top.  Note plots can only have one decoration,
+     * and the Canvas can have any number.  Calling reset() will remove all
+     * decorations.
+     *<blockquote><pre><small>{@code
+def paint(g):
+    g.color= Color.BLUE
+    for i in xrange(0,1000,100):
+        g.drawOval(500-i/2,500-i/2,i,i)
+
+addBottomDecoration( dom.canvases[0], paint )
+     *}</small></pre></blockquote>
+     * @param node the plot or canvas over which to plot
+     * @param painter the PyFunction to call when painting
+     * @see https://github.com/autoplot/dev/blob/master/demos/2020/20200229/demoAddBottomDecoration.jy
+     * 
+     */
+    public static void addBottomDecoration( DomNode node, final PyFunction painter ) {
+        if ( !( node instanceof Plot ) && ! ( node instanceof org.autoplot.dom.Canvas ) ) {
+            throw new IllegalArgumentException("first argument must be plot or canvas");
+        }
+        if ( node instanceof Plot ) {
+            final Plot p= (Plot)node;
+            Painter thep= new Painter() {
+                @Override
+                public void paint(Graphics2D g) {
+                    painter.__call__(Py.java2py(g));
+                }   
+            };
+            p.getController().getDasPlot().setBottomDecorator(thep);
+        } else if ( node instanceof org.autoplot.dom.Canvas ) {
+            final org.autoplot.dom.Canvas c= (org.autoplot.dom.Canvas)node;
+            Painter thep= new Painter() {
+                @Override
+                public void paint(Graphics2D g) {
+                    painter.__call__(Py.java2py(g));
+                }   
+            };
+            c.getController().getDasCanvas().addBottomDecorator(thep);
+        }
+    }
+    
+    /**
+     * return a component which can be used to accumulate data.  This is typically
+     * inserted into its own tab with the addTab command.  This is set to
+     * sort data in X as it comes in, and this can be disabled with setSorted(False)
+     *<blockquote><pre><small>{@code
+     *dpr= createDataPointRecorder()
+     *addTab( 'digitizer', dpr )
+     *}</small></pre></blockquote>
+     * 
+     * @return a new DataPointRecorder.
+     * @see DataPointRecorder
+     * @see https://github.com/autoplot/dev/blob/master/demos/digitizers/createDataPointRecorder.jy
+     * 
+     */
+    public static DataPointRecorder createDataPointRecorder(  ) {
+        DataPointRecorder result= new DataPointRecorder(true);
+        JButton button= new JButton( "Export Data...");
+        DataSource dss= new AnonymousDataSource() {
+            @Override
+            public QDataSet getDataSet(ProgressMonitor mon) throws Exception {
+                return result.getDataPoints();
+            }
+        };
+        button.setAction( ExportDataPanel.createExportDataAction( result, dss ) );
+        result.addAccessory( button );
+        return result;
+    }
+    
+    /**
+     * return a new dom in a minimal Autoplot application.  Use result.getCanvas()
+     * to get the DasCanvas which can be added to other components.
+     *<blockquote><pre><small>{@code
+     *report= createApplicationModel()
+     *addTab( 'report', report.canvas )
+     *report.setDataSet(linspace(0,1,101))
+     *}</small></pre></blockquote>
+     * @param id
+     * @return 
+     */
+    public static ApplicationModel createApplicationModel( final String id ) {
+        ApplicationModel result= applets.get(id);
+        if ( result==null ) {
+            result= new ApplicationModel();
+            result.addDasPeersToApp();
+            result.setName(id);
+            applets.put(id,result);
+        }
+        
+        return result;
+    }
+        
+    /**
      * set the Autoplot status bar string.  Use the prefixes "busy:", "warning:"
      * and "error:" to set icons.
      * @param message
+     * @see #showMessageDialog(java.lang.String) 
      */
     public static void setStatus( String message ) {
         dom.getController().setStatus(message);
@@ -875,16 +1128,26 @@ addMouseModule( dom.plots[0], 'Box Lookup', boxLookup )
      * show a popup to the scientist, which they must acknowledge before this
      * returns.
      * @param message, possibly containing HTML.
+     * @see #setStatus(java.lang.String) 
      */
     public static void showMessageDialog( String message ) {
-        JOptionPane.showMessageDialog( view, message );
+        if ( message.split("\n").length>15 ) {
+            JScrollPane pane= new JScrollPane( new JTextArea(message) );
+            pane.setPreferredSize( new Dimension(800,600) );
+            pane.setMaximumSize( new Dimension(800,600) );
+            JOptionPane.showMessageDialog( view, pane );
+        } else {
+            JOptionPane.showMessageDialog( view, message );
+        }
     }
 
+    
     /**
      * add a tab to the running application.  A new tab will be added with the
      * label, with the component added within a scroll pane.
      * @param label the label for the component.
      * @param c the component to add.
+     * @see AutoplotUI#setLeftPanel(javax.swing.JComponent) setLeftPanel which adds to the GUI
      */
     public static void addTab( final String label, final JComponent c  ) {
         Runnable run= new Runnable() {
@@ -899,7 +1162,7 @@ addMouseModule( dom.plots[0], 'Box Lookup', boxLookup )
                         break;
                     }
                 }
-                if ( c instanceof JScrollPane ) {
+                if ( GuiUtil.hasScrollPane(c) ) {
                     view.getTabs().add(label,c);
                 } else {
                     JScrollPane jsp= new JScrollPane();
@@ -948,23 +1211,48 @@ addMouseModule( dom.plots[0], 'Box Lookup', boxLookup )
      *    throws IllegalArgumentException
      *    in: file://tmp/data/autoplot.xls?sheet=sheet1
      *   out: /tmp/data/autoplot.xls?sheet=sheet1
+     *    in: /tmp/has spaces.png
+     *   out: /tmp/has spaces.png
+     *    in: C:\Users\Documents and Settings\
+     *   out: C:\Users\Documents and Settings\
      *}</small></pre></blockquote>
-     * @param filename like "file://tmp/data/autoplot.png"
+     * @param filename like "file:/tmp/data/autoplot.png"
      * @return  "/tmp/data/autoplot.png"
      * @throws IllegalArgumentException if the filename reference is not a local reference.
      */
     private static String getLocalFilename( String filename ) {
+        String fp;
+        String qp=null; // query part
+        int iq= filename.indexOf('?');
+        if ( iq>-1 ) {
+            fp = filename.substring(0,iq);
+            qp= filename.substring(iq);
+        } else {
+            fp= filename;
+        }
+
         if ( filename.contains("/") || filename.contains("\\") ) {
             URISplit split= URISplit.parse(filename);
-            if ( !split.scheme.equals("file") ) {
+            if ( split.path==null ) {
+                throw new IllegalArgumentException("something is wrong with the specified filename: "+filename);
+            }
+            if ( !"file".equals(split.scheme) ) {
                 throw new IllegalArgumentException("cannot write to "+filename+ " because it must be local file");
             }
-            filename= split.file.substring(split.scheme.length()+1); //TODO: this is sloppy.
-            if ( split.params!=null ) {
-                filename= filename + "?"+ split.params;
+            if ( fp.startsWith("file:") ) {
+                filename= split.file.substring(split.scheme.length()+1); //TODO: this is sloppy.
+                if ( split.params!=null ) {
+                    filename= filename + "?"+ split.params;
+                }
+                if ( filename.startsWith("///" ) ) filename= filename.substring(2);
+                return filename;
+            } else {
+                if ( qp!=null ) {
+                    return fp + qp;
+                } else {
+                    return fp;
+                }
             }
-            if ( filename.startsWith("///" ) ) filename= filename.substring(2);
-            return filename;
         } else {
             String pwd= new File("").getAbsolutePath();
             return pwd + File.separator + filename;
@@ -993,6 +1281,7 @@ addMouseModule( dom.plots[0], 'Box Lookup', boxLookup )
 
         int width= model.getDocumentModel().getCanvases(0).getWidth();
         int height= model.getDocumentModel().getCanvases(0).getHeight();
+        logger.log(Level.FINER, "writeToPng {0} by {1} {2}", new Object[]{width, height, filename});
         writeToPng( filename, width, height );
         File f= new File(filename);
         setStatus("wrote to "+f.getAbsolutePath());
@@ -1001,15 +1290,34 @@ addMouseModule( dom.plots[0], 'Box Lookup', boxLookup )
     private static void maybeMakeParent( String filename ) throws IOException {
         filename= getLocalFilename(filename);
         File file= new File(filename);
-        if ( file.getParentFile()!=null ) { // relative filenames are okay.
-            if ( !file.getParentFile().exists() ) {
-                if ( !file.getParentFile().mkdirs() ) {
-                    throw new IOException( "unable to mkdir "+filename );
+        File parentFile= file.getParentFile();
+        if ( parentFile!=null ) { // relative filenames are okay.
+            if ( !parentFile.exists() ) {
+                if ( !parentFile.mkdirs() ) {
+                    throw new IOException( "unable to mkdir: "+file.getParentFile() );
                 }
             }
         }
     }
-
+    
+    /**
+     * The name of the script which results in the image, optionally with its arguments.
+     * @see org.das2.util.DasPNGConstants
+     */
+    public static final String PNG_KEY_SCRIPT="AutoplotScriptURI";
+    
+    /**
+     * The Autoplot .vap file which results in the image, optionally with "?" and modifiers.
+     * @see org.das2.util.DasPNGConstants
+     */
+    public static final String PNG_KEY_VAP="AutoplotVap";
+    
+    /**
+     * The Autoplot URI which results in the image.
+     * @see org.das2.util.DasPNGConstants
+     */
+    public static final String PNG_KEY_URI="AutoplotURI";
+        
     /**
      * write out the current canvas to a png file.
      * TODO: bug 557: this has issues with the size.  It's coded to get the size from
@@ -1038,6 +1346,32 @@ addMouseModule( dom.plots[0], 'Box Lookup', boxLookup )
     }
 
     /**
+     * write out the current canvas to a png file, using the given size and also insert
+     * additional metadata.
+     * Note for relative references, this will use the Java process present working directory (PWD) instead
+     * of the PWD variable found in scripts
+     * @param filename The name of a local file
+     * @param width the width in pixels of the png
+     * @param height the height in pixels of the png
+     * @param metadata if non-null, then write name/values pairs into the PNG Metadata. "Creation Time", "Software" and "plotInfo" are always added.
+     * @see 
+     * @throws java.io.IOException
+     */
+    public static void writeToPng( String filename, int width, int height, Map<String,String> metadata ) throws IOException {
+        filename= getLocalFilename(filename);
+        
+        BufferedImage image = model.canvas.getImage( width, height );
+        
+        Logger llogger= Logger.getLogger("autoplot.scriptcontext.writeToPng");
+        llogger.log(Level.FINE, "writeToPng({0},{1},{2})->{3},{4} image.", new Object[]{filename, width, height, image.getWidth(), image.getHeight()});
+        Map<String,String> meta= new LinkedHashMap<>();
+        meta.putAll(metadata);
+        meta.put( DasPNGConstants.KEYWORD_SOFTWARE, "Autoplot" );
+        meta.put( DasPNGConstants.KEYWORD_PLOT_INFO, model.canvas.getImageMetadata() );
+        writeToPng( image, filename, meta );
+    }
+    
+    /**
      * See also writeToPng( OutputStream out )
      * @param image the image to write out.
      * @param filename the name of the output file.
@@ -1045,7 +1379,8 @@ addMouseModule( dom.plots[0], 'Box Lookup', boxLookup )
      * @throws IOException
      */
     public static void writeToPng( BufferedImage image, String filename, Map<String,String> metadata ) throws IOException {
-
+        
+        logger.log(Level.CONFIG, "writeToPng(image,{0},metadata)", new Object[]{filename});
         if ( !( filename.endsWith(".png") || filename.endsWith(".PNG") ) ) {
             filename= filename + ".png";
         }
@@ -1195,19 +1530,24 @@ addMouseModule( dom.plots[0], 'Box Lookup', boxLookup )
     /**
      * creates a BufferedImage from the provided DOM.  This blocks until the
      * image is ready.
-     * TODO: this has issues with the size.  See writeToPng(filename).  It looks
-     *   like this might be handled here
      * @param applicationIn
-     * @return
+     * @return the image
      */
     public static BufferedImage writeToBufferedImage( Application applicationIn ) {
+        for ( DataSourceFilter dsf : applicationIn.getDataSourceFilters() ) {
+            if ( dsf.getUri().equals("vap+internal:") ) {
+                logger.fine("copy over vap+internal datasets.");
+            }
+        }
         ApplicationModel appmodel= new ApplicationModel();
         appmodel.addDasPeersToAppAndWait();
         appmodel.getDocumentModel().syncTo(applicationIn);
 
+        DomUtil.copyOverInternalData( applicationIn, appmodel.getDocumentModel() );
+
         int height= applicationIn.getCanvases(0).getHeight();
         int width= applicationIn.getCanvases(0).getWidth();
-
+        
         BufferedImage image= appmodel.getCanvas().getImage(width, height);
         
         return image;
@@ -1301,19 +1641,7 @@ addMouseModule( dom.plots[0], 'Box Lookup', boxLookup )
      */
     public static void formatDataSet(QDataSet ds, String file) throws Exception {
         
-        file= getLocalFilename(file);
-
-        URISplit split= URISplit.parse(file);
-        
-        URI uri = split.resourceUri; 
-        
-        DataSourceFormat format = DataSetURI.getDataSourceFormat(uri);
-        
-        if (format == null) {
-            throw new IllegalArgumentException("no format for extension: " + file);
-        }
-
-        format.formatData( file, ds, new NullProgressMonitor());
+        formatDataSet( ds, file, new NullProgressMonitor());
 
     }
     
@@ -1325,22 +1653,29 @@ addMouseModule( dom.plots[0], 'Box Lookup', boxLookup )
      *<blockquote><pre><small>{@code
      * ds= getDataSet('http://autoplot.org/data/somedata.cdf?BGSEc')
      * formatDataSet( ds, 'vap+dat:file:/home/jbf/temp/foo.dat?tformat=minutes&format=6.2f')
+     * formatDataSet( ds, 'foo.dat' ) # also okay
      *}</small></pre></blockquote>
      * 
      * @param ds
-     * @param file local file name that is the target
+     * @param file local file name that is the target.
      * @param monitor
      * @throws java.lang.Exception
      */
     public static void formatDataSet(QDataSet ds, String file, ProgressMonitor monitor ) throws Exception {
-        
-        file= getLocalFilename(file);
 
-        URISplit split= URISplit.parse(file);
-        
-        URI uri = split.resourceUri; 
-        
-        DataSourceFormat format = DataSetURI.getDataSourceFormat(uri);
+        if ( !file.startsWith("/") && !file.startsWith("vap+") ) {
+            String s= getLocalFilename(file);
+            file= s;
+        }
+
+        DataSourceFormat format;
+        try {
+            format = DataSetURI.getDataSourceFormat( DataSetURI.getURI(file) );
+        } catch ( URISyntaxException ex ) {
+            URISplit split= URISplit.parse(file); // fall back to the old logic
+            URI uri = split.resourceUri; 
+            format = DataSetURI.getDataSourceFormat( uri );
+        }
         
         if (format == null) {
             throw new IllegalArgumentException("no format for extension: " + file);
@@ -1706,10 +2041,11 @@ addMouseModule( dom.plots[0], 'Box Lookup', boxLookup )
     }
     
     /**
-     * load a vap and return the dom.
+     * load a vap from a file and return the dom.
      * @param filename .vap file
      * @return Application
      * @throws java.io.IOException
+     * @see #saveVap(org.autoplot.dom.Application, java.lang.String) 
      */
     public static Application loadVap( String filename ) throws IOException {
         try {
@@ -1720,6 +2056,17 @@ addMouseModule( dom.plots[0], 'Box Lookup', boxLookup )
         } catch (URISyntaxException ex) {
             throw new IllegalArgumentException(ex);
         }
+    }
+    
+    /**
+     * save the application dom to a file.
+     * @param dom the application state
+     * @param filename the file.
+     * @throws IOException 
+     * @see #loadVap(java.lang.String) 
+     */
+    public static void saveVap( Application dom, String filename ) throws IOException {
+        StatePersistence.saveState( new File(filename), dom );
     }
     
     /**
@@ -1772,7 +2119,7 @@ addMouseModule( dom.plots[0], 'Box Lookup', boxLookup )
      * A plotElement is added for each plot as well. 
      * @param nrows number of rows
      * @param ncolumns number of columns
-     * @param dir below or above, or null (None in Jython) to replace the current plot.
+     * @param dir below, above, right, or left, or null (None in Jython) to replace the current plot.
      * @return the new plots.
      */
     public static List<Plot> addPlots( int nrows, int ncolumns, String dir ) {
@@ -1793,8 +2140,8 @@ addMouseModule( dom.plots[0], 'Box Lookup', boxLookup )
     /**
      * make a single plot with so many plot elements.
      * @param nplotElement the number of plotElements on the one plot.
-     * @see #setLayout(int, int) 
-     * @see #addPlotElement(int) which will an another plotElement (an overplot) to the ith position.
+     * @see #setLayout(int, int) setLayout(int, int) which will create a grid of plots.
+     * @see #addPlotElement(int) addPlotElement(int) which will an another plotElement (an overplot) to the ith position.
      */
     public static void setLayoutOverplot( int nplotElement ) {
         if ( nplotElement<1 ) throw new IllegalArgumentException("must be one or more plots");
@@ -1821,6 +2168,11 @@ addMouseModule( dom.plots[0], 'Box Lookup', boxLookup )
     public static void reset() {
         maybeInitModel();
         dom.getController().reset();
+        AutoplotUI ui= getApplication();
+        if ( ui!=null ) {
+            ui.getUndoRedoSupport().resetHistory();
+        }
+        
     }
 
     /**

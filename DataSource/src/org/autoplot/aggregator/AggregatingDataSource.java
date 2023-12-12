@@ -86,6 +86,7 @@ public final class AggregatingDataSource extends AbstractDataSource {
     private FileStorageModel fsm;
     DataSourceFactory delegateDataSourceFactory;
     AggregationPollUpdating upd; // allow a group of files to be watched.  This is experimental.
+    String delegateVapScheme= null;
     
     /**
      * metadata from the last read.
@@ -107,6 +108,12 @@ public final class AggregatingDataSource extends AbstractDataSource {
     public AggregatingDataSource(URI uri,DataSourceFactory delegateFactory) throws MalformedURLException, FileSystem.FileSystemOfflineException, IOException, ParseException {
         super(uri);
         this.delegateDataSourceFactory = delegateFactory;
+        try {
+            URISplit split= URISplit.parse(uri);
+            this.delegateVapScheme= split.vapScheme;
+        } catch ( RuntimeException ex ) {
+            logger.log( Level.WARNING, null, ex );
+        }
         if ( AggregatingDataSourceFactory.hasTimeFields( uri.toString() ) ) {
             tsb= new AggTimeSeriesBrowse();
             addCapability( TimeSeriesBrowse.class, tsb );
@@ -374,6 +381,14 @@ public final class AggregatingDataSource extends AbstractDataSource {
 
     }
     
+    /**
+     * read the data, not using the reference cache.
+     * @param mon monitor for the load
+     * @param lviewRange the time span to load
+     * @param lresolution resolution which is used where reduce=T
+     * @return
+     * @throws Exception 
+     */
     public QDataSet getDataSet( ProgressMonitor mon, DatumRange lviewRange, Datum lresolution ) throws Exception {
         try {
 
@@ -388,6 +403,7 @@ public final class AggregatingDataSource extends AbstractDataSource {
             
             boolean avail= getParam( "avail", "F" ).equals("T");
             boolean reduce= getParam( "reduce", "F" ).equals("T");
+            boolean filenameProvidesContext= getParam( "filenameProvidesContext", "F" ).equals("T");
 
             if ( avail ) {
                 logger.log(Level.FINE, "availablility {0} ", new Object[]{ lviewRange});
@@ -396,6 +412,9 @@ public final class AggregatingDataSource extends AbstractDataSource {
                 EnumerationUnits eu= new EnumerationUnits("default");
                 for ( String s: ss ) {
                     DatumRange dr= getFsm().getRangeFor(s);
+                    //if ( getFsm().hasField("x") ) {
+                    //    s= getFsm().getField( "x", s );
+                    //}
                     build.putValues( -1, DDataSet.wrap( new double[] { dr.min().doubleValue(u), dr.max().doubleValue(u), 0x80FF80, eu.createDatum(s).doubleValue(eu) } ), 4 );
                     build.nextRecord();
                 }
@@ -473,7 +492,12 @@ public final class AggregatingDataSource extends AbstractDataSource {
                     scompUrl += "?" + sparams;
                 }
 
-                URI delegateUri= DataSetURI.getURIValid(scompUrl);
+                URI delegateUri;
+                if ( delegateVapScheme!=null ) { //TODO: I don't believe delegateVapScheme will be null.
+                    delegateUri = DataSetURI.getURIValid(delegateVapScheme+":"+scompUrl);
+                } else {
+                    delegateUri = DataSetURI.getURIValid(scompUrl);
+                }
 
                 DataSource delegateDataSource = delegateDataSourceFactory.getDataSource(delegateUri);
 
@@ -512,8 +536,15 @@ public final class AggregatingDataSource extends AbstractDataSource {
 
                     logger.log(Level.FINER, "delegate URI: {0}", new Object[]{ delegateDataSource.getURI() } );
                     
-                   QDataSet ds1 = delegateDataSource.getDataSet(mon1);
+                    // Here is the single-granule read, the heart of aggregation.
+                    QDataSet ds1 = delegateDataSource.getDataSet(mon1);
+                   
                     logger.log(Level.FINER, "  read: {0}", new Object[]{ ds1 } );
+                    
+                    //https://sourceforge.net/p/autoplot/bugs/2206/
+                    //logger.fine("ask for a garbage collection to get rid of junk");
+                    //System.gc();
+                    //logger.fine("done ask for a garbage collection to get rid of junk");
                     
                     if ( ds1==null ) {
                         logger.warning("delegate returned null");
@@ -521,7 +552,39 @@ public final class AggregatingDataSource extends AbstractDataSource {
                         if ( ds1==null ) continue;
                     }
                     
+                    // check to see if it is enumeration and all values are present in the enumeration unit.
+                    Units u= (Units) ds1.property(QDataSet.UNITS);
+                    if ( u!=null && u instanceof EnumerationUnits && ds1.rank()==1 ) {
+                        for ( int i2=0; i2<ds1.length(); i2++ ) {
+                            try {
+                                Datum d= u.createDatum(ds1.value(i2));
+                            } catch ( IllegalArgumentException ex ) {
+                                ex.printStackTrace();
+                                System.err.println("no datum exists for this ordinal in agg");
+                                Datum d= u.createDatum(ds1.value(i2));
+                            }
+                        }
+                    }
+                    
                     QDataSet xds= SemanticOps.xtagsDataSet(ds1);
+                    
+                    if ( xds!=null && filenameProvidesContext ) {
+                        Units tu= SemanticOps.getUnits(xds);
+                        if ( tu.isConvertibleTo(Units.hours) ) {
+                            Datum d= Ops.datum(xds.slice(0));
+                            if ( d.lt(Units.hours.createDatum(-48) ) || d.gt( Units.hours.createDatum(48) ) ) {
+                                logger.warning("filenameProvidesContext, but times must be -48 to +48 hours");
+                            } else {
+                                xds= Ops.add( xds, dr1.min() );
+                            }
+                            ds1= Ops.link( xds, ds1 );
+                        } else if ( UnitsUtil.isTimeLocation(tu) ) {
+                            logger.fine("timetags already have context");
+                        } else {
+                            logger.log(Level.FINE, "timetags units cannot be added to time locations. (units={0})", tu);
+                        }
+                    }
+                    
                     if ( xds!=null && UnitsUtil.isTimeLocation( SemanticOps.getUnits(xds) )) {
                         if ( SemanticOps.isJoin(xds) ) {
                             //TODO: check Ops.extent(xds), which I don't think handles joins.
@@ -543,10 +606,11 @@ public final class AggregatingDataSource extends AbstractDataSource {
                         for ( String p: problems ) {
                             System.err.println("problem with aggregation element "+ss[i]+": "+p);
                             logger.log(Level.WARNING, "problem with aggregation element {0}: {1}", new Object[]{ss[i], p});
+                            throw new RuntimeException("dataset doesn't validate for " + delegateUri );
                         }
                     }
 
-                    if ( reduce && ds1.rank()<3 && SemanticOps.isTimeSeries(ds1) ) {
+                    if ( reduce && SemanticOps.isTimeSeries(ds1) ) {
                         QDataSet dep0= (QDataSet) ds1.property(QDataSet.DEPEND_0);
                         if ( dep0!=null ) {
                             if ( DataSetUtil.isMonotonic(dep0) ) {
@@ -557,8 +621,10 @@ public final class AggregatingDataSource extends AbstractDataSource {
                                 imax= imax+1;
                                 if ( imin>0 || imax<ds1.length() ) {
                                     ds1= ds1.trim(imin,imax);
-                                }
-                                logger.log(Level.FINER, "dataset trimmed to {0}", ds1);
+                                    logger.log(Level.FINER, "dataset trimmed to {0}", ds1);
+                                } else {
+                                    logger.log(Level.FINER, "dataset not trimmed" );
+                                }   
                             }
                             logger.fine("reducing resolution to save memory");
                             mon1.setProgressMessage("reducing resolution");
@@ -568,6 +634,14 @@ public final class AggregatingDataSource extends AbstractDataSource {
                             }
                         } else {
                             logger.fine("data is not time series, cannot reduce");
+                        }
+                    }
+                    
+                    
+                    if (result!=null ) { // check for special case where non-time-varying data has been loaded.
+                        QDataSet dep0 = (QDataSet) result.property(QDataSet.DEPEND_0);
+                        if ( dep0==null && result.rank()==1 && Ops.equivalent( result, ds1 ) ) {
+                            continue; // do not append the results.
                         }
                     }
 
@@ -591,7 +665,12 @@ public final class AggregatingDataSource extends AbstractDataSource {
                                         result= BufferDataSet.maybeCopy(ds1);
                                     } else {
                                         result = BufferDataSet.copy(ds1);
-                                        ((BufferDataSet)result).grow(result.length()*ss.length*11/10);  //110%
+                                        int newSize= result.length()*ss.length;
+                                        if ( newSize<Integer.MAX_VALUE/2 ) { 
+                                            ((BufferDataSet)result).grow((int)(newSize*1.10));  //110%
+                                        } else {
+                                            ((BufferDataSet)result).grow(newSize);
+                                        }
                                     }
                                     //result= checkBoundaries( dr1, result );
                                     //result= checkSort(result);
@@ -600,7 +679,12 @@ public final class AggregatingDataSource extends AbstractDataSource {
                                         result= ArrayDataSet.maybeCopy(ds1);
                                     } else {
                                         result = ArrayDataSet.copy(ds1);
-                                        ((ArrayDataSet)result).grow(result.length()*ss.length*11/10);  //110%
+                                        int newSize= result.length()*ss.length;
+                                        if ( newSize<Integer.MAX_VALUE/2) {
+                                            ((ArrayDataSet)result).grow((int)(newSize*1.10));  //110%
+                                        } else {
+                                            ((ArrayDataSet)result).grow(newSize);
+                                        }
                                     }
                                     //result= checkBoundaries( dr1, result );
                                     //result= checkSort(result);
@@ -667,11 +751,30 @@ public final class AggregatingDataSource extends AbstractDataSource {
                         //TODO: combine metadata.  We don't have a way of doing this.
                         //this.metadata= null;
                         //this.metadataModel= null;
-                        cacheRange1 = new DatumRange(cacheRange1.min(), dr1.max());
+                        if ( cacheRange1==null ) {
+                            logger.info("something happened where cacheRange1 wasn't calculated earlier.");
+                            cacheRange1= dr1;
+                        } else {
+                            cacheRange1 = new DatumRange(cacheRange1.min(), dr1.max());
+                        }
                     }
                 } catch ( Exception ex ) {
                     if ( doThrow ) {
                         throw ex;
+                    }
+                    if ( ss.length==1 && ex.getMessage()!=null && ex.getMessage().startsWith("CDFException CDF does not hava a variable named") ) {
+                        String ff= getFsm().getRepresentativeFile(mon.getSubtaskMonitor(0,5,"get representative file"));
+                        ff= ff + "?" + sparams;
+                        delegateDataSource = delegateDataSourceFactory.getDataSource(new URI(ff));
+                        try {
+                            delegateDataSource.getDataSet(mon.getSubtaskMonitor("getting delegate to see if variable should exist"));
+                        } catch ( Exception edelegate ) {
+                            if ( edelegate.getMessage().startsWith("CDFException CDF does not hava a variable named") ) {
+                                throw ex;
+                            } else {
+                                ex= new NoDataInIntervalException("one found file does not contain variable");
+                            }
+                        }
                     }
                     if ( ex instanceof NoDataInIntervalException && ss.length>1 ) {
                         logger.log(Level.FINE, "no data found in {0}", delegateUri);
@@ -711,7 +814,17 @@ public final class AggregatingDataSource extends AbstractDataSource {
             Map<String,Object> userProps= new HashMap();
             userProps.put( "files", ss );
 
+            if ( cacheRange1!=null ) {
+                DatumRange u= DatumRangeUtil.union( cacheRange1, lviewRange );
+                if ( !cacheRange1.contains(u) ) {
+                    logger.fine("missing files before or after requested span detected");
+                    cacheRange1= u;
+                }
+            }
+            
             if ( altResult!=null ) {
+                DataSetUtil.validate( altResult, new ArrayList<String>() );
+            
                 ArrayDataSet dep0 = (ArrayDataSet) altResult.property(DDataSet.DEPEND_0);
                 Units dep0units= dep0==null ? null : SemanticOps.getUnits(dep0);
                 if ( dep0==null ) {
@@ -734,6 +847,7 @@ public final class AggregatingDataSource extends AbstractDataSource {
                 return altResult;
 
             } else {
+                if ( result!=null ) DataSetUtil.validate( result, new ArrayList<String>() );
                 MutablePropertyDataSet dep0;
                 if ( dep0Builder!=null ) {
                     assert result!=null;
@@ -777,7 +891,12 @@ public final class AggregatingDataSource extends AbstractDataSource {
                 logger.log(Level.FINE, "loaded {0} {1}", new Object[] { result, describeRange(result) }  );
                 return result;
             }
+        } catch ( RuntimeException ex ) {
+            logger.fine("runtime exception thrown");
+            throw ex;
+            
         } catch ( Exception ex ) {
+            logger.fine("exception thrown");
             throw ex;
         }
 
@@ -787,6 +906,7 @@ public final class AggregatingDataSource extends AbstractDataSource {
         MutablePropertyDataSet dep0 = result == null ? null : (MutablePropertyDataSet) result.property(DDataSet.DEPEND_0);
         if ( dep0==null ) return null;
         QDataSet b= SemanticOps.bounds(dep0).slice(1);
+        Units.us2000.createDatum(b.value(0));
         return DatumRangeUtil.roundSections( DataSetUtil.asDatumRange( b,true ), 24 ); 
     }
 

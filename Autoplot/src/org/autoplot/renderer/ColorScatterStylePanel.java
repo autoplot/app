@@ -6,14 +6,15 @@
 package org.autoplot.renderer;
 
 import java.awt.event.FocusEvent;
-import java.beans.PropertyChangeEvent;
 import org.das2.components.DatumEditor;
 import org.das2.components.propertyeditor.ColorEditor;
 import org.das2.components.propertyeditor.EnumerationEditor;
 import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.event.FocusAdapter;
+import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
+import java.util.Map;
 import javax.swing.SpinnerNumberModel;
 import org.autoplot.help.AutoplotHelpSystem;
 import org.das2.graph.DasColorBar;
@@ -21,17 +22,16 @@ import org.das2.graph.DefaultPlotSymbol;
 import org.das2.graph.PsymConnector;
 import org.jdesktop.beansbinding.AutoBinding.UpdateStrategy;
 import org.jdesktop.beansbinding.BeanProperty;
-import org.jdesktop.beansbinding.Binding;
 import org.jdesktop.beansbinding.BindingGroup;
 import org.jdesktop.beansbinding.Bindings;
 import org.autoplot.PlotStylePanel;
-import org.autoplot.dom.Application;
-import org.autoplot.dom.ApplicationController;
 import org.autoplot.dom.PlotElement;
+import org.autoplot.dom.PlotElementController;
 import org.autoplot.dom.PlotElementStyle;
+import org.das2.qds.QDataSet;
 
 /**
- *
+ * Like the SeriesStylePanel, but color is removed and colorbar added.
  * @author  jbf
  */
 public class ColorScatterStylePanel extends javax.swing.JPanel implements PlotStylePanel.StylePanel {
@@ -44,6 +44,7 @@ public class ColorScatterStylePanel extends javax.swing.JPanel implements PlotSt
     ColorEditor fillColorEditor;
     DatumEditor referenceEditor;
     BindingGroup elementBindingContext;
+    PlotElement plotElement;
 
     /** Creates new form PlotStylePanel */
     public ColorScatterStylePanel( ) {
@@ -54,7 +55,7 @@ public class ColorScatterStylePanel extends javax.swing.JPanel implements PlotSt
         edit.setValue( DasColorBar.Type.GRAYSCALE );
         colortableTypePanel.add(edit.getCustomEditor(), BorderLayout.CENTER);
 
-        symSizeSpinner.setModel(new SpinnerNumberModel(2.0f, 0.09f, 10.f, 0.2f));
+        symSizeSpinner.setModel(new SpinnerNumberModel(2.0f, 0.09f, 20.f, 0.2f));
 
         psymEditor = new EnumerationEditor();
         psymEditor.setValue( DefaultPlotSymbol.BOX );
@@ -64,7 +65,7 @@ public class ColorScatterStylePanel extends javax.swing.JPanel implements PlotSt
         lineEditor.setValue( PsymConnector.SOLID );
         lineStylePanel.add(lineEditor.getCustomEditor(), BorderLayout.CENTER);
 
-        lineThickSpinner.setModel(new SpinnerNumberModel(1.0f, 0.09f, 10.f, 0.2f));
+        lineThickSpinner.setModel(new SpinnerNumberModel(1.0f, 0.09f, 20.f, 0.2f));
 
         colorEditor = new ColorEditor();
         colorEditor.setValue( Color.BLACK );
@@ -86,7 +87,7 @@ public class ColorScatterStylePanel extends javax.swing.JPanel implements PlotSt
         referenceValuePanel.add(refedit);
 
         validate();
-
+        AutoplotHelpSystem.getHelpSystem().registerHelpID(this, PlotStylePanel.STYLEPANEL_HELP_ID );
     }
 
     public void releaseElementBindings() {
@@ -94,35 +95,58 @@ public class ColorScatterStylePanel extends javax.swing.JPanel implements PlotSt
             elementBindingContext.unbind();
             elementBindingContext= null;
         }
-        AutoplotHelpSystem.getHelpSystem().unregisterHelpID(this, PlotStylePanel.STYLEPANEL_HELP_ID );
     }
 
     public synchronized void doElementBindings(PlotElement element) {
         PlotElementStyle style= element.getStyle();
         BindingGroup bc = new BindingGroup();
 
-        bc.addBinding(Bindings.createAutoBinding( UpdateStrategy.READ_WRITE, style, BeanProperty.create( "colortable" ), edit, BeanProperty.create("value")));
+        bc.addBinding(Bindings.createAutoBinding( UpdateStrategy.READ_WRITE, style, BeanProperty.create( PlotElementStyle.PROP_COLORTABLE ), edit, BeanProperty.create("value")));
 
-        bc.addBinding(Bindings.createAutoBinding( UpdateStrategy.READ_WRITE, style,BeanProperty.create(  "symbolSize" ), symSizeSpinner, BeanProperty.create("value")) );
-        bc.addBinding(Bindings.createAutoBinding( UpdateStrategy.READ_WRITE, style, BeanProperty.create( "plotSymbol" ), psymEditor,BeanProperty.create( "value")));
-        bc.addBinding(Bindings.createAutoBinding( UpdateStrategy.READ_WRITE, style, BeanProperty.create( "lineWidth" ), lineThickSpinner, BeanProperty.create("value")));
-        bc.addBinding(Bindings.createAutoBinding( UpdateStrategy.READ_WRITE, style, BeanProperty.create( "symbolConnector" ), lineEditor, BeanProperty.create("value")));
+        bc.addBinding(Bindings.createAutoBinding( UpdateStrategy.READ_WRITE, style,BeanProperty.create(  PlotElementStyle.PROP_SYMBOL_SIZE), symSizeSpinner, BeanProperty.create("value")) );
+        bc.addBinding(Bindings.createAutoBinding( UpdateStrategy.READ_WRITE, style, BeanProperty.create( PlotElementStyle.PROP_PLOT_SYMBOL ), psymEditor,BeanProperty.create( "value")));
+        bc.addBinding(Bindings.createAutoBinding( UpdateStrategy.READ_WRITE, style, BeanProperty.create( PlotElementStyle.PROP_LINE_WIDTH ), lineThickSpinner, BeanProperty.create("value")));
+        bc.addBinding(Bindings.createAutoBinding( UpdateStrategy.READ_WRITE, style, BeanProperty.create( PlotElementStyle.PROP_SYMBOL_CONNECTOR ), lineEditor, BeanProperty.create("value")));
 
-        bc.addBinding(Bindings.createAutoBinding( UpdateStrategy.READ_WRITE, style, BeanProperty.create( "color" ), colorEditor, BeanProperty.create("value")));
-        bc.addBinding(Bindings.createAutoBinding( UpdateStrategy.READ_WRITE, style, BeanProperty.create( "fillToReference" ), fillToReferenceCheckBox, BeanProperty.create("selected")));
-        bc.addBinding(Bindings.createAutoBinding( UpdateStrategy.READ_WRITE, style, BeanProperty.create( "fillColor" ), fillColorEditor, BeanProperty.create("value")));
-        bc.addBinding(Bindings.createAutoBinding( UpdateStrategy.READ_WRITE, style, BeanProperty.create( "reference" ), referenceEditor, BeanProperty.create("value")));
+        bc.addBinding(Bindings.createAutoBinding( UpdateStrategy.READ_WRITE, style, BeanProperty.create( PlotElementStyle.PROP_COLOR ), colorEditor, BeanProperty.create("value")));
+        bc.addBinding(Bindings.createAutoBinding( UpdateStrategy.READ_WRITE, style, BeanProperty.create( PlotElementStyle.PROP_FILL_TO_REFERENCE ), fillToReferenceCheckBox, BeanProperty.create("selected")));
+        bc.addBinding(Bindings.createAutoBinding( UpdateStrategy.READ_WRITE, style, BeanProperty.create( PlotElementStyle.PROP_FILLCOLOR ), fillColorEditor, BeanProperty.create("value")));
+        bc.addBinding(Bindings.createAutoBinding( UpdateStrategy.READ_WRITE, style, BeanProperty.create( PlotElementStyle.PROP_REFERENCE ), referenceEditor, BeanProperty.create("value")));
+        bc.addBinding(Bindings.createAutoBinding( UpdateStrategy.READ_WRITE, style, BeanProperty.create( PlotElementStyle.PROP_FILL_DIRECTION ), fillDirectionComboBox, BeanProperty.create("selectedItem")));
+        bc.addBinding(Bindings.createAutoBinding( UpdateStrategy.READ_WRITE, style, BeanProperty.create( PlotElementStyle.PROP_SHOWLIMITS ), showLimitsCheckBox, BeanProperty.create("selected")));
         
-        if ( elementBindingContext!=null ) releaseElementBindings();
+        if ( elementBindingContext!=null ) {
+            releaseElementBindings();
+            PlotElement oldPlotElement= this.plotElement;
+            oldPlotElement.getController().removePropertyChangeListener( PlotElementController.PROP_DATASET, limitsPCL );
+        }
+        
+        this.plotElement= element;
         bc.bind();
         
         repaint();
         
         elementBindingContext= bc;
 
-        AutoplotHelpSystem.getHelpSystem().registerHelpID(this, PlotStylePanel.STYLEPANEL_HELP_ID );
-
     }
+    
+    PropertyChangeListener limitsPCL= new PropertyChangeListener() {
+        @Override
+        public void propertyChange(PropertyChangeEvent evt) {
+            boolean limitsEnabled= false;
+            QDataSet ds= plotElement.getController().getDataSet();
+            if ( ds!=null ) {
+                Map<String,Object> meta= (Map<String,Object>) ds.property(QDataSet.METADATA);
+                if ( meta!=null ) {
+                    if ( meta.containsKey("LIMITS_WARN_MAX") || meta.containsKey("LIMITS_WARN_MIN") 
+                        || meta.containsKey("LIMITS_NOMINAL_MIN") || meta.containsKey("LIMITS_NOMINAL_MAX") ) {
+                        limitsEnabled= true;
+                    }
+                }
+            }
+            showLimitsCheckBox.setEnabled(limitsEnabled);
+        }
+    };
 
     /** This method is called from within the constructor to
      * initialize the form.
@@ -150,31 +174,44 @@ public class ColorScatterStylePanel extends javax.swing.JPanel implements PlotSt
         lineStylePanel = new javax.swing.JPanel();
         jLabel4 = new javax.swing.JLabel();
         colortableTypePanel = new javax.swing.JPanel();
+        showLimitsCheckBox = new javax.swing.JCheckBox();
+        jLabel1 = new javax.swing.JLabel();
+        fillDirectionComboBox = new javax.swing.JComboBox<>();
 
         jPanel2.setBorder(javax.swing.BorderFactory.createTitledBorder("Color Scatter [?]"));
 
-        jLabel3.setText("line thickness:");
+        jLabel3.setText("Line Thickness:");
         jLabel3.setToolTipText("thickness of the plot trace");
 
-        jLabel2.setText("symbol size:");
+        jLabel2.setText("Symbol Size:");
         jLabel2.setToolTipText("size of the plot symbols");
 
         lineThickSpinner.setToolTipText("thickness of the plot trace");
+        lineThickSpinner.addMouseWheelListener(new java.awt.event.MouseWheelListener() {
+            public void mouseWheelMoved(java.awt.event.MouseWheelEvent evt) {
+                lineThickSpinnerMouseWheelMoved(evt);
+            }
+        });
 
         symSizeSpinner.setToolTipText("size of the plot symbols");
+        symSizeSpinner.addMouseWheelListener(new java.awt.event.MouseWheelListener() {
+            public void mouseWheelMoved(java.awt.event.MouseWheelEvent evt) {
+                symSizeSpinnerMouseWheelMoved(evt);
+            }
+        });
 
         colorPanel.setLayout(new java.awt.BorderLayout());
 
-        jLabel6.setText("line color:");
+        jLabel6.setText("Line Color:");
         jLabel6.setToolTipText("color of the line and plot symbols");
 
-        jLabel7.setText("fill color:");
+        jLabel7.setText("Fill Color:");
         jLabel7.setToolTipText("Fill with this color");
 
         fillColorPanel.setToolTipText("fill with this color");
         fillColorPanel.setLayout(new java.awt.BorderLayout());
 
-        fillToReferenceCheckBox.setText("fill to reference");
+        fillToReferenceCheckBox.setText("Fill to Reference");
         fillToReferenceCheckBox.setToolTipText("Fill from the plot trace to a reference value");
         fillToReferenceCheckBox.setBorder(javax.swing.BorderFactory.createEmptyBorder(0, 0, 0, 0));
         fillToReferenceCheckBox.addActionListener(new java.awt.event.ActionListener() {
@@ -183,27 +220,34 @@ public class ColorScatterStylePanel extends javax.swing.JPanel implements PlotSt
             }
         });
 
-        jLabel8.setText("reference value:");
+        jLabel8.setText("Reference Value:");
         jLabel8.setToolTipText("Fill to this value");
 
         referenceValuePanel.setToolTipText("fill to this value");
         referenceValuePanel.setLayout(new java.awt.BorderLayout());
 
-        jLabel9.setText("plot symbol:");
+        jLabel9.setText("Plot Symbol:");
         jLabel9.setToolTipText("type of symbol, or none.");
 
         psymPanel.setLayout(new java.awt.BorderLayout());
 
-        jLabel10.setText("line style:");
+        jLabel10.setText("Line Style:");
         jLabel10.setToolTipText("style of the plot trace, or none");
 
         lineStylePanel.setLayout(new java.awt.BorderLayout());
 
-        jLabel4.setText("colortable:");
+        jLabel4.setText("Colortable:");
         jLabel4.setToolTipText("colortable for spectrograms");
 
         colortableTypePanel.setToolTipText("colortable for spectrograms\n");
         colortableTypePanel.setLayout(new java.awt.BorderLayout());
+
+        showLimitsCheckBox.setText("Show Limits");
+
+        jLabel1.setText("Fill Direction:");
+
+        fillDirectionComboBox.setModel(new javax.swing.DefaultComboBoxModel<>(new String[] { "above", "below", "both" }));
+        fillDirectionComboBox.setSelectedIndex(2);
 
         org.jdesktop.layout.GroupLayout jPanel2Layout = new org.jdesktop.layout.GroupLayout(jPanel2);
         jPanel2.setLayout(jPanel2Layout);
@@ -211,42 +255,49 @@ public class ColorScatterStylePanel extends javax.swing.JPanel implements PlotSt
             jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
             .add(jPanel2Layout.createSequentialGroup()
                 .addContainerGap()
-                .add(jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING, false)
-                    .add(jPanel2Layout.createSequentialGroup()
-                        .add(jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
-                            .add(jLabel3)
-                            .add(jLabel10))
-                        .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
-                        .add(jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
-                            .add(lineThickSpinner, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 61, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
-                            .add(lineStylePanel, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 125, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)))
-                    .add(fillToReferenceCheckBox)
-                    .add(org.jdesktop.layout.GroupLayout.TRAILING, jPanel2Layout.createSequentialGroup()
-                        .add(jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
-                            .add(jLabel9)
-                            .add(jLabel2)
-                            .add(jLabel6)
-                            .add(jLabel4))
-                        .add(23, 23, 23)
-                        .add(jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.TRAILING, false)
-                            .add(org.jdesktop.layout.GroupLayout.LEADING, colortableTypePanel, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 130, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
-                            .add(org.jdesktop.layout.GroupLayout.LEADING, colorPanel, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 130, Short.MAX_VALUE)
-                            .add(org.jdesktop.layout.GroupLayout.LEADING, psymPanel, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 104, Short.MAX_VALUE)
-                            .add(org.jdesktop.layout.GroupLayout.LEADING, symSizeSpinner, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 60, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE))
-                        .add(177, 177, 177))
-                    .add(jPanel2Layout.createSequentialGroup()
-                        .add(12, 12, 12)
-                        .add(jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
-                            .add(jPanel2Layout.createSequentialGroup()
-                                .add(jLabel7)
-                                .add(jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
-                                    .add(jPanel2Layout.createSequentialGroup()
-                                        .add(63, 63, 63)
-                                        .add(referenceValuePanel, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 89, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE))
-                                    .add(jPanel2Layout.createSequentialGroup()
-                                        .add(41, 41, 41)
-                                        .add(fillColorPanel, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 126, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE))))
-                            .add(jLabel8)))))
+                .add(jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+                    .add(jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING, false)
+                        .add(org.jdesktop.layout.GroupLayout.TRAILING, jPanel2Layout.createSequentialGroup()
+                            .add(jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+                                .add(jLabel9)
+                                .add(jLabel2)
+                                .add(jLabel6)
+                                .add(jLabel4))
+                            .add(23, 23, 23)
+                            .add(jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.TRAILING, false)
+                                .add(org.jdesktop.layout.GroupLayout.LEADING, colortableTypePanel, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 130, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
+                                .add(org.jdesktop.layout.GroupLayout.LEADING, colorPanel, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 130, Short.MAX_VALUE)
+                                .add(org.jdesktop.layout.GroupLayout.LEADING, psymPanel, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 104, Short.MAX_VALUE)
+                                .add(org.jdesktop.layout.GroupLayout.LEADING, symSizeSpinner, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 60, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE))
+                            .add(177, 177, 177))
+                        .add(jPanel2Layout.createSequentialGroup()
+                            .add(jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+                                .add(jPanel2Layout.createSequentialGroup()
+                                    .add(jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+                                        .add(jLabel3)
+                                        .add(jLabel10))
+                                    .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
+                                    .add(jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+                                        .add(lineThickSpinner, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 61, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
+                                        .add(lineStylePanel, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 125, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)))
+                                .add(fillToReferenceCheckBox)
+                                .add(jPanel2Layout.createSequentialGroup()
+                                    .add(12, 12, 12)
+                                    .add(jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING, false)
+                                        .add(jPanel2Layout.createSequentialGroup()
+                                            .add(jLabel1)
+                                            .add(18, 18, 18)
+                                            .add(fillDirectionComboBox, 0, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                                        .add(jPanel2Layout.createSequentialGroup()
+                                            .add(jLabel8)
+                                            .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
+                                            .add(referenceValuePanel, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                                        .add(jPanel2Layout.createSequentialGroup()
+                                            .add(jLabel7)
+                                            .add(41, 41, 41)
+                                            .add(fillColorPanel, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 126, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)))))
+                            .addContainerGap()))
+                    .add(showLimitsCheckBox)))
         );
 
         jPanel2Layout.linkSize(new java.awt.Component[] {colorPanel, colortableTypePanel, fillColorPanel, lineStylePanel, psymPanel}, org.jdesktop.layout.GroupLayout.HORIZONTAL);
@@ -286,10 +337,16 @@ public class ColorScatterStylePanel extends javax.swing.JPanel implements PlotSt
                     .add(jLabel7)
                     .add(fillColorPanel, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 24, Short.MAX_VALUE))
                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
-                .add(jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
-                    .add(jLabel8)
-                    .add(org.jdesktop.layout.GroupLayout.TRAILING, referenceValuePanel, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 25, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE))
-                .addContainerGap(65, Short.MAX_VALUE))
+                .add(jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING, false)
+                    .add(referenceValuePanel, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 25, Short.MAX_VALUE)
+                    .add(jLabel8, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
+                .add(jPanel2Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.BASELINE)
+                    .add(jLabel1)
+                    .add(fillDirectionComboBox, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE))
+                .addPreferredGap(org.jdesktop.layout.LayoutStyle.UNRELATED)
+                .add(showLimitsCheckBox)
+                .addContainerGap(14, Short.MAX_VALUE))
         );
 
         jPanel2Layout.linkSize(new java.awt.Component[] {fillColorPanel, jLabel7}, org.jdesktop.layout.GroupLayout.VERTICAL);
@@ -302,7 +359,7 @@ public class ColorScatterStylePanel extends javax.swing.JPanel implements PlotSt
         this.setLayout(layout);
         layout.setHorizontalGroup(
             layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
-            .add(jPanel2, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 273, Short.MAX_VALUE)
+            .add(jPanel2, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 273, Short.MAX_VALUE)
         );
         layout.setVerticalGroup(
             layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
@@ -314,11 +371,27 @@ public class ColorScatterStylePanel extends javax.swing.JPanel implements PlotSt
         org.das2.util.LoggerManager.logGuiEvent(evt);                
     }//GEN-LAST:event_fillToReferenceCheckBoxActionPerformed
 
+    private void symSizeSpinnerMouseWheelMoved(java.awt.event.MouseWheelEvent evt) {//GEN-FIRST:event_symSizeSpinnerMouseWheelMoved
+        double n= ((Double)symSizeSpinner.getValue()) + evt.getWheelRotation() * 0.2;
+        if ( n>20 ) n=20;
+        if ( n<0 ) n=0;
+        symSizeSpinner.setValue( n );
+    }//GEN-LAST:event_symSizeSpinnerMouseWheelMoved
+
+    private void lineThickSpinnerMouseWheelMoved(java.awt.event.MouseWheelEvent evt) {//GEN-FIRST:event_lineThickSpinnerMouseWheelMoved
+        double n= ((Double)lineThickSpinner.getValue()) + evt.getWheelRotation() * 0.2;
+        if ( n>20 ) n=20;
+        if ( n<0 ) n=0;
+        lineThickSpinner.setValue( n );
+    }//GEN-LAST:event_lineThickSpinnerMouseWheelMoved
+
     // Variables declaration - do not modify//GEN-BEGIN:variables
     private javax.swing.JPanel colorPanel;
     private javax.swing.JPanel colortableTypePanel;
     private javax.swing.JPanel fillColorPanel;
+    private javax.swing.JComboBox<String> fillDirectionComboBox;
     private javax.swing.JCheckBox fillToReferenceCheckBox;
+    private javax.swing.JLabel jLabel1;
     private javax.swing.JLabel jLabel10;
     private javax.swing.JLabel jLabel2;
     private javax.swing.JLabel jLabel3;
@@ -332,6 +405,7 @@ public class ColorScatterStylePanel extends javax.swing.JPanel implements PlotSt
     private javax.swing.JSpinner lineThickSpinner;
     private javax.swing.JPanel psymPanel;
     private javax.swing.JPanel referenceValuePanel;
+    private javax.swing.JCheckBox showLimitsCheckBox;
     private javax.swing.JSpinner symSizeSpinner;
     // End of variables declaration//GEN-END:variables
 }

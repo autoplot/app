@@ -1,22 +1,33 @@
-/*
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
- */
 
 package org.das2.jythoncompletion;
 
+import java.awt.Graphics2D;
 import java.io.StringReader;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import javax.swing.text.BadLocationException;
 import javax.swing.text.JTextComponent;
+import org.das2.datum.LoggerManager;
 import org.python.parser.*;
 
 /**
- *
+ * support functions for Jython editor completions.
  * @author jbf
  */
 public class CompletionSupport {
+    
+    private static final Logger logger= LoggerManager.getLogger("jython.editor.completion");
+    
+    private CompletionSupport() {
+        // utility class cannot be instanciated.
+    }
     
     /**
      * 
@@ -33,17 +44,97 @@ public class CompletionSupport {
         return result.toString();
     }
     
+    /**
+     * return true if this line is a continuation of the previous line.
+     * @param possible the previous line
+     * @param tail the line which we are to test if it is a continuation.
+     * @return true if this line is a continuation of the previous line.
+     */
+    private static boolean isContinuation( String possible, String tail ) {
+        if ( possible.trim().endsWith("\\") ) {
+            return true;
+        } else {
+            int ipos1= 0;
+            while ( ipos1<possible.length() && Character.isWhitespace( possible.charAt(ipos1) ) ) ipos1++;
+            if ( possible.trim().length()==0 ) {
+                return false;
+            }
+            int ipos2= 0;
+            while ( ipos2<tail.length() && Character.isWhitespace( tail.charAt(ipos2) ) ) ipos2++;
+            return ipos1<ipos2;
+        }
+    }
     
+    /**
+     * is the carot within a subclass of an identifiable Java class?
+     * TODO: this is a proof-of-concept kludge right now, where it just looks for g.*
+     * @param editor
+     * @return null or the CompletionContext for this.
+     * @throws javax.swing.text.BadLocationException
+     */
+    public static CompletionContext checkJavaSubClass( JTextComponent editor ) throws BadLocationException {
+        // get the AST, check that we are in a routine which is a subclass (e.g. Painter), and get the Java types from it.
+        int pos= editor.getCaretPosition();
+        int i0= Utilities.getRowStart( editor, pos );
+        //int i2= Utilities.getRowEnd( editor, pos );
+        
+        String line= editor.getText( i0, pos-i0 );
+        Pattern p= Pattern.compile("\\s*(g)\\.([a-zA-Z]*)");
+        Matcher m= p.matcher(line);
+        if ( m.matches() ) {
+            CompletionContext result= new CompletionContext( CompletionContext.CLASS_METHOD_NAME, m.group(1), m.group(2) );
+            result.setContextObjectClass( Graphics2D.class );
+            return result;
+        }
+        
+        return null;
+    }
     
+    /**
+     * get the completion context for the editor at the carot position.
+     * @param editor the editor component containing the script and the carot position.
+     * @return the completion context
+     * @throws BadLocationException 
+     */
     public static CompletionContext getCompletionContext( JTextComponent editor ) throws BadLocationException {
         int pos= editor.getCaretPosition();
         int i0= Utilities.getRowStart( editor, pos );
         int i2= Utilities.getRowEnd( editor, pos );
         
-        String line= editor.getText( i0, i2-i0 );
+        String line= editor.getText( i0, i2-i0-1 );
         int i1= i0;
         
         if ( i1==i2 ) return new CompletionContext( CompletionContext.DEFAULT_NAME, null, "" );
+        
+        CompletionContext result;
+        
+        result= checkJavaSubClass( editor );
+        if ( result!=null ) {
+            return result;
+        }
+               
+        if ( i0>0 ) {
+            int im1= Utilities.getRowStart( editor, i0-1 );
+            String prevLine= editor.getText( im1, i0-im1-1 );
+            if ( isContinuation( prevLine, line ) ) { // rfe363: what about second continuation line? 
+                logger.finer("carot line is continuation, joining with previous line.");
+                do {                    
+                    im1= Utilities.getRowStart( editor, i0-1 );
+                    String prevLine1= prevLine.trim();
+                    if ( prevLine1.endsWith("\\") ) {
+                        prevLine1= prevLine1.substring(0,prevLine1.length()-1);
+                    }
+                    line= prevLine1 + " " + line; // space is because the newline was removed.
+                    pos= pos - ( prevLine.length() - prevLine1.length() );
+                    int lastLineStart= Utilities.getRowStart( editor, im1-1 );
+                    prevLine= editor.getText( lastLineStart, im1-lastLineStart );
+                    if ( isContinuation( prevLine, line ) ) {
+                        i0= im1;
+                    }
+                } while ( isContinuation( prevLine, line ) );
+                i0= im1;
+            }
+        }
         
         pos= pos - i0;
         //i2= i2- i0;
@@ -51,7 +142,10 @@ public class CompletionSupport {
         i1= i1- i0;
         i0= 0;
         
-        return getCompletionContext( line, pos, i0, i1, i2 );
+        result= getCompletionContext( line, pos, i0, i1, i2 );
+        
+        logger.log(Level.FINE, "CompletionContext: {0}", result);
+        return result;
     }
     
     /**
@@ -100,14 +194,21 @@ public class CompletionSupport {
                 int lpar= i-1;
                 while ( lpar>0 && ( rparCount>0 || rbackCount>0 ) ) {
                     contextString= tokens.get(lpar).image + contextString;
-                    if ( lpar>=0 && tokens.get(lpar).kind==PythonGrammarConstants.LPAREN ) {
-                        rparCount--;
-                    } else if ( lpar>=0 && tokens.get(lpar).kind==PythonGrammarConstants.RPAREN ) {
-                        rparCount++;
-                    } else if ( lpar>=0 && tokens.get(lpar).kind==PythonGrammarConstants.LBRACKET ) {
-                        rbackCount--;
-                    } else if ( lpar>=0 && tokens.get(lpar).kind==PythonGrammarConstants.RBRACKET ) {
-                        rbackCount++;
+                    switch (tokens.get(lpar).kind) {
+                        case PythonGrammarConstants.LPAREN:
+                            rparCount--;
+                            break;
+                        case PythonGrammarConstants.RPAREN:
+                            rparCount++;
+                            break;
+                        case PythonGrammarConstants.LBRACKET:
+                            rbackCount--;
+                            break;
+                        case PythonGrammarConstants.RBRACKET:
+                            rbackCount++;
+                            break;
+                        default:
+                            break;
                     }
                     if ( rparCount==0 ) {
                         if ( lpar>0 && tokens.get(lpar-1).kind==PythonGrammarConstants.NAME ) {
@@ -151,6 +252,123 @@ public class CompletionSupport {
             return contextString;
     }
 
+    private static Map<Integer,String> grammarConstantLookup;
+    
+    static {
+        // hacked code from org/python/parser/PythonGrammarConstants.java
+          Map<String,Integer> m= new HashMap<>();
+          m.put( "EOF", 0);
+          m.put( "SPACE", 1);
+          m.put( "CONTINUATION", 4);
+          m.put( "NEWLINE1", 5);
+          m.put( "NEWLINE", 6);
+          m.put( "NEWLINE2", 7);
+          m.put( "CRLF1", 12);
+          m.put( "DEDENT", 14);
+          m.put( "INDENT", 15);
+          m.put( "TRAILING_COMMENT", 16);
+          m.put( "SINGLE_LINE_COMMENT", 17);
+          m.put( "LPAREN", 18);
+          m.put( "RPAREN", 19);
+          m.put( "LBRACE", 20);
+          m.put( "RBRACE", 21);
+          m.put( "LBRACKET", 22);
+          m.put( "RBRACKET", 23);
+          m.put( "SEMICOLON", 24);
+          m.put( "COMMA", 25);
+          m.put( "DOT", 26);
+          m.put( "COLON", 27);
+          m.put( "PLUS", 28);
+          m.put( "MINUS", 29);
+          m.put( "MULTIPLY", 30);
+          m.put( "DIVIDE", 31);
+          m.put( "FLOORDIVIDE", 32);
+          m.put( "POWER", 33);
+          m.put( "LSHIFT", 34);
+          m.put( "RSHIFT", 35);
+          m.put( "MODULO", 36);
+          m.put( "NOT", 37);
+          m.put( "XOR", 38);
+          m.put( "OR", 39);
+          m.put( "AND", 40);
+          m.put( "EQUAL", 41);
+          m.put( "GREATER", 42);
+          m.put( "LESS", 43);
+          m.put( "EQEQUAL", 44);
+          m.put( "EQLESS", 45);
+          m.put( "EQGREATER", 46);
+          m.put( "LESSGREATER", 47);
+          m.put( "NOTEQUAL", 48);
+          m.put( "PLUSEQ", 49);
+          m.put( "MINUSEQ", 50);
+          m.put( "MULTIPLYEQ", 51);
+          m.put( "DIVIDEEQ", 52);
+          m.put( "FLOORDIVIDEEQ", 53);
+          m.put( "MODULOEQ", 54);
+          m.put( "ANDEQ", 55);
+          m.put( "OREQ", 56);
+          m.put( "XOREQ", 57);
+          m.put( "LSHIFTEQ", 58);
+          m.put( "RSHIFTEQ", 59);
+          m.put( "POWEREQ", 60);
+          m.put( "OR_BOOL", 61);
+          m.put( "AND_BOOL", 62);
+          m.put( "NOT_BOOL", 63);
+          m.put( "IS", 64);
+          m.put( "IN", 65);
+          m.put( "LAMBDA", 66);
+          m.put( "IF", 67);
+          m.put( "ELSE", 68);
+          m.put( "ELIF", 69);
+          m.put( "WHILE", 70);
+          m.put( "FOR", 71);
+          m.put( "TRY", 72);
+          m.put( "EXCEPT", 73);
+          m.put( "DEF", 74);
+          m.put( "CLASS", 75);
+          m.put( "FINALLY", 76);
+          m.put( "PRINT", 77);
+          m.put( "PASS", 78);
+          m.put( "BREAK", 79);
+          m.put( "CONTINUE", 80);
+          m.put( "RETURN", 81);
+          m.put( "YIELD", 82);
+          m.put( "IMPORT", 83);
+          m.put( "FROM", 84);
+          m.put( "DEL", 85);
+          m.put( "RAISE", 86);
+          m.put( "GLOBAL", 87);
+          m.put( "EXEC", 88);
+          m.put( "ASSERT", 89);
+          m.put( "AS", 90);
+          m.put( "NAME", 91);
+          m.put( "LETTER", 92);
+          m.put( "DECNUMBER", 93);
+          m.put( "HEXNUMBER", 94);
+          m.put( "OCTNUMBER", 95);
+          m.put( "FLOAT", 96);
+          m.put( "COMPLEX", 97);
+          m.put( "EXPONENT", 98);
+          m.put( "DIGIT", 99);
+          m.put( "SINGLE_STRING", 108);
+          m.put( "SINGLE_STRING2", 109);
+          m.put( "TRIPLE_STRING", 110);
+          m.put( "TRIPLE_STRING2", 111);
+          m.put( "SINGLE_USTRING", 112);
+          m.put( "SINGLE_USTRING2", 113);
+          m.put( "TRIPLE_USTRING", 114);
+          m.put( "TRIPLE_USTRING2", 115);
+        
+        Map<Integer,String> fmap= new HashMap<>();
+        
+        for ( Entry<String,Integer> e: m.entrySet() ) {
+            fmap.put( e.getValue(), e.getKey() );
+        }
+        
+        grammarConstantLookup= fmap;
+        
+    }
+    
     /**
      * Get the completion context, locating the carot within the code and 
      * identifying it as needing a package name, variable name, function, etc.
@@ -206,6 +424,14 @@ public class CompletionSupport {
         
         CompletionContext result= null;
         
+        logger.log(Level.FINE, "completions finds {0} tokens in {1}", new Object[] { tokens.size(), line } );
+        if ( logger.isLoggable(Level.FINER) ) {
+            int i=0;
+            for ( Token t1: tokens ) {
+                logger.log(Level.FINER, "{0}:\t{1}\t{2}", new Object[]{i++, t1.toString(), grammarConstantLookup.get(t1.kind)});
+            }
+        }
+        
         //HERE IS COMPLETIONS
         if ( tokens.isEmpty() ) {
             return new CompletionContext( CompletionContext.DEFAULT_NAME, null, "" );
@@ -225,7 +451,7 @@ public class CompletionSupport {
                 }
             } else if ( tokens.get(0).kind==PythonGrammarConstants.IMPORT ) {
                 if ( completable==null || completable.equals(".") ) completable="";
-                if ( tokens.get(myTokenIndex-1).image.equals(".") ) myTokenIndex= myTokenIndex-1;
+                if ( myTokenIndex>0 && tokens.get(myTokenIndex-1).image.equals(".") ) myTokenIndex= myTokenIndex-1;
                 result= new CompletionContext( CompletionContext.PACKAGE_NAME, join(tokens,1,myTokenIndex), completable );
                 
             } else if ( tokens.get(myTokenIndex).kind==PythonGrammarConstants.DOT && tokens.get(myTokenIndex-1).kind==PythonGrammarConstants.NAME ) {
@@ -250,20 +476,32 @@ public class CompletionSupport {
             } else if ( myTokenIndex>1 && tokens.get(myTokenIndex-1).kind==PythonGrammarConstants.DOT && tokens.get(myTokenIndex-2).kind==PythonGrammarConstants.RPAREN ) {
                 String contextString= exprBeforeDot(tokens, myTokenIndex-1);
                 return new CompletionContext( CompletionContext.METHOD_NAME, contextString, tokens.get(myTokenIndex).image );
-            } else if ( tokens.get(myTokenIndex).kind==PythonGrammarConstants.SINGLE_STRING
+            } else if ( tokens.get(myTokenIndex).kind==PythonGrammarConstants.SINGLE_STRING  // some completions provided for strings.
                     ||  tokens.get(myTokenIndex).kind==PythonGrammarConstants.SINGLE_STRING2 ) {
-                if ( myTokenIndex>1 && tokens.get(myTokenIndex-2).kind==PythonGrammarConstants.NAME ) {
+                if ( myTokenIndex>3 && tokens.get(myTokenIndex-4).kind==PythonGrammarConstants.NAME 
+                        && tokens.get(myTokenIndex-2).kind==PythonGrammarConstants.NAME 
+                        && tokens.get(myTokenIndex-3).kind!=PythonGrammarConstants.EQUAL ) { // phib= getDataSet( f + '?column=' )
+                    return new CompletionContext( CompletionContext.STRING_LITERAL_ARGUMENT, tokens.get(myTokenIndex-4).image, tokens.get(myTokenIndex).image );
+                } else if ( myTokenIndex>1 && tokens.get(myTokenIndex-2).kind==PythonGrammarConstants.NAME ) { // phib= getDataSet( 'https://rbspgway.jhuapl.edu/share/ac6/data/AC6-A/2014/AC6-A_20141231_V03.tgz/AC6-A_20141231_L2_survey_V03.csv' )
                     return new CompletionContext( CompletionContext.STRING_LITERAL_ARGUMENT, tokens.get(myTokenIndex-2).image, tokens.get(myTokenIndex).image );
                 } else if ( myTokenIndex>1 && tokens.get(myTokenIndex-1).kind==PythonGrammarConstants.PRINT ) { 
+                    return new CompletionContext( CompletionContext.STRING_LITERAL_ARGUMENT, tokens.get(myTokenIndex-2).image, tokens.get(myTokenIndex).image );
+                } else if ( myTokenIndex>1 && tokens.get(myTokenIndex-2).kind==PythonGrammarConstants.SINGLE_STRING && tokens.get(myTokenIndex-2).image.equals("'resourceURI'") ) { // getParam
                     return new CompletionContext( CompletionContext.STRING_LITERAL_ARGUMENT, tokens.get(myTokenIndex-2).image, tokens.get(myTokenIndex).image );
                 } else {
                     return null;
                 }
             } else {
+                int closeParenCount= 0;
                 for ( int i= myTokenIndex; i>0; i--) { // look for function call, because we want the completions for the function.
-                    if ( tokens.get(i).kind==PythonGrammarConstants.LPAREN && tokens.get(i-1).kind==PythonGrammarConstants.NAME ) {
-                        String contextString= tokens.get(i-1).image;
-                        return new CompletionContext( CompletionContext.COMMAND_ARGUMENT, contextString, tokens.get(myTokenIndex).image );
+                    if ( tokens.get(i).kind==PythonGrammarConstants.RPAREN ) {
+                        closeParenCount++;
+                    } else if ( tokens.get(i).kind==PythonGrammarConstants.LPAREN ) {
+                        closeParenCount--;
+                        if ( closeParenCount<0 && tokens.get(i-1).kind==PythonGrammarConstants.NAME ) {
+                            String contextString= tokens.get(i-1).image;
+                            return new CompletionContext( CompletionContext.COMMAND_ARGUMENT, contextString, tokens.get(myTokenIndex).image );
+                        }
                     }
                 }
                 if ( tokens.get(0).kind==PythonGrammarConstants.NAME ) { // why this?

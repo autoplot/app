@@ -155,8 +155,8 @@ public class URISplit {
      * ensure that the reference, which may be relative, absolute.
      * NOTE this is only implemented for unix filenames. TODO: Windows.
      * For example:<ul>
-     * <li>/tmp/,foo.dat -> /home/t/foo.dat
-     * <li>/tmp/,/home/jbf/foo.dat -> /home/jbf/foo.dat
+     * <li>/tmp/,foo.dat &rarr; /home/t/foo.dat
+     * <li>/tmp/,/home/jbf/foo.dat &rarr; /home/jbf/foo.dat
      * </ul>
      * @param path the absolute directory.
      * @param suri the URI, which may be relative to path.
@@ -179,39 +179,49 @@ public class URISplit {
     }
 
     /**
-     * scheme for Autoplot, if provided.  e.g.  vap+cdf.  If not provided,
-     * then "vap:" is implicit.
+     * scheme for Autoplot, if provided.  e.g.  vap+cdf.  
      */
     public String vapScheme;
+    
     /**
-     * scheme for resource, e.g. jdbc.mysql
+     * scheme for resource, e.g. "file" or "https"
      */
     public String scheme;
+    
     /**
      * the complete, modified surl.   file:///home/jbf/mydata.qds
      * this is the resource name, and doesn't contain the vapScheme.
      */
     public String surl;
+    
     /**
      * the resource that is handled by the DataSource.  This may be null if surl doesn't form a valid uri.
      * 
      */
     public URI resourceUri;
+    
     /**
-     * the resource uri up to the authority, e.g.  jbdc:mysql://192.168.0.203:3306
+     * the resource uri up to the authority, e.g. http://autoplot.org
      */
     public String authority;
+    
     /**
      * the resource uri including the path part.
      */
     public String path;
+    
     /**
      * contains the resource string up to the query part.
      */
     public String file;
-    public String ext;
+    
     /**
-     * contains the parameters part, a ampersand-delimited set of parameters. For example, column=field2&rank2.
+     * the file/resource extention, like ".cdf" or ".dat".
+     */
+    public String ext;
+    
+    /**
+     * contains the parameters part, a ampersand-delimited set of parameters. For example, column=field2&amp;rank2.
      */
     public String params;
 
@@ -230,12 +240,6 @@ public class URISplit {
      * is with respect to formatted URI, which probably includes the explicit "vap:" scheme.
      */
     public int formatCarotPos;
-
-    /**
-     * if true, then "vap:" for the vapScheme was implicitly added.
-     * This is not used any more and should always be false, since we should never add imformationless "vap:" prefix.
-     */
-    public boolean implicitVap= false;
 
     static List<String> otherSchemes= Collections.emptyList();
 
@@ -427,9 +431,9 @@ public class URISplit {
 
     /**
      * convenient method to remove a parameter (or parameters) from the list of parameters
-     * @param surl
-     * @param parm
-     * @return
+     * @param surl any URI or web address
+     * @param parm the name to remove
+     * @return the URI with the parameter removed, and the question mark removed when no parameters remain.
      */
     public static String removeParam( String surl, String ... parm ) {
         URISplit split= URISplit.parse(surl);
@@ -438,7 +442,7 @@ public class URISplit {
             params.remove(p);
         }
         split.params= URISplit.formatParams(params);
-        if ( params.size()==0 ) split.params=null;
+        if ( params.isEmpty() ) split.params=null;
         if ( split.vapScheme!=null && !surl.startsWith(split.vapScheme) ) split.vapScheme=null;
         return URISplit.format(split);
     }
@@ -446,10 +450,10 @@ public class URISplit {
 
     /**
      * convenient method for adding or replacing a parameter to the URI.
-     * @param surl
-     * @param name
-     * @param value
-     * @return
+     * @param surl any URI or web address
+     * @param name the parameter name to add
+     * @param value the parameter value to add
+     * @return the uri with the question mark and parameter added.
      */
     public static String putParam( String surl, String name, String value ) {
         URISplit split= URISplit.parse(surl);
@@ -608,9 +612,14 @@ public class URISplit {
      * @param surl  the string to parse
      * @param caretPos the position of the caret, the relative position will be preserved through normalization in formatCaretPos
      * @param normalize normalize the surl by adding implicit "vap", etc.
+     * @throws IllegalArgumentException 
      * @return the decomposed uri.
      */
     public static URISplit parse( String surl, int caretPos, boolean normalize) {
+        
+        if ( surl==null ) {
+            throw new NullPointerException("surl cannot be null");   
+        }
 
         logger.log( Level.FINE, "URISplit.parse(\"{0}\",{1},{2})", new Object[]{ surl, caretPos, normalize });
 
@@ -618,12 +627,12 @@ public class URISplit {
             if ( caretPos==surl.length() ) caretPos++;
             surl= surl+"/";
         }
-
-//        // finally, kludge for Unix ~.  TODO: Get this working some time...
-//        if ( surl.startsWith("~") ) {
-//            surl= System.getProperty("user.home") + surl.substring(1);
-//            caretPos += ( System.getProperty("user.home").length() -1 );
-//        }
+        
+        // finally, kludge for Unix ~/.  
+        if ( surl.startsWith("~/") ) {
+            surl= System.getProperty("user.home") + surl.substring(1);
+            caretPos += ( System.getProperty("user.home").length() -1 );
+        }
 
         if ( surl.startsWith("http://autoplot.org/autoplot.jnlp?") ) {
             String[] popFront= new String[] { "http://autoplot.org/autoplot.jnlp?version=devel&", "http://autoplot.org/autoplot.jnlp?"  };
@@ -749,17 +758,29 @@ public class URISplit {
         if ( rsurl.substring(0,iquery ).contains("\\") ){
             rsurl= rsurl.substring(0,iquery).replaceAll("\\\\","/") + rsurl.substring(iquery);
         }
-        if (result.scheme != null) {
-            int iauth = result.scheme.length() + 1;
-            while (iauth < rsurl.length() && rsurl.charAt(iauth) == '/') {
-                iauth++;
+        if(result.scheme != null){
+            if(result.scheme.equalsIgnoreCase("tag")){
+                // For the tag scheme, the authority is odd.  In addition the authority
+                // has a date.  For the purposes here, we combine the date with the
+                // authority, but they are two different components.
+                String[] aTmp = result.surl.split(":", 3);
+                if( aTmp.length > 1) result.authority = "tag:"+aTmp[1];  //see def on line 204 above
+                else result.authority = "tag:";                          
             }
-            iauth = rsurl.indexOf('/', iauth);
-            if (iauth == -1) iauth = rsurl.length();
-            if ( rsurl.charAt(iauth-1)==':' && rsurl.charAt(iauth-3)==':'  ) {
-                    iauth= iauth-2;
+            else{
+                int iauth = result.scheme.length() + 1;
+                while(iauth < rsurl.length() && rsurl.charAt(iauth) == '/'){
+                    iauth++;
+                }
+                iauth = rsurl.indexOf('/', iauth);
+                if(iauth == -1){
+                    iauth = rsurl.length();
+                }
+                if(rsurl.charAt(iauth - 1) == ':' && rsurl.charAt(iauth - 3) == ':'){
+                    iauth = iauth - 2;
+                }
+                result.authority = rsurl.substring(0, iauth);
             }
-            result.authority = rsurl.substring(0, iauth);
         }
 
         if ( ext!=null && ext.length()==0 ) ext=null;
@@ -799,7 +820,7 @@ public class URISplit {
      * Split the parameters (if any) into name,value pairs. URLEncoded parameters are decoded, but the string may be decoded 
      * already.  Items without equals (=) are inserted as "arg_N"=name.
      * @param params null or String containing the list of ampersand-delimited parameters.
-     * @return null or the map.
+     * @return the map, which will be empty when there are no params.
      */
     public static LinkedHashMap<String, String> parseParams(String params) {
         LinkedHashMap<String, String> result = new LinkedHashMap<>();
@@ -834,7 +855,7 @@ public class URISplit {
                 name = name.replaceAll("%3D", "=" ); // https://sourceforge.net/tracker/?func=detail&aid=3049295&group_id=199733&atid=970682
                 result.put("arg_" + (argc++), name);
             } else {
-                name = s.substring(0, j);
+                name = s.substring(0, j).trim();
                 value = s.substring(j + 1);
                 if ( name.equals( URISplit.PARAM_TIME_RANGE ) ) {
                     value= value.replaceAll("\\+", " ");
@@ -848,17 +869,22 @@ public class URISplit {
     }
 
     /**
-     * spaces and other URI syntax elements are URL-encoded.
+     * spaces and other URI syntax elements are URL-encoded.  
+     * Note some calls of this routine should check for an empty string result
+     * and then set split.params=null instead of "", to avoid the extraneous
+     * question mark.
+     * 
      * @param parms
-     * @return
+     * @return "" or the parameters delimited by ampersands.
      */
     public static String formatParams(Map<String,String> parms) {
         StringBuilder result = new StringBuilder("");
         for ( Entry<String,String> e: parms.entrySet() ) {
             String key = (String) e.getKey();
             if (key.startsWith("arg_")) {
-                if (!e.getValue().equals("")) {
-                    result.append("&").append(e.getValue());
+                String value= e.getValue();
+                if ( value!=null && !value.equals("")) {
+                    result.append("&").append(value);
                 }
             } else {
                 String value = (String) e.getValue();
@@ -951,11 +977,12 @@ public class URISplit {
      * The problem is we want valid URIs that are also readable, so just using
      * simple encode/decode logic is not practical.
      *
-     * This means:
-     * - no spaces
-     * - contains %[0-9][0-9]
-     * @param surl
-     * @return
+     * This means:<ul>
+     * <li> no spaces
+     * <li> contains %[0-9][0-9]
+     * </ul>
+     * @param surl the URI
+     * @return true if it appears to be encoded.
      */
     public static boolean isUriEncoded( String surl ) {
         boolean result= false;
@@ -969,8 +996,8 @@ public class URISplit {
     /**
      * convert " " to "%20", etc, by looking for and encoding illegal characters.
      * We can't just aggressively convert...
-     * @param surl 
-     * @return
+     * @param surl the URI
+     * @return the URL-encoded URI
      */
     public static String uriEncode(String surl) {
         if ( isUriEncoded(surl) ) return surl;
@@ -1023,7 +1050,8 @@ public class URISplit {
         surl = surl.replaceAll("%5B", "\\[" ); // Windows appends these in temporary downloadf rte_1495358356
         surl = surl.replaceAll("%5D", "\\]" );
         surl = surl.replaceAll("%5E", "^" );
-
+        surl = surl.replaceAll("%5C", "\\\\" );
+        surl = surl.replaceAll("%7C", "|" );
         return surl;
     }
 

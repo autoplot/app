@@ -26,6 +26,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Pattern;
 
 import javax.swing.AbstractAction;
 import javax.swing.Action;
@@ -412,6 +413,11 @@ public class CsvDataSourceEditorPanel extends javax.swing.JPanel implements Data
                         fields[0]= line;
                         return true;
                     }
+
+                    @Override
+                    public String readNextRecord(BufferedReader reader) throws IOException {
+                        return reader.readLine();
+                    }
                 });
             } else {
                 model.setRecParser(p);
@@ -420,6 +426,39 @@ public class CsvDataSourceEditorPanel extends javax.swing.JPanel implements Data
         } catch (IOException ex) {
             Logger.getLogger(CsvDataSourceEditorPanel.class.getName()).log(Level.SEVERE, null, ex);
         }
+
+    }
+
+    private static void updateColumns( javax.swing.JTable jTable1, Map<Integer,String> columns ) {
+        int n= jTable1.getColumnCount();
+        int wide= n<5 ? 210 : 170;
+        int normwide= n<5 ? 140 : 110;
+        int norm= n<5 ? 100 : 70;
+        int narrow= n<5 ? 60 : 50;
+
+        for (int i = 0; i < jTable1.getColumnCount(); i++) {
+            String label;
+            if (i < columns.size()) {
+                label = columns.get(i);
+            } else {
+                label = "x"; // hopefully transient
+            }
+            jTable1.getColumnModel().getColumn(i).setHeaderValue(label);
+
+            int nrow= jTable1.getRowCount();
+            Object o= jTable1.getValueAt(nrow-1,i);
+            String s= String.valueOf(o);
+            if ( s.length()>16 ) { // times
+                jTable1.getColumnModel().getColumn(i).setPreferredWidth(wide);
+            } else if ( s.length()>11 ) {
+                jTable1.getColumnModel().getColumn(i).setPreferredWidth(normwide); 
+            } else if ( s.length()<5 ) {
+                jTable1.getColumnModel().getColumn(i).setPreferredWidth(narrow); 
+            } else {
+                jTable1.getColumnModel().getColumn(i).setPreferredWidth(norm);
+            }
+        }
+        jTable1.getTableHeader().repaint();
 
     }
 
@@ -481,6 +520,7 @@ public class CsvDataSourceEditorPanel extends javax.swing.JPanel implements Data
                 columns.put( i, headers.get(i) );
                 jTable1.getColumnModel().getColumn(i).setHeaderValue( headers.get(i) );
             }
+            updateColumns(jTable1, columns);
 
             reader.close();
 
@@ -665,7 +705,7 @@ protected File file = null;
         if ( delim.charAt(0)==';' ) {
             params.put("delim",delim.substring(0,1) );
         }
-        split.params = URISplit.formatParams(params);
+        split.params = params.isEmpty() ? null : URISplit.formatParams(params);
         
         return URISplit.format(split);
     }

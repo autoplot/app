@@ -30,6 +30,7 @@ import org.das2.util.filesystem.FileSystem.FileSystemOfflineException;
 import org.das2.util.monitor.ProgressMonitor;
 import org.autoplot.datasource.DataSetURI;
 import org.das2.util.filesystem.FileSystemUtil;
+import org.das2.util.filesystem.LocalFileSystem;
 
 /**
  *
@@ -51,10 +52,11 @@ public class WalkUtil {
      * returns the last index of slash, splitting the FileSystem part from the template part.
      * See also FileStorageModel.splitIndex and AggregatingDataSource.splitIndex
      * @param surl
-     * @return
+     * @return the index of the last character of the url.
+     * @see FileStorageModel#splitIndex(java.lang.String) which does the same thing.
      */
     protected static int splitIndex(String surl) {
-        int i= firstIndexOf( surl,Arrays.asList( "%Y","$Y","%y","$y","$(","%{","*") );
+        int i= firstIndexOf( surl,Arrays.asList( "%Y","$Y","%y","$y","$(","%{","*","$x") );
         if ( i!=-1 ) {
             i = surl.lastIndexOf('/', i);
         } else {
@@ -121,6 +123,7 @@ public class WalkUtil {
 
         spec= spec.replaceAll("\\*", ".*"); //GRR.  What if I put .* in there knowing it was a regex.
         spec= spec.replaceAll("\\?", ".");
+        spec= spec.replaceAll("\\$x", ".*");
         
         FileStorageModel fsm=null;
         if ( TimeParser.isSpec(spec) ) fsm= FileStorageModel.create( fs, spec );
@@ -140,8 +143,8 @@ public class WalkUtil {
         for ( i = 0; i < ss.length; i++) {
             DatumRange dr2=null;
             if ( fsm!=null ) dr2= fsm.getRangeFor(ss[i]);
-            if ( dr==null || dr2==null || dr.contains(dr2) ) {
-                if ( false && fs.getFileObject(ss[i]).isLocal() ) {
+            if ( dr==null || dr2==null || dr.intersects(dr2) ) {
+                if ( fs instanceof LocalFileSystem ) {
                     File f= fs.getFileObject(ss[i]).getFile();
                     result.add( f.toURI() );
                 } else {
@@ -193,6 +196,9 @@ public class WalkUtil {
      * @return
      */
     public static BufferedImage resizeImage( BufferedImage originalImage, int width, int height ) {
+        if ( Math.abs(originalImage.getWidth()-width)<2 && Math.abs(originalImage.getHeight()-height)<2 ) { // allow for rounding errors
+            return originalImage;
+        }
         BufferedImage resizedImage = new BufferedImage( width, height, originalImage.getType() );
         Graphics2D g = resizedImage.createGraphics();
         g.fillRect(0,0,width,height);

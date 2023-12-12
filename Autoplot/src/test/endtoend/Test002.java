@@ -1,11 +1,7 @@
-/*
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
- */
+
 package test.endtoend;
 
 import java.io.IOException;
-import java.io.PrintStream;
 import java.io.PrintWriter;
 import org.autoplot.RenderType;
 import org.autoplot.ScriptContext;
@@ -15,9 +11,10 @@ import org.das2.qds.ops.Ops;
 import org.autoplot.jythonsupport.Util;
 
 /**
- * Test Autoplot including:
- *   use case: load wave file and add spectrogram.
- *   and more abstract vap file products
+ * Test Autoplot including:<ul>
+ *   <li>use case: load wave file and add spectrogram.
+ *   <li>more abstract vap file products
+ * </ul>
  * @author jbf
  */
 public class Test002 {
@@ -79,7 +76,8 @@ public class Test002 {
             "023 file:///home/jbf/ct/hudson/vap/seth/multiScheme.vap",
             "024 file:///home/jbf/ct/hudson/vap/demos/eventsBarForAvailability3.vap",
             "025 file:///home/jbf/ct/hudson/vap/seth/mageis_rank2_labels.vap",
-            "027 file:///home/jbf/ct/hudson/vap/demoBug.1946.vap",
+            // This was removed: "027 file:///home/jbf/ct/hudson/vap/demoBug.1946.vap",
+            "028 vap+inline:x=[10,20,30,40,50,60,70,80,90]&y=[1,5,2,4,2,5,2,3,2]&x,y&RENDER_TYPE=stairSteps>fillColor=silver",
             //This fails when user tomcat6 tries to run it.  disable for now.
             //"026 file:///home/jbf/ct/hudson/vap/rbsp/efwComponents.vap", // not getting units...
         };

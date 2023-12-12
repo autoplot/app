@@ -9,11 +9,16 @@ import java.io.FileInputStream;
 import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.UnsupportedEncodingException;
+import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.URL;
+import java.net.URLConnection;
+import java.net.URLDecoder;
 import java.net.URLEncoder;
+import java.nio.charset.Charset;
 import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -39,10 +44,10 @@ import org.autoplot.datasource.AutoplotSettings;
 import org.autoplot.datasource.DataSetURI;
 import org.das2.datum.Datum;
 import org.das2.datum.DatumRangeUtil;
+import org.das2.datum.HttpUtil;
 import org.das2.datum.TimeUtil;
 import org.das2.datum.Units;
 import org.das2.util.filesystem.FileSystem;
-import org.das2.util.monitor.NullProgressMonitor;
 
 /**
  * Utility methods for interacting with HAPI servers.  
@@ -58,16 +63,28 @@ public class HapiServer {
     protected static final Logger loggerUrl= org.das2.util.LoggerManager.getLogger( "das2.url" );
     
     /**
+     * all transactions must be done in UTF-8
+     */
+    public static final Charset UTF8= Charset.forName("UTF-8");
+    
+    /**
      * get known servers.  
      * @return known servers
      */
     public static List<String> getKnownServers() {
         ArrayList<String> result= new ArrayList<>();
         try {
-            URL url= new URL("https://raw.githubusercontent.com/hapi-server/servers/master/all.txt");
-            String s= readFromURL(url,"");
-            String[] ss= s.split("\n");
-            result.addAll(Arrays.asList(ss));
+            URL url= new URL("https://raw.githubusercontent.com/hapi-server/servers/master/server_list.txt");
+            try {
+                String s= readFromURL(url,"");
+                String[] ss= s.split("\n");
+                result.addAll(Arrays.asList(ss));
+            } catch ( IOException ex ) {
+                url= new URL("https://raw.githubusercontent.com/hapi-server/servers/master/all.txt");
+                String s= readFromURL(url,"");
+                String[] ss= s.split("\n");
+                result.addAll(Arrays.asList(ss));
+            }
             if ( "true".equals(System.getProperty("hapiDeveloper","false")) ) {
                 result.add("http://tsds.org/get/IMAGE/PT1M/hapi");
                 result.add("https://cdaweb.gsfc.nasa.gov/registry/hdp/hapi");
@@ -78,8 +95,13 @@ public class HapiServer {
         }
         result.remove("http://datashop.elasticbeanstalk.com/hapi");
         result.add("http://datashop.elasticbeanstalk.com/hapi");
-            
-        return result;
+        
+        ArrayList<String> uniq= new ArrayList<>();
+        for ( String s: result ) {
+            if ( !uniq.contains(s) ) uniq.add(s);
+        }
+
+        return uniq;
     }
     
     /**
@@ -125,7 +147,7 @@ public class HapiServer {
             try {
                 String seek="hapi:";
                 int ttaglen= 25;
-                r = new BufferedReader(new FileReader(hist));
+                r = new BufferedReader( new FileReader(hist) ); //sf2295 what is the encoding of the history file?
                 String s = r.readLine();
                 LinkedHashSet dss = new LinkedHashSet();
 
@@ -219,6 +241,23 @@ public class HapiServer {
         return url;
     }
     
+    private static Map<String,String> versions= new HashMap<>();
+    private static Map<String,Long> versionFresh= new HashMap<>();
+    
+    public static String getHapiServerVersion( URL server ) throws JSONException, IOException {
+        String sserver= server.toString();
+        Long fresh= versionFresh.get(sserver);
+        if ( fresh==null || ( fresh < ( System.currentTimeMillis() - 600000 ) ) ) {
+            JSONObject capabilities= getCapabilities( server );
+            String version = capabilities.getString("HAPI");
+            versions.put( sserver, version );
+            versionFresh.put( sserver, System.currentTimeMillis() );
+            return version;
+        } else {
+            return versions.get( sserver );
+        }
+    }
+    
     /**
      * return the URL for data requests.
      * @param server
@@ -231,8 +270,19 @@ public class HapiServer {
         TimeParser tp= TimeParser.create("$Y-$m-$dT$H:$M:$SZ");
         HashMap<String,String> map= new LinkedHashMap();
         map.put(HapiSpec.URL_PARAM_ID, id );
-        map.put(HapiSpec.URL_PARAM_TIMEMIN, tp.format(tr.min()) );
-        map.put(HapiSpec.URL_PARAM_TIMEMAX, tp.format(tr.max()) );
+        String version;
+        try {
+            version= getHapiServerVersion(server);
+        } catch (JSONException | IOException ex) {
+            version= "2.0";
+        }
+        if ( version.startsWith("2.") ) {
+            map.put(HapiSpec.URL_PARAM_TIMEMIN, tp.format(tr.min()) );
+            map.put(HapiSpec.URL_PARAM_TIMEMAX, tp.format(tr.max()) );
+        } else {
+            map.put(HapiSpec.URL_PARAM_START, tp.format(tr.min()) );
+            map.put(HapiSpec.URL_PARAM_STOP, tp.format(tr.max()) );            
+        }
         if ( parameters.length()>0 ) {
             map.put(HapiSpec.URL_PARAM_PARAMETERS, parameters );
         }
@@ -257,10 +307,15 @@ public class HapiServer {
      * @return 
      */
     public static String urlEncode( String id ) {
-        try {
-            return URLEncoder.encode( id, "UTF-8" );
-        } catch (UnsupportedEncodingException ex) {
-            throw new IllegalArgumentException(ex);
+        Pattern p= Pattern.compile("[a-zA-Z0-9_:\\-\\+,/\\.]+");
+        if ( p.matcher(id).matches() ) {
+            return id;
+        } else {
+            try {
+                return URLEncoder.encode( id, "UTF-8" );
+            } catch (UnsupportedEncodingException ex) {
+                throw new IllegalArgumentException(ex);
+            }
         }
     }
 
@@ -284,7 +339,15 @@ public class HapiServer {
             logger.warning("HAPI network call on event thread");
         }
         URL url;
-        url= HapiServer.createURL(server, HapiSpec.INFO_URL, Collections.singletonMap(HapiSpec.URL_PARAM_ID, id ) );
+        Map<String,String> params= new HashMap<>();
+        params.put( HapiSpec.URL_PARAM_ID, id );
+        
+        //// https://sourceforge.net/p/autoplot/feature-requests/696/
+        //if ( server.toString().contains("http://hapi-server.org/servers/TestDataRef/hapi") ) {
+        //    params.put( "resolve_references","false");
+        //}
+        
+        url= HapiServer.createURL(server, HapiSpec.INFO_URL, params );
         logger.log(Level.FINE, "getInfo {0}", url.toString());
         String s= readFromURL(url, "json");
         JSONObject o= new JSONObject(s);
@@ -334,8 +397,9 @@ public class HapiServer {
      * @throws IOException 
      */
     public static String readFromCachedURL( URL url, String type ) throws IOException {
-        String s= AutoplotSettings.settings().resolveProperty(AutoplotSettings.PROP_FSCACHE);
-        if ( s.endsWith("/") ) s= s.substring(0,s.length()-1);
+        
+        String hapiCache= HapiDataSource.getHapiCache();
+        
         String u= url.getProtocol() + "/" + url.getHost() + "/" + url.getPath();
         if ( url.getQuery()!=null ) {
             Pattern p= Pattern.compile("id=(.+)");
@@ -349,7 +413,7 @@ public class HapiServer {
         } else {
             if ( type.length()>0 ) u= u + "." + type;
         }
-        String su= s + "/hapi/" + u;
+        String su= hapiCache + u;
         File f= new File(su);
         if ( f.exists() && f.canRead() ) {
             if ( ( System.currentTimeMillis() - f.lastModified() < cacheAgeLimitMillis() ) || FileSystem.settings().isOffline() ) {
@@ -366,19 +430,25 @@ public class HapiServer {
     }
 
     /**
-     * return the resource, if cached, or null if the data is not cached.
+     * write the data (for example, an info response) to a cache file.  This is called
+     * from readFromURL to cache the data.
      * @param url the resource location, query param id is handled specially, but others are ignored.
      * @param type "json" (the extension), or "" if no extension should be added.
      * @param data the data.
      * @throws IOException 
      */
     public static void writeToCachedURL( URL url, String type, String data ) throws IOException {
-        String s= AutoplotSettings.settings().resolveProperty(AutoplotSettings.PROP_FSCACHE);
-        if ( s.endsWith("/") ) s= s.substring(0,s.length()-1);
+        
+        String hapiCache= HapiDataSource.getHapiCache();
+        
         String u= url.getProtocol() + "/" + url.getHost() + "/" + url.getPath();
-        if ( url.getQuery()!=null ) {
+        String q= url.getQuery();
+        if ( q!=null ) {
+            if ( q.contains("resolve_references=false&") ) {
+                q= q.replace("resolve_references=false&","");
+            }
             Pattern p= Pattern.compile("id=(.+)");
-            Matcher m= p.matcher(url.getQuery());
+            Matcher m= p.matcher(q);
             if ( m.matches() ) {
                 u= u + "/" + m.group(1);
                 if ( type.length()>0 ) {
@@ -393,10 +463,12 @@ public class HapiServer {
             }
         }
         
-        String su= s + "/hapi/" + u;
+        String su= hapiCache + u;
         File f= new File(su);
         if ( f.exists() ) {
-            f.delete();
+            if ( !f.delete() ) {
+                throw new IOException("unable to delete file " + f );
+            }
         }
         if ( !f.getParentFile().exists() ) {
             if ( !f.getParentFile().mkdirs() ) {
@@ -423,7 +495,7 @@ public class HapiServer {
      */
     public static String readFromFile( File f ) throws IOException {
         StringBuilder builder= new StringBuilder();
-        try ( BufferedReader in= new BufferedReader( new InputStreamReader( new FileInputStream(f) ) ) ) {
+        try ( BufferedReader in= new BufferedReader( new InputStreamReader( new FileInputStream(f), UTF8 ) ) ) {
             String line= in.readLine();
             while ( line!=null ) {
                 builder.append(line);
@@ -452,8 +524,12 @@ public class HapiServer {
             if ( s!=null ) return s;
         }
         loggerUrl.log(Level.FINE, "GET {0}", new Object[] { url } );
+        URLConnection urlc= url.openConnection();
+        urlc= HttpUtil.checkRedirect(urlc);
+        urlc.setConnectTimeout( FileSystem.settings().getConnectTimeoutMs() );
+        urlc.setReadTimeout( FileSystem.settings().getReadTimeoutMs() );
         StringBuilder builder= new StringBuilder();
-        try ( BufferedReader in= new BufferedReader( new InputStreamReader( url.openStream() ) ) ) {
+        try ( BufferedReader in= new BufferedReader( new InputStreamReader( urlc.getInputStream(), UTF8 ) ) ) {
             String line= in.readLine();
             while ( line!=null ) {
                 builder.append(line);
@@ -461,6 +537,28 @@ public class HapiServer {
                 line= in.readLine();
             }
         } catch ( IOException ex ) {
+            if ( urlc instanceof HttpURLConnection ) {
+                StringBuilder builder2= new StringBuilder();
+                InputStream err= ((HttpURLConnection)urlc).getErrorStream();
+                if ( err==null ) {
+                    throw ex;
+                }
+                try ( BufferedReader in2= new BufferedReader( new InputStreamReader( err, UTF8 ) ) ) {
+                    String line= in2.readLine();
+                    while ( line!=null ) {
+                        builder2.append(line);
+                        builder2.append("\n");
+                        line= in2.readLine();
+                    }
+                    String s2= builder2.toString().trim();
+                    if ( type.equals("json") && s2.length()>0 && s2.charAt(0)=='{' ) {
+                        logger.warning("incorrect error code returned, content is JSON");
+                        return s2;
+                    }
+                } catch ( IOException ex2 ) {
+                    logger.log( Level.FINE, ex2.getMessage(), ex2 );
+                }
+            }
             logger.log( Level.FINE, ex.getMessage(), ex );
             lock.lock();
             try {
@@ -661,4 +759,58 @@ public class HapiServer {
             return sampleRange;                
         }
     }
+
+    /**
+     * encode the string into a URL, handling encoded characters.  Note this does 
+     * nothing right now, but should still be used as the one place to handle URLs.
+     * @param s
+     * @return
+     * @throws MalformedURLException 
+     */
+    public static final URL encodeURL(String s) throws MalformedURLException {
+        try {
+            if (true) {
+                // s.matches("\\A\\p{ASCII}*\\z") ) {
+                return new URL(s);
+            } else {
+                s = URLEncoder.encode(s); // re-decode these because they work and it makes the URL ledgible.
+                s = s.replaceAll("\\%3A", ":");
+                s = s.replaceAll("\\%2F", "/");
+                s = s.replaceAll("\\%2B", "+");
+                s = s.replaceAll("\\%2C", ",");
+                return new URL(s);
+            }
+        } catch (MalformedURLException ex) {
+            return new URL(URLEncoder.encode(s));
+        }
+    }
+
+    /**
+     * decode the URL into a string useful in Autoplot URIs.
+     * @param s
+     * @return 
+     */
+    public static final String decodeURL(URL s) {
+        return URLDecoder.decode(s.toString());
+    }
+
+    /**
+     * replace pluses with %2B and spaces with pluses.
+     * @param s
+     * @return
+     */
+    public static final String encodeURLParameters(String s) {
+        s = s.replaceAll("\\+", "%2B");
+        return s.replaceAll(" ", "+");
+    }
+    
+    /**
+     * replace %2B with pluses and pluses with spaces.
+     * @param s
+     * @return
+     */
+    public static final String decodeURLParameters(String s) {
+        s = s.replaceAll("\\+", " ");
+        return s.replaceAll("%2B", "+");
+    }    
 }

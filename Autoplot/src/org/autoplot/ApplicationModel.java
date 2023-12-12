@@ -39,6 +39,7 @@ import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -90,7 +91,7 @@ import org.autoplot.datasource.Version;
  * of Autoplot, and represents the most simple application.
  * @author jbf
  */
-public class ApplicationModel {
+public final class ApplicationModel {
 
     DasApplication application;
     DasCanvas canvas;
@@ -104,19 +105,71 @@ public class ApplicationModel {
     }
 
     /**
-     * an early version of Autoplot worked as an applet.
-     * @return 
+     * An early version of Autoplot worked as an applet.  The applet mode
+     * is no longer supported.
+     * @return true if this is an applet.
      */
     public boolean isApplet() {
         return this.applet;
     }
     
+    private boolean sandboxed= false;
+    
+    /**
+     * mark that the app is running in sandboxed mode, though note that
+     * this does not add the security manager.
+     * @param sandboxed 
+     */
+    public void setSandboxed( boolean sandboxed ) {
+        if ( sandboxed!=true ) throw new IllegalArgumentException("sandboxed can only be set to true");
+        this.sandboxed= sandboxed;
+    }
+    
+    public boolean isSandboxed() {
+        return this.sandboxed;
+    }
+    
+    /**
+     * Return true if this is running as an application.
+     * @return true if this is running as an application.
+     */
+    public boolean isApplication() {
+        return ScriptContext.getViewWindow()!=null;
+    }
+    
+    /**
+     * Return true if the application is headless.
+     * @return true if the application is headless.
+     */
+    public boolean isHeadless() {
+        return "true".equals(DasApplication.getProperty("java.awt.headless","false"));
+    }
+    
+    private String prompt = "autoplot> ";
+
+    public static final String PROP_PROMPT = "prompt";
+
+    public String getPrompt() {
+        return prompt;
+    }
+
+    /**
+     * Set the prompt used for command line sessions.  By default this is 
+     * "autoplot> ".
+     * @param prompt the new one-line prompt
+     */
+    public void setPrompt(String prompt) {
+        String oldPrompt = this.prompt;
+        this.prompt = prompt;
+        propertyChangeSupport.firePropertyChange(PROP_PROMPT, oldPrompt, prompt);
+    }
+
     public ExceptionHandler getExceptionHandler() {
         return exceptionHandler;
     }
 
     /**
-     * set the code that will handle uncaught exceptions.  This could be a
+     * Set the code that will handle uncaught exceptions.  This could be a
      * GUI that shows the user the problem and submits bug reports.  This could
      * also simply call exit with a non-zero return code for headless use.
      * @param eh 
@@ -138,9 +191,10 @@ public class ApplicationModel {
     }
 
     /**
-     * show a message to the user.
-     * @param message
-     * @param title
+     * Show a message to the scientist.  This will handle headless mode
+     * by printing to stderr.
+     * @param message the message to show
+     * @param title a title for the dialog
      * @param messageType JOptionPane.WARNING_MESSAGE, JOptionPane.INFORMATION_MESSAGE, JOptionPane.PLAIN_MESSAGE,
      */
     public void showMessage( String message, String title, int messageType ) {
@@ -178,6 +232,8 @@ public class ApplicationModel {
 
     private static final Logger logger = org.das2.util.LoggerManager.getLogger("autoplot");
 
+    private static final Logger bookmarksLogger = org.das2.util.LoggerManager.getLogger("autoplot.bookmarks");
+    
     public static final String PREF_RECENT = "recent";
     public static final String PROPERTY_RECENT = PREF_RECENT;
     public static final String PROPERTY_BOOKMARKS = "bookmarks";
@@ -190,7 +246,7 @@ public class ApplicationModel {
         DataSetURI.init();
         dom = new Application();
 
-        if ( DasApplication.getDefaultApplication().isHeadless() ) {
+        if ( isHeadless() ) {
             logger.fine("history.txt is not being recorded in headless mode");
             dontRecordHistory= true;
         }
@@ -259,9 +315,9 @@ public class ApplicationModel {
     ProgressMonitor mon = null;
 
     /**
-     * just plot this dataset.  No capabilities, no urls.  Metadata is set to
+     * Just plot this dataset.  No capabilities, no URLs.  Metadata is set to
      * allow inspection of dataset.
-     * @param ds
+     * @param ds a dataset
      */
     public void setDataSet(QDataSet ds) {
         dom.getController().getPlotElement().getController().setResetRanges(true);
@@ -273,7 +329,7 @@ public class ApplicationModel {
     }
 
     /**
-     * just plot this dataset using the specified dataSourceFilter index.  plotElements and dataSourceFilters
+     * Just plot this dataset using the specified dataSourceFilter index.  plotElements and dataSourceFilters
      * are added until the index exists.  This is introduced to support jython scripting, but may be
      * useful elsewhere.
      * @param chNum the index of the DataSourceFilter to use.
@@ -281,6 +337,18 @@ public class ApplicationModel {
      * @param ds the dataset to plot.
      */
     public void setDataSet( int chNum, String label, QDataSet ds ) {
+        setDataSet( chNum, label, ds, true );
+    }
+    /**
+     * Just plot this dataset using the specified dataSourceFilter index.  plotElements and dataSourceFilters
+     * are added until the index exists.  This is introduced to support jython scripting, but may be
+     * useful elsewhere.
+     * @param chNum the index of the DataSourceFilter to use.
+     * @param label label for the dataset's plotElements, if non-null.
+     * @param ds the dataset to plot.
+     * @param reset reset the autoranging, etc.
+     */
+    public void setDataSet( int chNum, String label, QDataSet ds, boolean reset ) {        
         while ( dom.getDataSourceFilters().length <= chNum ) {
             Plot p= CanvasUtil.getMostBottomPlot(dom.getController().getCanvas());
             dom.getController().setPlot(p);
@@ -288,11 +356,17 @@ public class ApplicationModel {
         }
         DataSourceFilter dsf= dom.getDataSourceFilters(chNum);
         List<PlotElement> elements= dom.getController().getPlotElementsFor( dsf );
-        //for ( PlotElement pe: elements ) {
-        //    pe.getController().setResetPlotElement(true); //TODO: I would think this would be set anyway with the new datasource.
-        //    pe.getController().setResetComponent(true);
-        //}
-        dsf.getController().setDataSource(null);
+        
+        if ( reset==false ) {
+            elements.forEach((pe) -> {
+                pe.getController().setDsfReset(reset);
+                //pe.getController().setResetPlotElement(reset); //TODO: I would think this would be set anyway with the new datasource.
+                //pe.getController().setResetComponent(reset);
+            });
+        }
+        
+        dsf.getController().setDataSource(null); // reset if plotElementControllers want to reset because of setDsfReset
+        
         dsf.setUri("vap+internal:");
         dsf.setFilters("");
         dsf.getController().setDataSetInternal(null); // clear out properties and metadata
@@ -306,7 +380,7 @@ public class ApplicationModel {
     }
 
     /**
-     * just plot this dataset using the specified dataSourceFilter index.  plotElements and dataSourceFilters
+     * Just plot this dataset using the specified dataSourceFilter index.  plotElements and dataSourceFilters
      * are added until the index exists.  This is introduced to support jython scripting, but may be
      * useful elsewhere.
      * @param chNum the index of the DataSourceFilter to use.
@@ -336,7 +410,7 @@ public class ApplicationModel {
     }
 
     /**
-     * just set the focus to the given dataSourceFilter index.  plotElements and dataSourceFilters
+     * Just set the focus to the given dataSourceFilter index.  plotElements and dataSourceFilters
      * are added until the index exists.  This is introduced to support code where we reenter
      * Autoplot with the position switch, and we can to then call maybePlot so that completions can
      * happen.
@@ -423,7 +497,7 @@ public class ApplicationModel {
                     }
                     mon.setProgressMessage("done loading vap file");
                     mon.finished();
-                    addRecent( suri );
+                    //addRecent( suri );
                 } catch (HtmlResponseIOException ex ) {
                     // we know the URL here, so rethrow it.
                     URL url= ex.getURL();
@@ -456,8 +530,8 @@ public class ApplicationModel {
      * When using the AutoplotUI, it is preferable to use AutoplotUI.plotUri, 
      * which will have the effect of typing in the URI and hitting the "go" 
      * arrow button.
-     * @param suri
-     * @throws RuntimeException when _getDataSource throws Exception
+     * @param suri the URI
+     * @throws RuntimeException when resetDataSetSourceURL throws Exception
      */
     public void setDataSourceURL(String suri) {
         String oldVal = dom.getController().getDataSourceFilter().getUri();
@@ -479,7 +553,7 @@ public class ApplicationModel {
     protected List<Bookmark> bookmarks = null;
 
     /**
-     * get the recent URIs, from bookmarks/bookmarks.recent.xml
+     * Get the recent URIs, from autoplot_data/bookmarks/bookmarks.recent.xml
      * @return the recent URIs
      */
     public List<Bookmark> getRecent() {
@@ -506,7 +580,7 @@ public class ApplicationModel {
 
         } else {
 
-            Preferences prefs = AutoplotSettings.settings().getPreferences(ApplicationModel.class);
+            Preferences prefs = AutoplotSettings.getPreferences(ApplicationModel.class);
             String srecent = prefs.get(PREF_RECENT,"");
 
             if (srecent.equals("") || !srecent.startsWith("<")) {
@@ -544,11 +618,11 @@ public class ApplicationModel {
     }
 
     /**
-     * read the default bookmarks in, or those from the user's "bookmarks" pref node.  
+     * Read the default bookmarks in, or those from the user's "bookmarks" pref node.  
      * @return the bookmarks of the legacy user.
      */
     public List<Bookmark> getLegacyBookmarks() {
-        Preferences prefs = AutoplotSettings.settings().getPreferences(ApplicationModel.class);
+        Preferences prefs = AutoplotSettings.getPreferences(ApplicationModel.class);
         String sbookmark = prefs.get("bookmarks", "");
 
         if (sbookmark.equals("") || !sbookmark.startsWith("<")) {
@@ -577,13 +651,15 @@ public class ApplicationModel {
     }
 
     /**
-     * record exceptions the same way we would record successful plots.
-     * Right now this only records exceptions for user=jbf...
+     * Record exceptions the same way we would record successful plots.
+     * This checks the system property "enableLogExceptions" and
+     * if "true" the exception is logged.  
+     * See HOME/autoplot_data/bookmarks/exceptions.txt.
      * 
-     * @param surl the URI we were trying to plot.
+     * @param suri the URI we were trying to plot.
      * @param exx the exception we got instead.
      */
-    public void addException( String surl, Exception exx ) {
+    public void addException( String suri, Exception exx ) {
         if ( !DasApplication.hasAllPermission() ) {
             return;
         }
@@ -607,7 +683,7 @@ public class ApplicationModel {
             TimeParser tp= TimeParser.create( TimeParser.TIMEFORMAT_Z );
             Datum now= Units.t1970.createDatum( System.currentTimeMillis()/1000. );
             out3.append( "=== " + tp.format( now, null) + " ===\n" );
-            out3.append( surl + "\n" );
+            out3.append( suri + "\n" );
             StringWriter sw= new StringWriter();
             PrintWriter pw= new PrintWriter( sw );
             exx.printStackTrace(pw);
@@ -615,7 +691,7 @@ public class ApplicationModel {
             out3.append("\n");
 
         } catch ( IOException ex ) {
-            logger.log( Level.SEVERE, "exception: "+surl, ex );
+            logger.log( Level.SEVERE, "exception: "+suri, ex );
         }
 
     }
@@ -628,25 +704,34 @@ public class ApplicationModel {
     long lastRecentCount= 1; // number of times we used this uri.
     
     /**
-     * add the URI to the recently used list, and to the user's
+     * Add the URI to the recently used list, and to the user's
      * autoplot_data/bookmarks/history.txt.  No interpretation is done
-     * as of June 2011, and pngwalk: and script: uris are acceptable.
-     * @param suri
+     * and pngwalk: and script: uris are acceptable.
+     * @param suri the URI to add.
      */
     public void addRecent(String suri) {
-
+        
+        bookmarksLogger.log(Level.FINER, "addRecent ({0})", suri);
         if ( !DasApplication.hasAllPermission() ) {
             return;
         }
 
         if ( suri.contains("nohistory=true") ) {
-            logger.fine("Not logging URI because it contains nohistory=true");
+            bookmarksLogger.fine("Not logging URI because it contains nohistory=true");
             return;
         } 
 
         if ( dontRecordHistory ) {
-            logger.finest("Not logging URI because history is turned off");
+            bookmarksLogger.finest("Not logging URI because history is turned off");
             return;
+        }
+        
+        if ( suri.contains("fscache") ) {
+            File local = new File( AutoplotSettings.settings().resolveProperty(AutoplotSettings.PROP_FSCACHE) );
+            if ( suri.contains(local.toString() ) ) {
+                bookmarksLogger.fine("Reference to fscache will not be used in recent URIs.");
+                return;
+            }
         }
         
         if ( recent==null ) recent= new ArrayList<>(); // kludge for rpwg TODO: why is this null?
@@ -668,7 +753,7 @@ public class ApplicationModel {
                     }
                 }
                 if ( rm.size()>0 ) {
-                    logger.log(Level.FINE, "removing {0} other TSB uris", rm.size());
+                    bookmarksLogger.log(Level.FINE, "removing {0} other TSB uris", rm.size());
                     for ( Bookmark o: rm ) {
                         newValue.remove(o);
                     }
@@ -723,6 +808,24 @@ public class ApplicationModel {
         
             // always tack on the URI to history.dat file
             final File f3 = new File( f2, "history.txt");
+//            if ( !f3.exists() ) {  // This is code to restrict read access.  No one has asked for this, but it probably should be done.
+//                try {
+//                    if ( f3.createNewFile() ) {
+//                        if ( f3.setReadable( false, false ) ) {
+//                            if ( f3.setReadable( true, true ) ) {
+//                                logger.fine("created history.txt file permissions set so that only user can read.");
+//                            } else {
+//                                f3.setReadable( true );
+//                                logger.info("created history.txt, file permissions cannot be set.");
+//                            }
+//                        } else {
+//                            logger.info("created history.txt, file permissions cannot be set.");
+//                        }
+//                    }
+//                } catch (IOException ex) {
+//                    Logger.getLogger(ApplicationModel.class.getName()).log(Level.SEVERE, null, ex);
+//                }
+//            }
             try ( FileWriter out3= new FileWriter( f3, true ) ) {
                 TimeParser tp= TimeParser.create( TimeParser.TIMEFORMAT_Z );
                 long lnow= System.currentTimeMillis();
@@ -747,12 +850,30 @@ public class ApplicationModel {
     /** 
      * return a list of items matching filter, in a LinkedHashMap.  Note
      * the map is a LinkedHashMap, which preserves the order, and the
-     * last element is the more recently used.
-     * @param filter String like "*.jy"
+     * last element is the more recently used.  If the entry appears to be a 
+     * file, 
+     * @param filter String like "*.jy", (a glob, not a regex)
      * @param limit maximum number of items to return
      * @return LinkedHashMap, ordered by time, mapping URI to time.
      */
     public Map<String,String> getRecent( String filter, final int limit ) {
+        
+        Pattern p= org.das2.util.filesystem.Glob.getPattern(filter);
+        
+        return getRecent( p, limit );
+        
+    }
+    
+    /** 
+     * return a list of items matching filter, in a LinkedHashMap.  Note
+     * the map is a LinkedHashMap, which preserves the order, and the
+     * last element is the more recently used.  If the entry appears to be a 
+     * file, 
+     * @param p a pattern which must be matched.
+     * @param limit maximum number of items to return
+     * @return LinkedHashMap, ordered by time, mapping URI to time.
+     */
+    public Map<String,String> getRecent( Pattern p, final int limit ) {
         File f2= new File( AutoplotSettings.settings().resolveProperty(AutoplotSettings.PROP_AUTOPLOTDATA), "bookmarks/" );
         if ( !f2.exists() ) {
             boolean ok= f2.mkdirs();
@@ -763,8 +884,6 @@ public class ApplicationModel {
         
         // always tack on the URI to history.dat file
         final File f3 = new File( f2, "history.txt");
-        
-        Pattern p= org.das2.util.filesystem.Glob.getPattern(filter);
         
         LinkedHashMap<String,String> result= new LinkedHashMap<String, String>() {
             @Override
@@ -851,7 +970,7 @@ public class ApplicationModel {
 
     /**
      * creates an ApplicationState object representing the current state.
-     * @param deep if true, do a deeper, more expensive gathering of state.  In the initial implementation, this calculates the embededded dataset.
+     * @param deep if true, do a deeper, more expensive gathering of state.  In the initial implementation, this calculates the embedded dataset.
      * @return ApplicationState object
      */
     public Application createState(boolean deep) {
@@ -969,14 +1088,16 @@ public class ApplicationModel {
 
         AWTEvent ev= Toolkit.getDefaultToolkit().getSystemEventQueue().peekEvent(DasUpdateEvent.DAS_UPDATE_EVENT_ID);
         if ( ev!=null ) {
-            logger.fine("bug 3574147: not getting thumbnail, because it would cause hang.");
-            return null; // bug 3574147
+            logger.fine("bug 917: not getting thumbnail, because it would cause hang.");
+            return null; // bug 917 on sourceforge was bug 3574147 on sourceforge
         }
 
         int w= getCanvas().getPreferredSize().width;
         int h= getCanvas().getPreferredSize().height;
+        logger.finer("getting image from canvas..."); // 20181115: observed where this hangs, causing no undo.
         BufferedImage im= (BufferedImage) getCanvas().getImageNonPrint( w,h );
-
+        logger.finer("got image from canvas.");
+        
         if ( im.getHeight() / height > 3 ) {
             thickenLines(im);
         }
@@ -1008,6 +1129,32 @@ public class ApplicationModel {
         setVapFile( DataSetURI.fromFile(f) );
         addRecent( DataSetURI.fromFile(f) );
     }
+    
+    void doSave(File f, String scheme, Map<String,Object> options ) throws IOException {
+        Application app = createState(true);
+        if ( options.getOrDefault(PersistentStateSupport.LOCAL_PWD_REFERENCES,Boolean.FALSE)==Boolean.TRUE ) {
+            //app= (Application)app.copy();
+            File pp= f.getParentFile();
+            String spp= pp.getCanonicalPath();
+            for ( int i=0; i<app.getDataSourceFilters().length; i++ ) {
+                DataSourceFilter dsf= app.getDataSourceFilters(i);
+                //dsf= (DataSourceFilter)dsf.copy();
+                String uri= dsf.getUri();
+                URISplit split= URISplit.parse(uri);
+                if ( split.file.startsWith("file:") ) {
+                    File f1= new File( split.file.substring(5) ).getCanonicalFile();
+                    if ( f1.getCanonicalPath().startsWith(spp) ) {
+                        split.file= "%{PWD}"+f1.getCanonicalPath().substring(spp.length()+1);  // +1 is for the /, which PWD contains
+                        dsf.setUri( URISplit.format(split) );
+                        app.setDataSourceFilters(i,dsf);
+                    }
+                }
+            }
+        }
+        StatePersistence.saveState(f, app, scheme);
+        setVapFile( DataSetURI.fromFile(f) );
+        addRecent( DataSetURI.fromFile(f) );
+    }
 
     /**
      * Load the vap file at f, apply additional modifications to the DOM, then
@@ -1024,7 +1171,7 @@ public class ApplicationModel {
         if ( !f.exists() ) throw new IllegalArgumentException("no such file: "+f);
         if ( f.length()==0 ) throw new IllegalArgumentException("zero-length file: "+f);
 
-        Preferences prefs= AutoplotSettings.settings().getPreferences( AutoplotSettings.class);
+        Preferences prefs= AutoplotSettings.getPreferences( AutoplotSettings.class);
         prefs.put( AutoplotSettings.PREF_LAST_OPEN_VAP_FILE, f.getAbsolutePath() );
         prefs.put( AutoplotSettings.PREF_LAST_OPEN_VAP_FOLDER, f.getParent() );        
         
@@ -1065,7 +1212,7 @@ public class ApplicationModel {
         if ( this.resizeRequestListener!=null ) {
             resizeRequestListener.resize(width, height );
         } else {
-            if ( !DasApplication.getDefaultApplication().isHeadless() ) {
+            if ( !isHeadless() ) {
                 Window w=SwingUtilities.getWindowAncestor( this.canvas );
                 // assume it is fitted for now.  This is a gross over simplification, not considering scroll panes, etc.
                 if ( w!=null ) {
@@ -1075,7 +1222,10 @@ public class ApplicationModel {
                 }
             }
         
-            canvas.setSize(new Dimension(width, height));
+            Dimension d= new Dimension(width, height);
+            canvas.setSize(d);
+            canvas.setPreferredSize(d);
+            dom.getCanvases(0).getController().setDimensions(width, height);
         }
     }
     
@@ -1111,7 +1261,10 @@ public class ApplicationModel {
         if ( DomUtil.structureChanges( this.dom, state ) ) {
             this.dom.getController().reset();
         }
-
+        
+        int correctHeight= state.getCanvases(0).getHeight();
+        int correctWidth= state.getCanvases(0).getWidth();
+        
         if ( this.resizeRequestListener!=null ) {
             double scale= resizeRequestListener.resize( state.getCanvases(0).getWidth(), state.getCanvases(0).getHeight() );
             Font f= Font.decode( state.getCanvases(0).getFont() );
@@ -1120,13 +1273,21 @@ public class ApplicationModel {
             // GuiSupport.setFont( this, newFont );  // this is in-lined to support AutoplotApplet.
             getCanvas().setBaseFont(newFont);
             Font f2 = getCanvas().getFont();
-            getDocumentModel().getOptions().setCanvasFont( DomUtil.encodeFont(f2) );
+            getDom().getOptions().setCanvasFont( DomUtil.encodeFont(f2) );
             state.getCanvases(0).setFont( DomUtil.encodeFont(newFont) );
             state.getCanvases(0).setFitted(dom.getCanvases(0).isFitted());
             state.getCanvases(0).setWidth( dom.getCanvases(0).getWidth());
             state.getCanvases(0).setHeight( dom.getCanvases(0).getHeight());
         }
         
+        ArrayList<String> problems= new ArrayList();
+        if ( !DomUtil.validateDom( state, problems ) ) {
+            for ( String p: problems ) {
+                System.err.println(p);
+            }
+        }
+        
+                
         //logger.fine("" + state.diffs(this.dom));
         restoreState(state);
         
@@ -1137,6 +1298,11 @@ public class ApplicationModel {
             if ( resetx || resety|| resetz ) {
                 p.getController().resetZoom(resetx, resety, resetz);
             }
+        }
+                
+        if ( dom.getCanvases(0).getHeight()!=correctHeight || 
+                 dom.getCanvases(0).getWidth()!=correctWidth  ){
+            logger.warning("vap has been loaded but dimensions are not correct.");
         }
 
     }
@@ -1277,18 +1443,46 @@ public class ApplicationModel {
     
     /**
      * return the dom containing the state of this application
-     * @return 
+     * @deprecated 
+     * @return the dom for this application.
+     * @see #getDom() 
      */
     public Application getDocumentModel() {
         return dom;
     }
 
     /**
+     * return the dom containing the state of this application
+     * @return the dom for this application.
+     * @see #getDocumentModel() 
+     */
+    public Application getDom() {
+        return dom;
+    }
+    
+    /**
      * see ScriptPanelSupport
      * @return
      */
     public DataSourceController getDataSourceFilterController() {
         return dom.getController().getDataSourceFilter().getController();
+    }
+    
+    private final Map<RenderType,PlotStylePanel.StylePanel> panelCache= new HashMap<>();
+            
+    /**
+     * return a GUI controller for the RenderType, using a cached instance if
+     * available.
+     * @param renderType
+     * @return 
+     */
+    public PlotStylePanel.StylePanel getStylePanelMaybeCached( RenderType renderType ) { 
+        PlotStylePanel.StylePanel editorPanel= panelCache.get(renderType);
+        if ( editorPanel==null ) {
+            editorPanel= GuiSupport.getStylePanel(renderType);
+            panelCache.put( renderType, editorPanel );
+        }
+        return editorPanel;
     }
 
 }

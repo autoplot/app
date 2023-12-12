@@ -203,7 +203,7 @@ public class DocumentationScrollPane extends JScrollPane {
             bShowWeb.setFocusable(false);
             bShowWeb.setContentAreaFilled(false);
             bShowWeb.setMargin(new Insets(0, 0, 0, 0));
-            bShowWeb.setToolTipText("You can view and edit this on Autoplot's wiki"); //NOI18N
+            bShowWeb.setToolTipText("Open in browser"); //NOI18N
             toolbar.add(bShowWeb, gdc);
         }
 
@@ -227,6 +227,8 @@ public class DocumentationScrollPane extends JScrollPane {
         //        myScrollToRef( currentDocumentation.getURL().getRef() );
         //    }
         //}));
+        
+        toolbar.add( new JLabel("<html><em>press escape to dismiss") );
         setColumnHeaderView(toolbar);
     }
 
@@ -234,6 +236,11 @@ public class DocumentationScrollPane extends JScrollPane {
         currentDocumentation = doc;
         String text = currentDocumentation.getText();
         URL url = currentDocumentation.getURL();
+        if ( bShowWeb!=null ) {
+            if ( url!=null && url.toString().contains("autoplot.org") ) {
+                bShowWeb.setToolTipText("You can view and edit this on Autoplot's wiki");
+            }
+        }
         if (text != null) {
             if (url != null) {
                 // fix of issue #58658
@@ -578,7 +585,7 @@ public class DocumentationScrollPane extends JScrollPane {
 
         public void actionPerformed(java.awt.event.ActionEvent actionEvent) {
             switch (action) {
-                case ACTION_JAVADOC_ESCAPE:
+                    case ACTION_JAVADOC_ESCAPE:
                     CompletionImpl.get().hideDocumentation(false);
                     break;
                 case ACTION_JAVADOC_BACK:
@@ -593,6 +600,8 @@ public class DocumentationScrollPane extends JScrollPane {
                 case ACTION_JAVADOC_OPEN_SOURCE:
                     goToSource();
                     break;
+                default:
+                    logger.log(Level.INFO, "unsupported action: {0}", action);
             }
 
         }

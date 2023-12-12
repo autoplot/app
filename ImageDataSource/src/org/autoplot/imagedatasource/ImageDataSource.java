@@ -18,6 +18,7 @@ import java.awt.image.BufferedImage;
 import java.awt.image.BufferedImageOp;
 import java.awt.image.ConvolveOp;
 import java.awt.image.Kernel;
+import java.awt.image.WritableRaster;
 import java.io.File;
 import java.io.InputStream;
 import java.net.URI;
@@ -56,7 +57,7 @@ import org.w3c.dom.Node;
  *
  * @author jbf
  */
-class ImageDataSource extends AbstractDataSource {
+public class ImageDataSource extends AbstractDataSource {
 
     public static final int CHANNEL_HUE = 1;
     public static final int CHANNEL_SATURATION = 2;
@@ -66,7 +67,61 @@ class ImageDataSource extends AbstractDataSource {
         super(uri);
     }
 
-    private double toHSV(int rgb, int channel) {
+    /**
+     * return the grayscale for each pixel,
+     * with values between 0 and 255, using the mapping
+     * 0.3 * r + 0.59 * g + 0.11 * b.
+     */
+    public static final ImageDataSet.ColorOp GRAYSCALE_OP= new ImageDataSet.ColorOp() {
+        @Override
+        public double value(int rgb) {
+            int r = rgb & 0xFF0000 >> 16;
+            int g = rgb & 0x00FF00 >> 8;
+            int b = rgb &     0xFF;
+            return 0.3 * r + 0.59 * g + 0.11 * b;
+        }
+    };
+    
+    /**
+     * return the hue (as in Hue-Saturation-Value) for each pixel,
+     * with values between 0 and 360.
+     */
+    public static final ImageDataSet.ColorOp HUE_OP= new ImageDataSet.ColorOp() {
+        @Override
+        public double value(int rgb) {
+            return toHSV(rgb, CHANNEL_HUE);
+        }
+    };
+    
+    /**
+     * return the saturation (as in Hue-Saturation-Value) for each pixel,
+     * with values between 0 and 100.
+     */
+    public static final ImageDataSet.ColorOp SATURATION_OP= new ImageDataSet.ColorOp() {
+        @Override
+        public double value(int rgb) {
+            return toHSV(rgb, CHANNEL_SATURATION);
+        }
+    };
+    
+    /**
+     * return the value (as in Hue-Saturation-Value) for each pixel, with
+     * values between 0 and 100.
+     */
+    public static final ImageDataSet.ColorOp VALUE_OP=new ImageDataSet.ColorOp() {
+        @Override
+        public double value(int rgb) {
+            return toHSV(rgb, CHANNEL_VALUE);
+        }
+    };
+    
+    /**
+     * convert the rgb value to HSV.  Only one H, S, or V is returned.
+     * @param rgb the integer rgb value.
+     * @param channel
+     * @return value (0-100), saturation (0-100), or hue (0-360)
+     */
+    private static double toHSV(int rgb, int channel) {
         double r = (rgb & 0xFF0000) >> 16;
         double g = (rgb & 0x00FF00) >> 8;
         double b = (rgb &     0xFF);
@@ -120,13 +175,35 @@ class ImageDataSource extends AbstractDataSource {
         }
 
     }
+    
+    /**
+     * rotate the image.
+     * @param image
+     * @param drot rotate this many degrees clockwise
+     * @param dest the target BufferedImage or null if one should be created, the same size as the original, regardless of rotation.
+     * @return the created bufferedImage
+     */
+    public static BufferedImage rotateImage( BufferedImage image, double drot, BufferedImage dest ) {
+        int h= image.getHeight();
+        int w= image.getWidth();
 
+        AffineTransform at= AffineTransform.getTranslateInstance( w/2., h/2. );
+        at.concatenate( AffineTransform.getRotateInstance( Math.PI*drot/180 ) );
+        at.concatenate( AffineTransform.getTranslateInstance( -w/2., -h/2.) );
+
+        if (dest==null ) dest= new BufferedImage( w, h, image.getType() );
+        
+        ((Graphics2D)dest.getGraphics()).drawImage( image,at, null );
+        return dest;
+        
+    }
+    
     @Override
     public QDataSet getDataSet(ProgressMonitor mon) throws Exception {
 
         mon.started();
 
-        File ff= DataSetURI.getFile(uri, mon.getSubtaskMonitor("get file") );
+        File ff= DataSetURI.getFile( uri, mon.getSubtaskMonitor("get file") );
         if ( ff.length()==0 ) {
             throw new IllegalArgumentException("Image file is empty: "+ff);
         }
@@ -137,19 +214,10 @@ class ImageDataSource extends AbstractDataSource {
         String rot= getParam( "rotate", "0" );
         if ( !rot.equals("0") ) {
 
-            int h= image.getHeight();
-            int w= image.getWidth();
-
             double drot= Double.parseDouble(rot);
 
-            AffineTransform at= AffineTransform.getTranslateInstance( w/2., h/2. );
-            at.concatenate( AffineTransform.getRotateInstance( Math.PI*drot/180 ) );
-            at.concatenate( AffineTransform.getTranslateInstance( -w/2., -h/2.) );
-
-            BufferedImage dest= new BufferedImage( w, h, image.getType() );
-
-            ((Graphics2D)dest.getGraphics()).drawImage( image,at, null );
-
+            BufferedImage dest= rotateImage( image, drot, null );
+            
             image= dest;
         }
         
@@ -184,7 +252,26 @@ class ImageDataSource extends AbstractDataSource {
             image= dest;
         }
         
-    
+//        String transparent= getParam( "transparent", "0" ) ;
+//        if ( !transparent.equals("0") ) {
+//            int itransparent= Integer.parseInt(transparent);
+//            if ( itransparent<0 || itransparent>100 ) throw new IllegalArgumentException("transparent must be between 1 and 100");
+//            BufferedImage dest= new BufferedImage( image.getWidth(), image.getHeight(), BufferedImage.TYPE_INT_ARGB );
+//
+//            int alpha = ( itransparent * 255 / 100 ) << 24;
+//            int w= image.getWidth();
+//            int h= image.getHeight();
+//            for ( int i=0; i<w; i++ ) {
+//                for ( int j=0; j<h; j++ ) {
+//                    int c= image.getRGB( i,j );
+//                    dest.setRGB( i, j, alpha | ( c & 0xFFFFFF ) );
+//                }
+//            }
+//            logger.warning("ImageDataSet doesn't support transparency");
+//            image= dest;
+//        }
+//    
+//    
         String channel = params.get("channel");
 
         Color c = null;
@@ -211,46 +298,26 @@ class ImageDataSource extends AbstractDataSource {
                 ds.putProperty( QDataSet.LABEL, "alpha" );
                 return ds;
             } else if (channel.equals("greyscale")) {
-                op = new ImageDataSet.ColorOp() {
-
-                    public double value(int rgb) {
-                        int r = rgb & 0xFF0000 >> 16;
-                        int g = rgb & 0x00FF00 >> 8;
-                        int b = rgb &     0xFF;
-                        return 0.3 * r + 0.59 * g + 0.11 * b;
-                    }
-                };
+                op = GRAYSCALE_OP;
+                
             } else if (channel.equals("hue")) {
-                op = new ImageDataSet.ColorOp() {
-
-                    public double value(int rgb) {
-                        return toHSV(rgb, CHANNEL_HUE);
-                    }
-                };
+                op = HUE_OP;
+                
             } else if (channel.equals("saturation")) {
-                op = new ImageDataSet.ColorOp() {
-
-                    public double value(int rgb) {
-                        return toHSV(rgb, CHANNEL_SATURATION);
-                    }
-                };
+                op = SATURATION_OP;
+                
             } else if (channel.equals("value")) {
-                op = new ImageDataSet.ColorOp() {
-
-                    public double value(int rgb) {
-                        return toHSV(rgb, CHANNEL_VALUE);
-                    }
-                };
+                op = VALUE_OP;
+                
             } else {
                 throw new IllegalArgumentException("unsupported channel: "+channel );
             }
         }
 
-        ImageDataSet result = new ImageDataSet(image, c, op);
-
-        if ( channel==null ) {
-            result.putProperty( QDataSet.RENDER_TYPE, "image" );
-        }
+        MutablePropertyDataSet result = new ImageDataSet(image, c, op);
+        
+        int[] xclip= null;
+        int[] yclip= null;
         
         String xaxis= getParam( "xaxis", null );
         if ( xaxis!=null ) {
@@ -258,10 +325,26 @@ class ImageDataSource extends AbstractDataSource {
             if ( transform[1].getUnits()!=Units.dimensionless ) throw new IllegalArgumentException("xaxis second and last components must be dimensionless.");
             if ( transform[3].subtract(transform[1]).value()< 0 ) throw new IllegalArgumentException("xaxis=[datamin,pixmin,datamax,pixmax] pixmin must be less than pixmax value"); 
             Units xunits= transform[0].getUnits();
-            QDataSet xx= Ops.findgen(result.length());
-            xx= Ops.subtract( xx, transform[1] );
-            xx= Ops.multiply( xx, (transform[2].subtract(transform[0]).doubleValue(xunits.getOffsetUnits())/transform[3].subtract(transform[1]).value() ) );
-            xx= Ops.add( Ops.putProperty( xx, QDataSet.UNITS, xunits.getOffsetUnits() ), transform[0] );
+            QDataSet xx;
+            if ( transform.length==5 && transform[4].equals(Datum.create(1)) ) {
+                transform[0]= transform[0].log10();
+                transform[2]= transform[2].log10();
+                xx= Ops.dindgen(result.length());
+                xx= Ops.subtract( xx, transform[1] );
+                double s= (transform[2].subtract(transform[0]).doubleValue(xunits.getOffsetUnits())/transform[3].subtract(transform[1]).value() );
+                xx= Ops.multiply( xx, s );
+                xx= Ops.add( Ops.putProperty( xx, QDataSet.UNITS, xunits.getOffsetUnits() ), transform[0] );
+                xx= Ops.pow( 10, xx );
+                ((MutablePropertyDataSet)xx).putProperty( QDataSet.SCALE_TYPE, "log" );
+            } else {
+                xx= Ops.dindgen(result.length());
+                xx= Ops.subtract( xx, transform[1] );
+                double s= (transform[2].subtract(transform[0]).doubleValue(xunits.getOffsetUnits())/transform[3].subtract(transform[1]).value() );
+                xx= Ops.multiply( xx, s );
+                xx= Ops.add( Ops.putProperty( xx, QDataSet.UNITS, xunits.getOffsetUnits() ), transform[0] );
+            }
+            xclip= new int[] { (int)transform[1].value(), (int)transform[3].value() };
+            
             if ( UnitsUtil.isIntervalMeasurement(xunits) ) {
                 ((MutablePropertyDataSet)xx).putProperty( QDataSet.TYPICAL_MIN,transform[0].doubleValue(xunits) );
                 ((MutablePropertyDataSet)xx).putProperty( QDataSet.TYPICAL_MAX,transform[2].doubleValue(xunits) );
@@ -274,13 +357,28 @@ class ImageDataSource extends AbstractDataSource {
         String yaxis= getParam( "yaxis", null );
         if ( yaxis!=null ) {
             Datum[] transform= tryParseArray( yaxis );
-            if ( transform[1].getUnits()!=Units.dimensionless ) throw new IllegalArgumentException("xaxis second and last components must be dimensionless.");
+            if ( transform[1].getUnits()!=Units.dimensionless ) throw new IllegalArgumentException("yaxis second and last components must be dimensionless.");
             if ( transform[3].subtract(transform[1]).value()< 0 ) throw new IllegalArgumentException("yaxis=[datamin,pixmin,datamax,pixmax] pixmin must be less than pixmax value"); 
-            Units yunits= transform[1].getUnits();
-            QDataSet yy= Ops.findgen(result.length(0));
-            yy= Ops.subtract( yy, transform[1] );
-            yy= Ops.multiply( yy, (transform[2].subtract(transform[0]).doubleValue(yunits.getOffsetUnits())/transform[3].subtract(transform[1]).value() ) );
-            yy= Ops.add( Ops.putProperty( yy, QDataSet.UNITS, yunits.getOffsetUnits() ), transform[0] );
+            Units yunits= transform[0].getUnits();
+            QDataSet yy;
+            if ( transform.length==5 && transform[4].equals(Datum.create(1)) ) {
+                yy= Ops.dindgen(result.length(0));
+                transform[0]= transform[0].log10();
+                transform[2]= transform[2].log10();
+                yy= Ops.subtract( yy, transform[1] );
+                double s= (transform[2].subtract(transform[0]).doubleValue(yunits.getOffsetUnits())/transform[3].subtract(transform[1]).value() );
+                yy= Ops.multiply( yy, s );
+                yy= Ops.add( Ops.putProperty( yy, QDataSet.UNITS, yunits.getOffsetUnits() ), transform[0] );
+                yy= Ops.pow( 10, yy );
+                ((MutablePropertyDataSet)yy).putProperty( QDataSet.SCALE_TYPE, "log" );
+            } else {
+                yy= Ops.dindgen(result.length(0));
+                yy= Ops.subtract( yy, transform[1] );
+                double s= (transform[2].subtract(transform[0]).doubleValue(yunits.getOffsetUnits())/transform[3].subtract(transform[1]).value() );
+                yy= Ops.multiply( yy, s );
+                yy= Ops.add( Ops.putProperty( yy, QDataSet.UNITS, yunits.getOffsetUnits() ), transform[0] );
+            }
+            yclip= new int[] { (int)transform[1].value(), (int)transform[3].value() };
             if ( UnitsUtil.isIntervalMeasurement(yunits) ) {
                 ((MutablePropertyDataSet)yy).putProperty( QDataSet.TYPICAL_MIN,transform[0].doubleValue(yunits) );
                 ((MutablePropertyDataSet)yy).putProperty( QDataSet.TYPICAL_MAX,transform[2].doubleValue(yunits) );
@@ -304,7 +402,7 @@ class ImageDataSource extends AbstractDataSource {
                 Units xunits= SemanticOps.getUnits(xrange);
                 double dxmin= xrange.value(0);
                 double dxmax= xrange.value(1);
-                QDataSet xx= Ops.findgen(result.length());
+                QDataSet xx= Ops.add( 0.5, Ops.dindgen(result.length()) );
                 boolean xlog= x.has("type") && x.get("type").equals("log");
                 if ( xlog ) dxmin= Math.log10(dxmin);
                 if ( xlog ) dxmax= Math.log10(dxmax);
@@ -316,39 +414,69 @@ class ImageDataSource extends AbstractDataSource {
                 ((MutablePropertyDataSet)xx).putProperty( QDataSet.TYPICAL_MAX,xrange.value(1) );
                 ((MutablePropertyDataSet)xx).putProperty( QDataSet.UNITS,xunits );
                 result.putProperty( QDataSet.DEPEND_0, xx );
+                xclip= new int[] { x.getInt("left"), x.getInt("right") };
 
+                JSONArray size= jo.getJSONArray("size");
+                int height= size.getInt(1);                
                 JSONObject y= plot.getJSONObject("yaxis");
                 QDataSet yrange= getRange(y);
                 Units yunits= SemanticOps.getUnits(yrange);
-                QDataSet yy= Ops.findgen(result.length(0));
+                QDataSet yy= Ops.subtract( height, Ops.dindgen(result.length(0)) );
                 double dymin= yrange.value(0);
                 double dymax= yrange.value(1);
                 boolean ylog= y.has("type") && y.get("type").equals("log");
                 if ( ylog ) dymin= Math.log10(dymin);
                 if ( ylog ) dymax= Math.log10(dymax);
-                yy= Ops.subtract( yy, y.getDouble("top") );
-                yy= Ops.multiply( yy, ( dymax-dymin ) / ( y.getInt("bottom") -y.getInt("top") ) );
+                yy= Ops.subtract( yy, y.getDouble("bottom") );
+                yy= Ops.multiply( yy, ( dymax-dymin ) / ( y.getInt("top") -y.getInt("bottom") ) );
                 yy= Ops.add( yy, dymin );
                 if ( ylog ) yy= Ops.exp10(yy);
                 ((MutablePropertyDataSet)yy).putProperty( QDataSet.TYPICAL_MIN,yrange.value(0) );
                 ((MutablePropertyDataSet)yy).putProperty( QDataSet.TYPICAL_MAX,yrange.value(1) );
                 ((MutablePropertyDataSet)yy).putProperty( QDataSet.UNITS,yunits );
                 result.putProperty( QDataSet.DEPEND_1, yy );
+                yclip= new int[] { y.getInt("top"), y.getInt("bottom") };
+                
             } else {
                 throw new IllegalArgumentException("png contains no rich metadata.");
             }
+            
+               
         }
         
-        if ( channel!=null ) {
-            if ( channel.equals("greyscale") ) {
-                result.putProperty( QDataSet.RENDER_TYPE, "spectrogram>colorTable=black_white");
-            } else if ( channel.equals("red") ) {
-                result.putProperty( QDataSet.RENDER_TYPE, "spectrogram>colorTable=black_red");
-            } else if ( channel.equals("green") ) {
-                result.putProperty( QDataSet.RENDER_TYPE, "spectrogram>colorTable=black_green");
-            } else if ( channel.equals("blue") ) {
-                result.putProperty( QDataSet.RENDER_TYPE, "spectrogram>colorTable=black_blue");
+        if ( getParam("clip","F").equals("T") ) {
+            if ( xclip!=null ) {
+                result= Ops.maybeCopy( result.trim( xclip[0], xclip[1] ) );
             }
+            if ( yclip!=null ) {
+                result= Ops.maybeCopy( Ops.trim1( result, yclip[0], yclip[1] ) );
+                
+                System.err.println( Ops.extent( (QDataSet)result.property(QDataSet.DEPEND_1) ) );
+                
+            }
+        } 
+
+        if ( channel!=null ) {
+            switch (channel) {
+                case "greyscale":
+                case "value":
+                    result.putProperty( QDataSet.RENDER_TYPE, "spectrogram>colorTable=black_white");
+                    break;
+                case "red":
+                    result.putProperty( QDataSet.RENDER_TYPE, "spectrogram>colorTable=black_red");
+                    break;
+                case "green":
+                    result.putProperty( QDataSet.RENDER_TYPE, "spectrogram>colorTable=black_green");
+                    break;
+                case "blue":
+                    result.putProperty( QDataSet.RENDER_TYPE, "spectrogram>colorTable=black_blue");
+                    break;
+                default:
+                    result.putProperty( QDataSet.RENDER_TYPE, "image" );
+                    break;
+            }
+        } else {
+            result.putProperty( QDataSet.RENDER_TYPE, "image" );
         }
                
         mon.finished();
@@ -389,10 +517,18 @@ class ImageDataSource extends AbstractDataSource {
         String[] ss= s.split(",");
         Datum[] result= new Datum[ss.length];
         for ( int i=0; i<result.length; i++ ) {
-            try {
-                result[i]= DatumUtil.parse(ss[i]);
-            } catch ( ParseException ex ) {
-                throw new IllegalArgumentException("unable to parse: "+ss[i]);
+            if ( i<4 ) {
+                try {
+                    result[i]= DatumUtil.parse(ss[i]);
+                } catch ( ParseException ex ) {
+                    throw new IllegalArgumentException("unable to parse: "+ss[i]);
+                }
+            } else {
+                if ( ss[i].toLowerCase().equals("log") ) {
+                    result[i]= Datum.create(1);
+                } else {
+                    result[i]= Datum.create(0);
+                }
             }
         }
         return result;
@@ -406,10 +542,22 @@ class ImageDataSource extends AbstractDataSource {
      * @throws Exception
      */
     public Map<String, Object> getJpegExifMetaData(ProgressMonitor mon) throws Exception {
-        InputStream in = DataSetURI.getInputStream(uri, mon);
+        try ( InputStream in= DataSetURI.getInputStream(uri, mon) ) {
+            return getJpegExifMetaData( in );
+        }
+    }
+    
+    /**
+     * read useful JPG metadata, such as the Orientation.  This also looks to see if GPS
+     * metadata is available.
+     * @param in inputStream from a jpeg source.
+     * @return
+     * @throws Exception 
+     */
+    public static Map<String, Object> getJpegExifMetaData(InputStream in) throws Exception {
         Metadata metadata = JpegMetadataReader.readMetadata(in);
-
-        Map<String, Object> map = new LinkedHashMap<String, Object>();
+        
+        Map<String, Object> map = new LinkedHashMap<>();
 
         Directory exifDirectory;
 

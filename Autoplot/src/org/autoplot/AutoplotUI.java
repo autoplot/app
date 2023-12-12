@@ -40,11 +40,12 @@ import java.awt.dnd.DropTargetListener;
 import java.awt.event.AWTEventListener;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.awt.event.ComponentEvent;
+import java.awt.event.ComponentListener;
 import java.awt.event.FocusAdapter;
 import java.awt.event.FocusEvent;
 import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
-import java.awt.image.BufferedImage;
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
 import java.io.BufferedReader;
@@ -57,18 +58,18 @@ import java.io.FileReader;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PrintStream;
 import java.io.StringReader;
 import java.lang.reflect.InvocationTargetException;
+import java.net.MalformedURLException;
 import java.net.Socket;
 import java.net.URI;
 import java.net.URL;
-import java.security.KeyManagementException;
-import java.security.NoSuchAlgorithmException;
-import java.security.cert.X509Certificate;
 import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Date;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.LinkedList;
@@ -87,12 +88,6 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.help.CSH;
 import javax.jnlp.SingleInstanceListener;
-import javax.net.ssl.HostnameVerifier;
-import javax.net.ssl.HttpsURLConnection;
-import javax.net.ssl.SSLContext;
-import javax.net.ssl.SSLSession;
-import javax.net.ssl.TrustManager;
-import javax.net.ssl.X509TrustManager;
 import javax.swing.AbstractAction;
 import javax.swing.Action;
 import javax.swing.Box;
@@ -115,6 +110,7 @@ import javax.swing.SwingUtilities;
 import javax.swing.UnsupportedLookAndFeelException;
 import javax.swing.event.HyperlinkEvent;
 import javax.swing.event.HyperlinkListener;
+import javax.swing.text.BadLocationException;
 import javax.swing.text.DefaultEditorKit;
 import javax.xml.parsers.ParserConfigurationException;
 import org.autoplot.help.AutoplotHelpSystem;
@@ -161,7 +157,6 @@ import org.autoplot.scriptconsole.GuiExceptionHandler;
 import org.autoplot.state.UndoRedoSupport;
 import org.autoplot.util.TickleTimer;
 import org.das2.qds.DataSetAnnotations;
-import org.das2.qds.QDataSet;
 import org.autoplot.datasource.AutoplotSettings;
 import org.autoplot.datasource.DataSetSelector;
 import org.autoplot.datasource.DataSetSelectorSupport;
@@ -173,10 +168,23 @@ import org.autoplot.datasource.SourceTypesBrowser;
 import org.autoplot.datasource.TimeRangeEditor;
 import org.autoplot.datasource.URISplit;
 import org.autoplot.datasource.WindowManager;
+import org.autoplot.dom.DomUtil;
 import org.das2.qds.filters.AddFilterDialog;
 import org.das2.qds.filters.FiltersChainPanel;
 import org.autoplot.jythonsupport.ui.DataMashUp;
 import org.autoplot.jythonsupport.ui.EditorTextPane;
+import org.autoplot.layout.LayoutConstants;
+import org.autoplot.state.StatePersistence;
+import org.autoplot.util.AutoRangeHintsStringSchemeEditor;
+import org.autoplot.util.DataSetSelectorStringSchemeEditor;
+import org.autoplot.util.FontStringSchemeEditor;
+import org.autoplot.util.LayoutStringSchemeEditor;
+import org.autoplot.util.PlotDataMashupResolver;
+import org.das2.components.propertyeditor.TickValuesStringSchemeEditor;
+import org.das2.graph.GraphUtil;
+import org.das2.components.propertyeditor.SpecialColorsStringSchemeEditor;
+import org.python.core.PyException;
+import org.python.util.PythonInterpreter;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
 import org.xml.sax.SAXException;
@@ -190,6 +198,47 @@ import org.xml.sax.SAXException;
 public final class AutoplotUI extends javax.swing.JFrame {
     private static final String TAB_SCRIPT = "script";
     private static final String TAB_CONSOLE = "console";
+
+    private static Thread getShutdownHook( final ApplicationModel model ) {
+        Runnable run= () -> {
+            logger.fine("shutting down");
+            if ( model.isHeadless() ) {
+                return;
+            }
+            File f2= new File( AutoplotSettings.settings().resolveProperty(AutoplotSettings.PROP_AUTOPLOTDATA), "log/" );
+            if ( !f2.exists() ) {
+                boolean ok= f2.mkdirs();
+                if ( !ok ) {
+                    logger.log(Level.WARNING, "unable to create folder {0}", f2);
+                }
+            }
+            File f= new File( f2, "last.vap" );
+            //f.setWritable( true, true );
+            try {
+                StatePersistence.saveState( f, model.createState(true), "");
+                if ( !f.setReadable( false, false ) ) logger.info("setReadable failed");
+                if ( !f.setReadable( true, true ) ) logger.info("setReadable failed");
+                if ( !f.setWritable( false, false ) ) logger.info("setWritable failed");
+                if ( !f.setWritable( true, true ) ) logger.info("setWritable failed");
+            } catch (IOException ex) {
+                logger.log(Level.WARNING, "error while writing  {0}: {1}", new Object[] { f2, ex.toString() } );
+            }
+        };
+        return new Thread( run, "apshutdown" );
+    }
+
+    private static void setupMacMenuBarSoon() {
+        Runnable run= () -> {
+            try ( InputStream ins= AutoplotUI.class.getResourceAsStream("macMenuBar.jy") ) {
+                logger.fine("adding additional actions for mac menu bar.");
+                PythonInterpreter interp= JythonUtil.createInterpreter( true, false );
+                interp.execfile(ins,"macMenuBar.jy");
+            } catch (IOException ex) {
+                logger.log(Level.SEVERE, null, ex);
+            }
+        };
+        new Thread(run).start();
+    }
 
     final String TAB_TOOLTIP_CANVAS = "<html>Canvas tab contains the plot and plot elements.<br>Click on plot elements to select.<br>%s</html>";
     final String TAB_TOOLTIP_AXES = "<html>Adjust selected plot axes.<br>%s<html>";
@@ -213,6 +262,9 @@ public final class AutoplotUI extends javax.swing.JFrame {
     transient GuiSupport support;
     transient LayoutListener autoLayout;
     private boolean dsSelectTimerangeBound= false; // true if there is a binding between the app timerange and the dataSetSelector.
+    
+    // true means don't bring up an initial security dialog asking
+    private boolean noAskParams;
 
     /**
      * the vap that is currently loading.  We keep track of this so we can push it to the top of the recent list.
@@ -223,8 +275,24 @@ public final class AutoplotUI extends javax.swing.JFrame {
     private String initialBookmarksUrl= null;
     
     String applicationName= "";
+    
+    private String apversion=null;
+    
+    private EventThreadResponseMonitor responseMonitor;
+    
+    /**
+     * return the monitor, if enabled, so that logging can be enabled.
+     * @return 
+     */
+    public EventThreadResponseMonitor getResponseMonitor() {
+        return responseMonitor;
+    }
+    
     void setApplicationName(String id) {
         this.applicationName= id;
+        if ( DomUtil.getElementById(dom, id)==null ) { // make sure there are no other nodes with this id.
+            this.dom.setId(id);
+        }
     }
     
     transient PersistentStateSupport.SerializationStrategy serStrategy = new PersistentStateSupport.SerializationStrategy() {
@@ -242,6 +310,8 @@ public final class AutoplotUI extends javax.swing.JFrame {
     };
     
     private static final Logger logger = org.das2.util.LoggerManager.getLogger("autoplot.gui");
+    private static final Logger resizeLogger= Logger.getLogger("autoplot.dom.canvas.resize");
+    
     private JythonScriptPanel scriptPanel;
     private DataPanel dataPanel;
     private LayoutPanel layoutPanel;
@@ -322,7 +392,15 @@ public final class AutoplotUI extends javax.swing.JFrame {
      * @param model the legacy model that backs the application.
      */
     public AutoplotUI(ApplicationModel model) {
-        
+                     
+        apversion= APSplash.getVersion();
+        if ( apversion.equals("untagged_version") ) {
+            apversion= "(dev)";
+        }
+        if ( apversion.equals("(dev)") ) {
+            apversion= "(dev"+getProcessId("")+")";
+        }
+
         setIconImage( AutoplotUtil.getAutoplotIcon() );
         
         APSplash.checkTime("init 0");
@@ -341,39 +419,15 @@ public final class AutoplotUI extends javax.swing.JFrame {
         }
         
         if ( System.getProperty( "noCheckCertificate","true").equals("true") ) {
-            logger.fine("disabling HTTP certificate checks.");
-            try {
-                TrustManager[] trustAllCerts = new TrustManager[]{
-                    new X509TrustManager() {
-                        public java.security.cert.X509Certificate[] getAcceptedIssuers() {
-                            return new java.security.cert.X509Certificate[0];
-                        }
-                        
-                        public void checkClientTrusted(X509Certificate[] certs, String authType) {  }
-                        
-                        public void checkServerTrusted(X509Certificate[] certs, String authType) {  }
-                        
-                    }
-                };
-                
-                SSLContext sc = SSLContext.getInstance("SSL");
-                sc.init(null, trustAllCerts, new java.security.SecureRandom());
-                HttpsURLConnection.setDefaultSSLSocketFactory(sc.getSocketFactory());
-                
-                // Create all-trusting host name verifier
-                HostnameVerifier allHostsValid = new HostnameVerifier() {
-                    public boolean verify(String hostname, SSLSession session) {
-                        return true;
-                    }
-                };
-                
-                HttpsURLConnection.setDefaultHostnameVerifier(allHostsValid);
-                
-            } catch (NoSuchAlgorithmException ex) {
-                logger.log(Level.SEVERE, null, ex);
-            } catch ( KeyManagementException ex) {
-                logger.log(Level.SEVERE, null, ex);
+            if ( model.isSandboxed() ) {
+                logger.warning( "unable to disable certificates because of sandbox");
+                System.setProperty(SYSPROP_AUTOPLOT_DISABLE_CERTS, String.valueOf(false) );
+            } else {
+                AutoplotUtil.disableCertificates();
+                System.setProperty(SYSPROP_AUTOPLOT_DISABLE_CERTS, String.valueOf(true) );
             }
+        } else {
+            System.setProperty(SYSPROP_AUTOPLOT_DISABLE_CERTS, String.valueOf(false) );
         }
 
         // Initialize help system now so it's ready for components to register IDs with
@@ -397,12 +451,7 @@ public final class AutoplotUI extends javax.swing.JFrame {
             ScriptContext._setDefaultApp(this);
         }
 
-        model.setResizeRequestListener( new ApplicationModel.ResizeRequestListener() {
-            @Override
-            public double resize(int w,int h) {
-                return resizeForCanvasSize(w, h);
-            }
-        });
+        model.setResizeRequestListener( (int w, int h) -> resizeForCanvasSize(w, h) );
 
         APSplash.checkTime("init 10");
         
@@ -410,41 +459,24 @@ public final class AutoplotUI extends javax.swing.JFrame {
 
         applicationModel = model;
         undoRedoSupport = new UndoRedoSupport(applicationModel);
-        undoRedoSupport.addPropertyChangeListener(new PropertyChangeListener() {
-            @Override
-            public void propertyChange(PropertyChangeEvent evt) {
-                SwingUtilities.invokeLater( 
-                    new Runnable() { 
-                        @Override
-                        public void run() { 
-                            refreshUndoRedoLabel(); 
-                        } 
-                    } 
-                );
-            }
+        undoRedoSupport.addPropertyChangeListener((PropertyChangeEvent evt) -> {
+            SwingUtilities.invokeLater(() -> {
+                refreshUndoRedoLabel();
+            });
         });
 
-        applicationModel.addPropertyChangeListener( ApplicationModel.PROP_VAPFILE, new PropertyChangeListener() {
-            @Override
-            public void propertyChange(PropertyChangeEvent evt) {
-                updateFrameTitle();
-            }
+        applicationModel.addPropertyChangeListener(ApplicationModel.PROP_VAPFILE, (PropertyChangeEvent evt) -> {
+            updateFrameTitle();
         });
 
-        undoRedoSupport.addPropertyChangeListener( UndoRedoSupport.PROP_DEPTH, new PropertyChangeListener() {
-            @Override
-            public void propertyChange(PropertyChangeEvent evt) {
-                updateFrameTitle();
-            }
-        } );
+        undoRedoSupport.addPropertyChangeListener(UndoRedoSupport.PROP_DEPTH, (PropertyChangeEvent evt) -> {
+            updateFrameTitle();
+        });
 
         APSplash.checkTime("init 20");
 
-        FileSystem.settings().addPropertyChangeListener( FileSystemSettings.PROP_OFFLINE, new PropertyChangeListener() {
-            @Override
-            public void propertyChange(PropertyChangeEvent evt) {
-                updateFrameTitle();
-            }
+        FileSystem.settings().addPropertyChangeListener(FileSystemSettings.PROP_OFFLINE, (PropertyChangeEvent evt) -> {
+            updateFrameTitle();
         });
         
         if ( model.getExceptionHandler() instanceof GuiExceptionHandler ) {
@@ -472,29 +504,37 @@ public final class AutoplotUI extends javax.swing.JFrame {
         expertMenuItems.add( aggregateMenuItem );
         expertMenuItems.add( decodeURLItem );
 
-        jMenuBar1.add( Box.createHorizontalGlue() );
+        if ( !"true".equals( System.getProperty("apple.laf.useScreenMenuBar") ) ) {
+            jMenuBar1.add( Box.createHorizontalGlue() );
+        }
         expertMenu= new JMenu("Expert");
         JMenuItem mi;
         mi= new JMenuItem( new AbstractAction( "Basic Mode") {
-           @Override
-           public void actionPerformed( ActionEvent e ) {
-               org.das2.util.LoggerManager.logGuiEvent(e);               
-               setExpertMode(false);
-           }
+            @Override
+            public void actionPerformed( ActionEvent e ) {
+                org.das2.util.LoggerManager.logGuiEvent(e);               
+                if ( isExpertMode() ) {
+                    setExpertMode(false);
+                }
+            }
         });
         mi.setToolTipText("Basic mode allows for browsing products composed by data providers");
         expertMenu.add( mi );
         mi= new JMenuItem( new AbstractAction( "Expert Mode") {
-           @Override
-           public void actionPerformed( ActionEvent e ) {
-               org.das2.util.LoggerManager.logGuiEvent(e);                              
-               setExpertMode(true);
-           }
+            @Override
+            public void actionPerformed( ActionEvent e ) {
+                org.das2.util.LoggerManager.logGuiEvent(e);                              
+                if ( isBasicMode() ) {
+                    setExpertMode(true);
+                }
+            }
         });
         mi.setToolTipText("Expert allows composing new products and scripting");
         expertMenu.add( mi );
         expertMenu.setToolTipText("<html>Toggle between expert and basic mode.<br>Basic mode allows for browsing products composed by data providers<br>Expert allows composing new products and scripting");
-        jMenuBar1.add( expertMenu );
+        if ( !"true".equals( System.getProperty("apple.laf.useScreenMenuBar") ) ) {
+            jMenuBar1.add( expertMenu );
+        }
 
         KeyChain.getDefault().setParentGUI(this);
         
@@ -552,40 +592,31 @@ public final class AutoplotUI extends javax.swing.JFrame {
         timeRangeEditor.setAlternatePeer("Switch to Data Set Selector", CARD_DATA_SET_SELECTOR );
         dataSetSelector.setAlternatePeer("Switch to Time Range Editor", CARD_TIME_RANGE_SELECTOR );
         dataSetSelector.setCardSelected(true);
-        timeRangeEditor.addPropertyChangeListener( TimeRangeEditor.PROP_CARDSELECTED, new PropertyChangeListener() {
-            @Override
-            public void propertyChange(PropertyChangeEvent evt) {
-                if ( evt.getNewValue().equals(Boolean.TRUE) ) {
-                    setEditorCard( CARD_TIME_RANGE_SELECTOR );
-                    dataSetSelector.setCardSelected( false );
-                } else {
-                    setEditorCard( CARD_DATA_SET_SELECTOR );
-                    dataSetSelector.setCardSelected( true );
-                }
+        timeRangeEditor.addPropertyChangeListener(TimeRangeEditor.PROP_CARDSELECTED, (PropertyChangeEvent evt) -> {
+            if ( evt.getNewValue().equals(Boolean.TRUE) ) {
+                setEditorCard( CARD_TIME_RANGE_SELECTOR );
+                dataSetSelector.setCardSelected( false );
+            } else {
+                setEditorCard( CARD_DATA_SET_SELECTOR );
+                dataSetSelector.setCardSelected( true );
             }
         });
-        dataSetSelector.addPropertyChangeListener( DataSetSelector.PROP_CARDSELECTED, new PropertyChangeListener() {
-            @Override
-            public void propertyChange(PropertyChangeEvent evt) {
-                if ( evt.getNewValue().equals(Boolean.TRUE) ) {
-                    setEditorCard( CARD_DATA_SET_SELECTOR );
-                    timeRangeEditor.setCardSelected( false );
-                } else {
-                    setEditorCard( CARD_TIME_RANGE_SELECTOR );
-                    timeRangeEditor.setCardSelected( true );
-                }
+        dataSetSelector.addPropertyChangeListener(DataSetSelector.PROP_CARDSELECTED, (PropertyChangeEvent evt) -> {
+            if ( evt.getNewValue().equals(Boolean.TRUE) ) {
+                setEditorCard( CARD_DATA_SET_SELECTOR );
+                timeRangeEditor.setCardSelected( false );
+            } else {
+                setEditorCard( CARD_TIME_RANGE_SELECTOR );
+                timeRangeEditor.setCardSelected( true );
             }
         });
-        uriTimeRangeToggleButton1.addPropertyChangeListener( UriTimeRangeToggleButton.PROP_POSITION, new PropertyChangeListener() {
-            @Override
-            public void propertyChange(PropertyChangeEvent evt) {
-                if ( evt.getNewValue().equals(1) ) {
-                    setEditorCard( CARD_DATA_SET_SELECTOR );
-                    timeRangeEditor.setCardSelected( false );
-                } else {
-                    setEditorCard( CARD_TIME_RANGE_SELECTOR );
-                    timeRangeEditor.setCardSelected( true );                    
-                }
+        uriTimeRangeToggleButton1.addPropertyChangeListener(UriTimeRangeToggleButton.PROP_POSITION, (PropertyChangeEvent evt) -> {
+            if ( evt.getNewValue().equals(1) ) {
+                setEditorCard( CARD_DATA_SET_SELECTOR );
+                timeRangeEditor.setCardSelected( false );
+            } else {
+                setEditorCard( CARD_TIME_RANGE_SELECTOR );
+                timeRangeEditor.setCardSelected( true );
             }
         });
 
@@ -615,30 +646,26 @@ public final class AutoplotUI extends javax.swing.JFrame {
             @Override
             public void actionPerformed( final ActionEvent ev ) {
                 org.das2.util.LoggerManager.logGuiEvent(ev);
-                Runnable run = new Runnable() {
-                    @Override
-                    public void run() {
-                        String bookmarksFile= dataSetSelector.getValue().substring("bookmarks:".length());
-                        if ( bookmarksFile.endsWith("/") || bookmarksFile.endsWith(".")) { // normally reject method would trigger another completion
-                            DataSetSelector source= (DataSetSelector)ev.getSource();
-                            source.showFileSystemCompletions( true, false, "[^\\s]+[^\\s]+(\\.(?i)(xml)|(xml\\.gz))$" );
-                        } else {
-                            while ( getBookmarksManager()==null || getBookmarksManager().getModel()==null || getBookmarksManager().getModel().getList()==null ) {
-                                logger.fine("waiting for bookmarks manager to be initialized");
-                                try {
-                                    Thread.sleep(100);
-                                } catch (InterruptedException ex) {
-                                    logger.log(Level.SEVERE, ex.getMessage(), ex);
-                                }   
-                            }
-                            if ( ! getBookmarksManager().haveRemoteBookmark(bookmarksFile) ) {
-                                support.importBookmarks( bookmarksFile );
-                                applicationModel.addRecent(dataSetSelector.getValue());
-                            } else {
-                                setStatus( "remote bookmarks file is already imported"  );
+                Runnable run = () -> {
+                    String bookmarksFile= dataSetSelector.getValue().substring("bookmarks:".length());
+                    if ( bookmarksFile.endsWith("/") || bookmarksFile.endsWith(".")) { // normally reject method would trigger another completion
+                        DataSetSelector source= (DataSetSelector)ev.getSource();
+                        source.showFileSystemCompletions( true, false, "[^\\s]+[^\\s]+(\\.(?i)(xml)|(xml\\.gz))$" );
+                    } else {
+                        while ( getBookmarksManager()==null || getBookmarksManager().getModel()==null || getBookmarksManager().getModel().getList()==null ) {
+                            logger.fine("waiting for bookmarks manager to be initialized");
+                            try {
+                                Thread.sleep(100);
+                            } catch (InterruptedException ex) {
+                                logger.log(Level.SEVERE, ex.getMessage(), ex);   
                             }
                         }
-
+                        if ( ! getBookmarksManager().haveRemoteBookmark(bookmarksFile) ) {
+                            support.importBookmarks( bookmarksFile );
+                            applicationModel.addRecent(dataSetSelector.getValue());
+                        } else {
+                            setStatus( "remote bookmarks file is already imported"  );
+                        }
                     }
                 };
                 new Thread( run, "bookmarksUri" ).start();
@@ -693,80 +720,146 @@ public final class AutoplotUI extends javax.swing.JFrame {
                 PngWalkTool.start( pngwalk, AutoplotUI.this);
             }
         });
+        dataSetSelector.registerActionTrigger( ".*\\$x.*\\.(png|jpg|gif)", new AbstractAction( "pngwalk") {
+            @Override
+            public void actionPerformed( ActionEvent ev ) { // TODO: underimplemented
+                org.das2.util.LoggerManager.logGuiEvent(ev);                
+                applicationModel.addRecent(dataSetSelector.getValue());
+                String pngwalk= dataSetSelector.getValue();
+                PngWalkTool.start( pngwalk, AutoplotUI.this);
+            }
+        });
+        dataSetSelector.registerActionTrigger( ".*\\$x.*\\$x\\.(png|jpg|gif)", new AbstractAction( "pngwalk") {
+            @Override
+            public void actionPerformed( ActionEvent ev ) { // TODO: underimplemented
+                org.das2.util.LoggerManager.logGuiEvent(ev);                
+                applicationModel.addRecent(dataSetSelector.getValue());
+                String pngwalk= dataSetSelector.getValue();
+                PngWalkTool.start( pngwalk, AutoplotUI.this);
+            }
+        });
         
-        dataSetSelector.registerActionTrigger( "http.*/hapi(/info\\?.*)?", new AbstractAction( "hapiServer") {
+        dataSetSelector.registerActionTrigger( "http.*/hapi(/?)(info\\?.*)?", new AbstractAction( "hapiServer") {
             @Override
             public void actionPerformed( final ActionEvent ev ) { 
                 org.das2.util.LoggerManager.logGuiEvent(ev);                
                 final String value= dataSetSelector.getValue();
-                Pattern p= Pattern.compile("(http.*/hapi)(/info\\?id=(.*))?");
+                Pattern p= Pattern.compile("(http.*/hapi)(/?)(info\\?id=(.*))?");
                 Matcher m= p.matcher(value);
                 final String newValue;
                 if ( m.matches() ) {
-                    String id= m.group(3);
+                    String id= m.group(4);
                     if ( id!=null ) {
-                        newValue= "vap+hapi:" + m.group(1) + "?id="+m.group(3);
+                        newValue= "vap+hapi:" + m.group(1) + m.group(2)+"?id="+ id;
                     } else {
                         newValue= "vap+hapi:" + m.group(1);
                     }
                 } else {
                     newValue= "vap+hapi:";
                 }
-                Runnable run= new Runnable() {
-                    public void run() {
-                        dataSetSelector.setValue(newValue);
-                        dataSetSelector.maybePlot( ev.getModifiers() );
-                    }
+                Runnable run= () -> {
+                    dataSetSelector.setValue(newValue);
+                    dataSetSelector.maybePlot( ev.getModifiers() );
                 };
                 SwingUtilities.invokeLater(run);
             }
         });  
         
-        dataSetSelector.registerBrowseTrigger( "http.*/hapi(/info\\?.*)?", new AbstractAction( "hapiServer") {
+        dataSetSelector.registerBrowseTrigger( "http.*/hapi(/?)(info\\?.*)?", new AbstractAction( "hapiServer") {
             @Override
             public void actionPerformed( final ActionEvent ev ) {
                 org.das2.util.LoggerManager.logGuiEvent(ev);                
                 final String value= dataSetSelector.getValue();
-                Pattern p= Pattern.compile("(http.*/hapi)(/info\\?id=(.*))?");
+                Pattern p= Pattern.compile("(http.*/hapi)(/?)(info\\?id=(.*))?");
                 Matcher m= p.matcher(value);
                 final String newValue;
                 if ( m.matches() ) {
-                    String id= m.group(3);
+                    String id= m.group(4);
                     if ( id!=null ) {
-                        newValue= "vap+hapi:" + m.group(1) + "?id="+m.group(3);
+                        newValue= "vap+hapi:" + m.group(1) + "?id="+ id;
                     } else {
                         newValue= "vap+hapi:" + m.group(1);
                     }
                 } else {
                     newValue= "vap+hapi:";
                 }               
-                Runnable run= new Runnable() {
-                    @Override
-                    public void run() {
-                        dataSetSelector.setValue(newValue);
-                        dataSetSelector.maybePlot( ev.getModifiers() );
-                    }
+                Runnable run= () -> {
+                    dataSetSelector.setValue(newValue);
+                    dataSetSelector.maybePlot( ev.getModifiers() );
                 };
                 SwingUtilities.invokeLater(run);
             }
         });  
-                
+        dataSetSelector.registerActionTrigger( "http.*/hapi(/data\\?.*)?", new AbstractAction( "hapiServer") {
+            @Override
+            public void actionPerformed( final ActionEvent ev ) { 
+                org.das2.util.LoggerManager.logGuiEvent(ev);                
+                final String value= dataSetSelector.getValue();
+                URISplit split= URISplit.parse(value);
+                if ( split.file.endsWith("/data") ) {
+                    split.file= split.file.substring(0,split.file.length()-5);
+                }
+                Map<String,String> params= URISplit.parseParams(split.params);
+                if ( params.containsKey("time.min") && params.containsKey("time.max") ) {
+                    params.put( "timerange", params.get("time.min")+"/"+params.get("time.max") );
+                    params.remove("time.min");
+                    params.remove("time.max");
+                }
+                //TODO-HAPI: time.min is being replaced in HAPI 3.0
+                split.vapScheme= "vap+hapi";
+                split.params= URISplit.formatParams(params);
+                final String newValue= URISplit.format(split);
+                Runnable run= () -> {
+                    dataSetSelector.setValue(newValue);
+                    dataSetSelector.maybePlot( ev.getModifiers() );
+                };
+                SwingUtilities.invokeLater(run);
+            }
+        });  
+        
+        dataSetSelector.registerBrowseTrigger( "http.*/hapi(/data\\?.*)?", new AbstractAction( "hapiServer") {
+            @Override
+            public void actionPerformed( final ActionEvent ev ) {
+                org.das2.util.LoggerManager.logGuiEvent(ev);                
+                final String value= dataSetSelector.getValue();
+                URISplit split= URISplit.parse(value);
+                if ( split.file.endsWith("/data") ) {
+                    split.file= split.file.substring(0,split.file.length()-5);
+                }
+                Map<String,String> params= URISplit.parseParams(split.params);
+                if ( params.containsKey("time.min") && params.containsKey("time.max") ) {
+                    params.put( "timerange", params.get("time.min")+"/"+params.get("time.max") );
+                    params.remove("time.min");
+                    params.remove("time.max");
+                }
+                //TODO-HAPI: time.min is being replaced in HAPI 3.0
+                split.vapScheme= "vap+hapi";
+                split.params= URISplit.formatParams(params);
+                final String newValue= URISplit.format(split);
+                Runnable run= () -> {
+                    dataSetSelector.setValue(newValue);
+                    dataSetSelector.maybePlot( ev.getModifiers() );
+                };
+                SwingUtilities.invokeLater(run);
+            }
+        });  
+                        
         dataSetSelector.registerActionTrigger( "(.*)\\.jy(\\?.*)?", new AbstractAction( TAB_SCRIPT) {
             @Override
             public void actionPerformed( ActionEvent ev ) {
                 if ( ScriptContext.getViewWindow()==AutoplotUI.this ) {
                     org.das2.util.LoggerManager.logGuiEvent(ev);                    
-                    applicationModel.addRecent(dataSetSelector.getValue());
-                    runScript( dataSetSelector.getValue() );
+                    runScript( dataSetSelector.getValue(), !AutoplotUI.this.noAskParams );
                 } else {
                     org.das2.util.LoggerManager.logGuiEvent(ev);     
                     if ( JOptionPane.YES_OPTION==
                             JOptionPane.showConfirmDialog( AutoplotUI.this, "Scripts can only be run from the main window.  Make this the main window?", 
-                                    "Reset Main Window", JOptionPane.YES_NO_OPTION ) ) {
+                                    "Set Main Window", JOptionPane.YES_NO_OPTION ) ) {
                         ScriptContext.setApplication(AutoplotUI.this);
                     }
                     runScript( dataSetSelector.getValue() );
                 }
+                dom.getController().setFocusUri(ApplicationController.VALUE_BLUR_FOCUS);
             }
         });
 
@@ -780,7 +873,7 @@ public final class AutoplotUI extends javax.swing.JFrame {
                     org.das2.util.LoggerManager.logGuiEvent(ev);                    
                     String s= dataSetSelector.getValue();
                     int i= dataSetSelector.getEditor().getCaretPosition();
-                    if ( i==0 || s.substring(i-1).contains("/") ) {
+                    if ( i==0 || i<s.length() || s.substring(i-1).contains("/") ) {
                             dataSetSelector.showCompletions();
                         return;
                     }
@@ -788,9 +881,11 @@ public final class AutoplotUI extends javax.swing.JFrame {
                     try {
                         URISplit split= URISplit.parse(s);        //bug 1408--note runScript doesn't account for changes made to the GUI.
                         args= URISplit.parseParams(split.params);
+                        JythonRunListener runListener= makeJythonRunListener( AutoplotUI.this, split.resourceUri, true );
                         if ( JOptionPane.OK_OPTION==JythonUtil.invokeScriptSoon( split.resourceUri, dom, 
-                                args, true, true, scriptPanel, new NullProgressMonitor() ) ) {
+                                args, true, true, runListener, new NullProgressMonitor() ) ) {
                             split.params= URISplit.formatParams(args);
+                            if ( split.params.trim().length()==0 ) split.params=null;
                             String history= URISplit.format(split);
                             dataSetSelector.setValue( history );
                             applicationModel.addRecent( history );
@@ -802,12 +897,13 @@ public final class AutoplotUI extends javax.swing.JFrame {
                     org.das2.util.LoggerManager.logGuiEvent(ev);  
                     if ( JOptionPane.YES_OPTION==
                             JOptionPane.showConfirmDialog( AutoplotUI.this, "Scripts can only be run from the main window.  Make this the main window?", 
-                                    "Reset Main Window", JOptionPane.YES_NO_OPTION ) ) {
+                                    "Set Main Window", JOptionPane.YES_NO_OPTION ) ) {
                         ScriptContext.setApplicationModel(AutoplotUI.this.applicationModel);
                         ScriptContext.setView(AutoplotUI.this);
                     }
                     runScript( dataSetSelector.getValue() );
                 }
+                dom.getController().setFocusUri(ApplicationController.VALUE_BLUR_FOCUS);                
             }
         });
 
@@ -823,24 +919,28 @@ public final class AutoplotUI extends javax.swing.JFrame {
                     applicationModel.addRecent(dataSetSelector.getValue());
                     runScript( script );
                 }
+                dom.getController().setFocusUri(ApplicationController.VALUE_BLUR_FOCUS);
             }
         });
         dataSetSelector.registerBrowseTrigger( "script:(.*)", new AbstractAction( "script") {
             @Override
             public void actionPerformed( ActionEvent ev ) {
-                org.das2.util.LoggerManager.logGuiEvent(ev);                    
+                org.das2.util.LoggerManager.logGuiEvent(ev);        
                 DataSetSelector source= (DataSetSelector)ev.getSource();
                 String s= source.getValue();
                 if ( s.endsWith(".jy") ) {
                     try {
-                        JythonUtil.invokeScriptSoon( DataSetURI.getResourceURI(s), dom, 
-                                new HashMap(), true, true, scriptPanel, new NullProgressMonitor() );
+                        URI uri= DataSetURI.getResourceURI(s);
+                        JythonRunListener runListener= makeJythonRunListener( AutoplotUI.this, uri, true );
+                        JythonUtil.invokeScriptSoon( uri, dom, 
+                                new HashMap(), true, true, runListener, new NullProgressMonitor() );
                     } catch ( IOException ex ) {
                         throw new RuntimeException(ex);
                     }
                 } else {
                     source.showFileSystemCompletions( false, true, "[^\\s]+\\.jy" );
                 }
+                dom.getController().setFocusUri(ApplicationController.VALUE_BLUR_FOCUS);            
                 //do nothing
             }
         });
@@ -856,31 +956,35 @@ public final class AutoplotUI extends javax.swing.JFrame {
         dataSetSelector.registerActionTrigger( "vapfile:(.*)", new AbstractAction( "vapfile") {
             @Override
             public void actionPerformed( ActionEvent ev ) { // TODO: underimplemented
-                org.das2.util.LoggerManager.logGuiEvent(ev);                    
-                String vapfile= dataSetSelector.getValue().substring(8);
+                org.das2.util.LoggerManager.logGuiEvent(ev);
+                final String vapfile= dataSetSelector.getValue().substring(8);
                 URISplit split= URISplit.parse(vapfile);
                 if ( !( vapfile.endsWith(".xml") ) && ( split.params==null || split.params.length()==0 ) ) {
                     DataSetSelector source= (DataSetSelector)ev.getSource();
                     source.showFileSystemCompletions( false, true, "[^\\s]+\\.jy" );
                 } else {
-                    applicationModel.addRecent(dataSetSelector.getValue());
-                    InputStream in=null;
-                    try {
-                        if ( vapfile.startsWith("http:") || vapfile.startsWith("https:") ) {
-                            in= new URL(vapfile).openStream();
-                        } else {
-                            in = DataSetURI.getInputStream( DataSetURI.toUri( vapfile ), new NullProgressMonitor() );
-                        }
-                        applicationModel.doOpenVap( in, null );
-                    } catch ( IOException ex ) {
-                        JOptionPane.showMessageDialog( AutoplotUI.this, "Unable to load: \n"+vapfile+"\n"+ex );
-                    } finally {
+                    Runnable run= () -> {
+                        applicationModel.addRecent(dataSetSelector.getValue());
+                        InputStream in=null;
                         try {
-                            if ( in!=null ) in.close();
-                        } catch ( IOException ex2 ) {
-                            logger.log(Level.WARNING,null,ex2);
+                            if ( vapfile.startsWith("http:") || vapfile.startsWith("https:") ) {
+                                in= new URL(vapfile).openStream();
+                            } else {
+                                in = DataSetURI.getInputStream( DataSetURI.toUri( vapfile ), new NullProgressMonitor() );
+                            }
+                            applicationModel.doOpenVap( in, null );
+                        } catch ( IOException ex ) {
+                            JOptionPane.showMessageDialog( AutoplotUI.this, "Unable to load: \n"+vapfile+"\n"+ex );
+                        } finally {
+                            try {
+                                if ( in!=null ) in.close();
+                            } catch ( IOException ex2 ) {
+                                logger.log(Level.WARNING,null,ex2);
+                            }
                         }
-                    }
+                        dom.getController().setFocusUri(ApplicationController.VALUE_BLUR_FOCUS);
+                    };
+                    RequestProcessor.invokeLater(run);
                 }
             }
         });
@@ -889,20 +993,21 @@ public final class AutoplotUI extends javax.swing.JFrame {
             @Override
             public void actionPerformed(ActionEvent e) {
                 String surl= dataSetSelector.getValue();
-                URISplit split= URISplit.parse(surl);
-                if ( split.path.startsWith("file:") ) {
+                //URISplit split= URISplit.parse(surl);
+                boolean blurFocus= false;
+                //if ( split.path.startsWith("file:") ) {
                     String result= DataSetSelectorSupport.browseLocalVap( dataSetSelector, surl);
                     if (result != null ) {
                         dataSetSelector.setValue(result);
                         dataSetSelector.maybePlot(false);
+                        pendingVap= result;
+                        blurFocus= true;
                     }
-                    setCursor( Cursor.getDefaultCursor() );
-                    return;
-                } else {
-                    JOptionPane.showMessageDialog( AutoplotUI.this, "Unable to inspect .vap files" );
-                    setCursor( Cursor.getDefaultCursor() );
-                    return;
-                }
+                //} else {
+                //    JOptionPane.showMessageDialog( AutoplotUI.this, "Unable to inspect remote .vap files" );
+                //}
+                setCursor( Cursor.getDefaultCursor() );
+                if ( blurFocus ) dom.getController().setFocusUri(ApplicationController.VALUE_BLUR_FOCUS);
             }
         });
 
@@ -912,31 +1017,24 @@ public final class AutoplotUI extends javax.swing.JFrame {
 
         final ApplicationController appController= applicationModel.getDocumentModel().getController();
 
-        appController.addDas2PeerChangeListener( new PropertyChangeListener() {
-            @Override
-            public void propertyChange( PropertyChangeEvent e ) {
-                PlotController plotController= (PlotController) e.getNewValue();
-                ApplicationController controller= plotController.getApplication().getController();
-                GuiSupport.addPlotContextMenuItems( AutoplotUI.this, controller, plotController.getDasPlot(), plotController, plotController.getPlot() );
-                GuiSupport.addAxisContextMenuItems(  controller,  plotController.getDasPlot(), plotController,  plotController.getPlot(), plotController.getPlot().getXaxis());
-                GuiSupport.addAxisContextMenuItems( controller,  plotController.getDasPlot(), plotController,  plotController.getPlot(), plotController.getPlot().getYaxis());
-                GuiSupport.addAxisContextMenuItems(  controller,  plotController.getDasPlot(), plotController,  plotController.getPlot(), plotController.getPlot().getZaxis());
-            }
-        } );
+        appController.addDas2PeerChangeListener((PropertyChangeEvent e) -> {
+            PlotController plotController= (PlotController) e.getNewValue();
+            ApplicationController controller= plotController.getApplication().getController();
+            GuiSupport.addPlotContextMenuItems( AutoplotUI.this, controller, plotController.getDasPlot(), plotController, plotController.getPlot() );
+            GuiSupport.addAxisContextMenuItems(  controller,  plotController.getDasPlot(), plotController,  plotController.getPlot(), plotController.getPlot().getXaxis());
+            GuiSupport.addAxisContextMenuItems( controller,  plotController.getDasPlot(), plotController,  plotController.getPlot(), plotController.getPlot().getYaxis());
+            GuiSupport.addAxisContextMenuItems(  controller,  plotController.getDasPlot(), plotController,  plotController.getPlot(), plotController.getPlot().getZaxis());
+        });
 
-        appController.addPropertyChangeListener( ApplicationController.PROP_FOCUSURI, new PropertyChangeListener() {
-            @Override
-            public void propertyChange(PropertyChangeEvent evt) {
-                SwingUtilities.invokeLater( new Runnable() { 
-                    @Override
-                    public void run() {
-                        if ( pendingVap==null ) { // non-null means we are loading something.
-                            dataSetSelector.setValue( appController.getFocusUri() );
-                        }
-                    } 
-                } );
-            }
-        } );
+        appController.addPropertyChangeListener(ApplicationController.PROP_FOCUSURI, (PropertyChangeEvent evt) -> {
+            SwingUtilities.invokeLater(() -> {
+                if ( pendingVap==null ) { // non-null means we are loading something.
+                    if ( !isBasicMode() ) {
+                        dataSetSelector.setValue( appController.getFocusUri() );
+                    }
+                }
+            });
+        });
         dataSetSelector.setValue( dom.getController().getFocusUri() );
         
         appController.addPropertyChangeListener( ApplicationController.PROP_STATUS, new PropertyChangeListener() {
@@ -946,18 +1044,6 @@ public final class AutoplotUI extends javax.swing.JFrame {
             }
         } );
         
-        
-        applicationModel.getCanvas().addFocusListener(new FocusAdapter() {
-            @Override
-            public void focusGained(FocusEvent e) {
-                logger.fine("focus to canvas");
-                if (stateSupport.getCurrentFile() != null) {
-                    dataSetSelector.setValue(stateSupport.getCurrentFile());
-                }
-                super.focusGained(e);
-            }
-        });
-
         APSplash.checkTime("init 50");
 
         setIconImage( AutoplotUtil.getAutoplotIcon() );
@@ -966,12 +1052,32 @@ public final class AutoplotUI extends javax.swing.JFrame {
         
         stateSupport = getPersistentStateSupport(this, applicationModel);
         
+        applicationModel.getCanvas().addFocusListener(new FocusAdapter() {
+            @Override
+            public void focusGained(FocusEvent e) {
+                logger.fine("focus to canvas");
+                if ( stateSupport==null ) {
+                    System.err.println("stateSupport is null");
+                    return;
+                }
+                if ( stateSupport.getCurrentFile() != null) {
+                    dataSetSelector.setValue(stateSupport.getCurrentFile());
+                }
+                super.focusGained(e);
+            }
+        });
+        
         fillFileMenu(); // init 51,52
         APSplash.checkTime("init 52.999");
         fillInitialBookmarksMenu();
         APSplash.checkTime("init 53");
 
+        this.setName("autoplot");
         AppManager.getInstance().addApplication(this);
+        AppManager.getInstance().addCloseCallback(this, "recordPositionSize", () -> {
+            WindowManager.getInstance().recordWindowSizePosition(AutoplotUI.this);
+            return true;
+        });
         this.addWindowListener( AppManager.getInstance().getWindowListener(this,new AbstractAction("close") {
             @Override
             public void actionPerformed(ActionEvent e) {
@@ -979,6 +1085,7 @@ public final class AutoplotUI extends javax.swing.JFrame {
                 if ( AutoplotUI.this==ScriptContext.getViewWindow()  ) {
                     ScriptContext.close();
                 }
+                //TODO: remove the following prefs.
                 final Preferences prefs= AutoplotSettings.settings().getPreferences(ApplicationModel.class);
                 long x= AutoplotUI.this.getLocation().x;
                 long y= AutoplotUI.this.getLocation().y;
@@ -989,39 +1096,57 @@ public final class AutoplotUI extends javax.swing.JFrame {
             }
         }) );
         
-        applicationModel.addPropertyChangeListener( ApplicationModel.PROP_VAPFILE, new PropertyChangeListener() {
+        final Logger resizeLogger= LoggerManager.getLogger("autoplot.dom.canvas.resize");
+        
+        this.addComponentListener( new ComponentListener() {
             @Override
-            public void propertyChange( PropertyChangeEvent e ) {
-                stateSupport.setCurrentFile( (String)e.getNewValue() );
+            public void componentResized(ComponentEvent e) {
+                //int w= AutoplotUI.this.getWidth();
+                //int h= AutoplotUI.this.getHeight();
+                //if ( w<430 && h>800 ) {
+                //    System.err.println("here stop dimensions");
+                //}
+                resizeLogger.log(Level.FINER, "componentResized {0,number,#}x{1,number,#}", 
+                        new Object[]{AutoplotUI.this.getWidth(), AutoplotUI.this.getHeight()});
             }
+
+            @Override
+            public void componentMoved(ComponentEvent e) {
+                resizeLogger.finest("componentMoved");
+            }
+
+            @Override
+            public void componentShown(ComponentEvent e) {
+                resizeLogger.finer("componentShown");
+            }
+
+            @Override
+            public void componentHidden(ComponentEvent e) {
+                resizeLogger.finer("componentHidden");
+            }
+            
+        });
+        
+        applicationModel.addPropertyChangeListener(ApplicationModel.PROP_VAPFILE, (PropertyChangeEvent e) -> {
+            stateSupport.setCurrentFile( (String)e.getNewValue() );
         });
 
-        applicationModel.addPropertyChangeListener(new PropertyChangeListener() {
-            @Override
-            public void propertyChange(PropertyChangeEvent evt) {
-                switch (evt.getPropertyName()) {
-                    case ApplicationModel.PROPERTY_RECENT:
-                        final List<Bookmark> recent = applicationModel.getRecent();
-                        SwingUtilities.invokeLater(new Runnable() {
-                                @Override
-                                public void run() {
-                                    org.autoplot.bookmarks.Util.setRecent( dataSetSelector, recent );
-                                    //dataSetSelector.setRecent(urls);
-                                }
-                            } );
-                        break;
-                    case ApplicationModel.PROPERTY_BOOKMARKS:
-                        SwingUtilities.invokeLater(
-                            new Runnable() {
-                                @Override
-                                public void run() {
-                                    updateBookmarks();
-                                }
-                            } );
-                        break;
-                    default:
-                        logger.finer( "no action needed near line 940: "+evt.getPropertyName() );
-                }
+        applicationModel.addPropertyChangeListener((PropertyChangeEvent evt) -> {
+            switch (evt.getPropertyName()) {
+                case ApplicationModel.PROPERTY_RECENT:
+                    final List<Bookmark> recent = applicationModel.getRecent();
+                    SwingUtilities.invokeLater(() -> {
+                        org.autoplot.bookmarks.Util.setRecent( dataSetSelector, recent );
+                        //dataSetSelector.setRecent(urls);
+            });
+                    break;
+                case ApplicationModel.PROPERTY_BOOKMARKS:
+                    SwingUtilities.invokeLater(() -> {
+                        updateBookmarks();
+            });
+                    break;
+                default:
+                    logger.log(Level.FINER, "no action needed near line 940: {0}", evt.getPropertyName());
             }
         });
         
@@ -1029,11 +1154,8 @@ public final class AutoplotUI extends javax.swing.JFrame {
         APSplash.checkTime("init 55");
         APSplash.checkTime("init 60");
 
-        dataSetSelector.addPropertyChangeListener(DataSetSelector.PROPERTY_MESSAGE, new PropertyChangeListener() {
-            @Override
-            public void propertyChange(PropertyChangeEvent e) {
-                setStatus(dataSetSelector.getMessage());
-            }
+        dataSetSelector.addPropertyChangeListener(DataSetSelector.PROPERTY_MESSAGE, (PropertyChangeEvent e) -> {
+            setStatus(dataSetSelector.getMessage());
         });
 
         tabs = new TearoffTabbedPane();
@@ -1072,9 +1194,9 @@ public final class AutoplotUI extends javax.swing.JFrame {
         List<Bookmark> recent = applicationModel.getRecent();
         APSplash.checkTime("init 80");
 
-        for (Bookmark b : recent) {
+        recent.forEach((b) -> {
             uris.add(((Bookmark.Item) b).getUri());
-        }
+        });
         dataSetSelector.setRecent(uris);
         //some other bug had been preventing this code from working.  I actually like the bug behavior better, where the value is
         //not the most recent one, so I'm commenting this out to restore this behavior.
@@ -1085,23 +1207,32 @@ public final class AutoplotUI extends javax.swing.JFrame {
 //        }
 
         //since bookmarks can contain remote folder, get these after making the gui.
-        Runnable run= new Runnable() {
-            @Override
-            public void run() {
-                updateBookmarks();
-                dataSetSelector.setPromptText("Enter data location or select a bookmark");
-            }
+        Runnable run= () -> {
+            updateBookmarks();
+            dataSetSelector.setPromptText("Enter data location or select a bookmark");
         };
         invokeLater( 1000, true, run );
         APSplash.checkTime("init 90");
 
-        SwingUtilities.invokeLater(
-            new Runnable() { 
-                @Override
-                public void run() {
-                    addTools();
-                }
-        } );
+        SwingUtilities.invokeLater(() -> {
+            addTools();
+            PropertyEditor.addStringEditor("tickValues", new TickValuesStringSchemeEditor() );
+            PropertyEditor.addStringEditor("specialColors", new SpecialColorsStringSchemeEditor() );
+            PropertyEditor.addStringEditor("autoRangeHints", new AutoRangeHintsStringSchemeEditor() );
+            PropertyEditor.addStringEditor("label", GraphUtil.newGrannyTextEditor() );
+            PropertyEditor.addStringEditor("title", GraphUtil.newGrannyTextEditor() );
+            PropertyEditor.addStringEditor("org.autoplot.dom.Annotation","text", GraphUtil.newGrannyTextEditor() ); //TODO: this will surely cause problems...
+            PropertyEditor.addStringEditor("legendLabel", GraphUtil.newGrannyTextEditor() ); 
+            PropertyEditor.addStringEditor("colorbarColumnPosition", new LayoutStringSchemeEditor(true, "H") );
+            PropertyEditor.addStringEditor("top", new LayoutStringSchemeEditor(false, "T") );
+            PropertyEditor.addStringEditor("bottom", new LayoutStringSchemeEditor(false, "B") );
+            PropertyEditor.addStringEditor("right", new LayoutStringSchemeEditor(false, "R") );
+            PropertyEditor.addStringEditor("left", new LayoutStringSchemeEditor(false, "L") );
+            PropertyEditor.addStringEditor("font",new FontStringSchemeEditor());
+            PropertyEditor.addStringEditor("ticksURI",new DataSetSelectorStringSchemeEditor());
+            PropertyEditor.addStringEditor("uri",new DataSetSelectorStringSchemeEditor());
+            PropertyEditor.addStringEditor("eventsListUri",new DataSetSelectorStringSchemeEditor());
+        });
         
         addBindings();
 
@@ -1134,64 +1265,70 @@ public final class AutoplotUI extends javax.swing.JFrame {
         };
         invokeLater( 10000, false, run );
     }
-
+    
+    /**
+     * true indicates that certificate checking has been disabled.
+     * @see https://sourceforge.net/p/autoplot/bugs/2383/
+     */
+    public static final String SYSPROP_AUTOPLOT_DISABLE_CERTS = "autoplot.disable.certs";
+    
+    /**
+     * the release type, either non for unknown, or javaws, singlejar, exe, or dmg.
+     * This should be set at the command line when java is started.
+     * @see https://sourceforge.net/p/autoplot/bugs/2383/
+     */
+    public static final String SYSPROP_AUTOPLOT_RELEASE_TYPE = "autoplot.release.type";
+            
     private Runnable addAxes() {
-        return new Runnable() {
-            @Override
-            public void run() {
-  APSplash.checkTime("addAxes in");
-                final JScrollPane sp= new JScrollPane();
-                tabs.insertTab("axes", null, sp,
-                        String.format(  TAB_TOOLTIP_AXES, TABS_TOOLTIP), 1);
-                invokeLater( 2500, true, new Runnable() {
-                    @Override
-                    public String toString() { return "addAxesRunnable"; }
-                    @Override
-                    public void run() {
-  APSplash.checkTime("addAxes1 in");
-                        final JComponent c= new AxisPanel(applicationModel);
-                        SwingUtilities.invokeLater( new Runnable() {
-                            @Override
-                            public void run( ) { sp.setViewportView(c); }
-                        } );
-  APSplash.checkTime("addAxes1 out");
-                    }
-                });
-  APSplash.checkTime("addAxes out");
-            }
+        return () -> {
+            APSplash.checkTime("addAxes in");
+            final JScrollPane sp= new JScrollPane();
+            tabs.insertTab("axes", null, sp,
+                    String.format(  TAB_TOOLTIP_AXES, TABS_TOOLTIP), 1);
+            invokeLater( 2500, true, new Runnable() {
+                @Override
+                public String toString() { return "addAxesRunnable"; }
+                @Override
+                public void run() {
+                    APSplash.checkTime("addAxes1 in");
+                    final JComponent c= new AxisPanel(applicationModel);
+                    SwingUtilities.invokeLater( new Runnable() {
+                        @Override
+                        public void run( ) { sp.setViewportView(c); }
+                    } );
+                    APSplash.checkTime("addAxes1 out");
+                }
+            });
+            APSplash.checkTime("addAxes out");
         };
     }
 
     private Runnable addStyle() {
-        return new Runnable() {
-            @Override
-            public void run() {
-  APSplash.checkTime("addStyle in");
-                final JScrollPane sp= new JScrollPane();
-                try {
-                    loadMyColors();
-                } catch (IOException ex) {
-                    logger.log(Level.SEVERE, null, ex);
-                }
-                tabs.insertTab("style", null, sp,
-                        String.format(  TAB_TOOLTIP_STYLE, TABS_TOOLTIP), 2);
-                invokeLater( 2500, true, new Runnable() {
-                    @Override
-                    public String toString() { return "addStyle"; }
-                    @Override                    
-                    public void run() {
-  APSplash.checkTime("addStyle1 in");
-                        final JComponent c= new PlotStylePanel(applicationModel);
-                        SwingUtilities.invokeLater( new Runnable() {
-                            @Override                    
-                            public void run( ) { sp.setViewportView(c); }
-                        } );
-                        
-  APSplash.checkTime("addStyle1 out");
-                    }
-                } );
-  APSplash.checkTime("addStyle out");
+        return () -> {
+            APSplash.checkTime("addStyle in");
+            final JScrollPane sp= new JScrollPane();
+            try {
+                loadMyColors();
+            } catch (IOException ex) {
+                logger.log(Level.SEVERE, null, ex);
             }
+            tabs.insertTab("style", null, sp,
+                    String.format(  TAB_TOOLTIP_STYLE, TABS_TOOLTIP), 2);
+            invokeLater( 2500, true, new Runnable() {
+                @Override
+                public String toString() { return "addStyle"; }
+                @Override
+                public void run() {
+                    APSplash.checkTime("addStyle1 in");
+                    final JComponent c= new PlotStylePanel(applicationModel);
+                    SwingUtilities.invokeLater(() -> {
+                        sp.setViewportView(c);
+                    });
+                    
+                    APSplash.checkTime("addStyle1 out");
+                }
+            } );
+            APSplash.checkTime("addStyle out");
         };
     }
 
@@ -1416,6 +1553,7 @@ APSplash.checkTime("init 270");
                 @Override
                 public void run() {
                     scriptPanel= new JythonScriptPanel( AutoplotUI.this, fdataSetSelector);
+                    addEditorCustomActions(scriptPanel);
                     jythonScriptPanel.add(scriptPanel,BorderLayout.CENTER);
                     scriptPanelMenuItem.setSelected(true);
                     ExceptionHandler h= model.getExceptionHandler();
@@ -1485,8 +1623,7 @@ APSplash.checkTime("init 270");
                     if ( messages.size()==1 ) {
                         undoRedoSupport.pushState(evt,messages.get(0)); // named undo operation
                     } else {
-                        //undoRedoSupport.pushState(evt,messages.get(0));
-                        undoRedoSupport.pushState(evt,String.format("%d changes",messages.size())); // TODO: named undo operations.  fix findbugs DB_DUPLICATE_BRANCHES
+                        undoRedoSupport.pushState(evt,String.format("%d changes",messages.size())); 
                     }
                 } else if ( messages.size()==1 ) {
                     if ( messages.get(0).contains(" from ") ) {
@@ -1496,6 +1633,7 @@ APSplash.checkTime("init 270");
                     }
                 } else {
                     //I've hit this state before when loading empty vap file: file:///home/jbf/ct/autoplot/script/demos/interpolateToCommonTags2.vap
+                    undoRedoSupport.pushState(evt,"????");
                     logger.fine("tickleTimer contained no messages.");
                 }
 
@@ -1539,7 +1677,7 @@ APSplash.checkTime("init 270");
                 if ( evt.getNewValue()==null ) {
                     String current= AutoplotUI.this.stateSupport.getCurrentFile();
                     if ( current!=null ) {
-                        AutoplotUI.this.dataSetSelector.setValue(current.toString());
+                        AutoplotUI.this.dataSetSelector.setValue(current);
                     }
                 }
             }
@@ -1567,7 +1705,7 @@ APSplash.checkTime("init 270");
                 } else {
                     String uri= dsf.getUri();
                     if ( uri!=null ) {
-                        if ( pendingVap==null ) {
+                        if ( pendingVap==null && !isBasicMode() ) {
                             dataSetSelector.setValue(uri);
                         }
                     } else {
@@ -1631,10 +1769,6 @@ APSplash.checkTime("init 270");
             public void run() {
                 logger.fine("adding bindings");
                 BindingGroup bc = new BindingGroup();
-                bind( bc, dom.getOptions(), Options.PROP_DRAWANTIALIAS, drawAntiAliasMenuItem, "selected" );
-                bind( bc, dom.getOptions(), Options.PROP_TEXTANTIALIAS, textAntiAlias, "selected") ;
-                bind( bc, dom.getOptions(), Options.PROP_SPECIALEFFECTS, specialEffectsMenuItem, "selected" );
-                bind( bc, dom.getOptions(), Options.PROP_OVERRENDERING, overRenderingMenuItem, "selected" );
                 bind( bc, dom.getOptions(), Options.PROP_DRAWGRID, drawGridCheckBox, "selected" );
                 bind( bc, dom.getOptions(), Options.PROP_AUTOLABELLING, autoLabellingCheckBoxMenuItem, "selected" );
                 bind( bc, dom.getOptions(), Options.PROP_AUTOLAYOUT, autoLayoutCheckBoxMenuItem, "selected" );
@@ -1909,14 +2043,18 @@ APSplash.checkTime("init 270");
 
     private void fillFileMenu() {
         List<JComponent> expertItems= new ArrayList();
+        javax.swing.JMenuItem mi;
+        
+        mi= new JMenuItem(support.createNewApplicationAction());
+        mi.setToolTipText("Create another window");
+        fileMenu.add( mi );
+        
+        mi= new JMenuItem(support.createCloneApplicationAction());
+        mi.setToolTipText("Duplicate to another new window");
+        expertItems.add( mi );        
+        fileMenu.add( mi );
 
-        expertItems.add( new JMenuItem(support.createNewApplicationAction()) );
-        expertItems.add( new JMenuItem(support.createCloneApplicationAction()) );
-        fileMenu.add( expertItems.get(0) );
-        fileMenu.add( expertItems.get(1) );
-
-        javax.swing.JMenuItem mi= new JMenuItem( support.createNewDOMAction() );
-        expertItems.add(mi);
+        mi= new JMenuItem( support.createNewDOMAction() );
         mi.setToolTipText("Reset application to initial state");
         fileMenu.add(mi);
 
@@ -2033,6 +2171,7 @@ APSplash.checkTime("init 52.9");
             @Override
             public void actionPerformed( ActionEvent ev ) {
                 org.das2.util.LoggerManager.logGuiEvent(ev);
+                boolean isQuit= false;
                 if ( AppManager.getInstance().getApplicationCount()==1 ) {
                     int opt= JOptionPane.showConfirmDialog( AutoplotUI.this,
                             "Quit application?", "Quit Autoplot", JOptionPane.YES_NO_CANCEL_OPTION );
@@ -2040,7 +2179,7 @@ APSplash.checkTime("init 52.9");
                         case JOptionPane.YES_OPTION:
                             //normal route
                             if ( AppManager.getInstance().requestQuit() ) {
-                                
+                                isQuit= true;
                             } else {
                                 return;
                             }   break;
@@ -2053,7 +2192,9 @@ APSplash.checkTime("init 52.9");
                 }
                 AutoplotUI.this.dispose();
                 ScriptContext.close();
-                AppManager.getInstance().closeApplication(AutoplotUI.this);
+                if ( !isQuit ) {
+                    AppManager.getInstance().closeApplication(AutoplotUI.this);
+                }
             }
         });
 
@@ -2063,6 +2204,7 @@ APSplash.checkTime("init 52.9");
                 org.das2.util.LoggerManager.logGuiEvent(ev);
                 if ( AppManager.getInstance().requestQuit() ) {
                     AutoplotUI.this.dispose();
+                    if ( logConsole!=null ) logConsole.undoLogConsoleMessages();
                     AppManager.getInstance().quit();
                 }
             }
@@ -2090,6 +2232,9 @@ APSplash.checkTime("init 52.9");
     private JPanel initLogConsole() throws SecurityException {
         logConsole = new LogConsole();
         logConsole.setScriptContext( Collections.singletonMap( "dom", (Object)applicationModel.dom ) ); // must cast or javac complains
+        if ( scriptPanel!=null ) {
+            logConsole.addConsoleListener( scriptPanel.getConsoleListener() );
+        }
         logConsole.turnOffConsoleHandlers();
         logConsole.logConsoleMessages(); // stderr, stdout logged to Logger "console"
 
@@ -2184,6 +2329,8 @@ APSplash.checkTime("init 52.9");
             if ( split.file!=null && ( split.file.endsWith(".vap") || split.file.endsWith(".vapx" ) ) ) {
                 tickleTimer.tickle(); 
                 pendingVap= surl;
+            } else {
+                applicationModel.addRecent(surl);
             }
         } catch (RuntimeException ex) {
             if ( ex.getCause()!=null && ex.getCause() instanceof HtmlResponseIOException ) {
@@ -2262,15 +2409,27 @@ APSplash.checkTime("init 52.9");
      * add a new plot and plotElement.  This is attached to control-enter.
      */
     private void plotAnotherUrl() {
-        plotAnotherUrl( (String) dataSetSelector.getValue() );
+        plotAnotherUrl((String) dataSetSelector.getValue(), null );
     }
 
-    private void plotAnotherUrl( final String surl ) {
+    /**
+     * 
+     * @param surl
+     * @param options null or a map containing direction.
+     */
+    private void plotAnotherUrl( final String surl, Map<String,Object> options) {
         try {
             logger.log(Level.FINE, "plotAnotherUrl({0})", surl);
-            PlotElement panel= dom.getController().addPlotElement( null,null );
-            dom.getController().getDataSourceFilterFor(panel).setUri(surl);
-            dom.getController().setPlotElement(panel);
+            if ( options!=null && LayoutConstants.ABOVE==options.get("direction") ) {
+                Plot domPlot = dom.getController().addPlot(LayoutConstants.ABOVE);
+                PlotElement panel= dom.getController().addPlotElement( domPlot,null );
+                dom.getController().getDataSourceFilterFor(panel).setUri(surl);
+                dom.getController().setPlotElement(panel);
+            } else {
+                PlotElement panel= dom.getController().addPlotElement( null,null );
+                dom.getController().getDataSourceFilterFor(panel).setUri(surl);
+                dom.getController().setPlotElement(panel);
+            }
             
         } catch (RuntimeException ex) {
             applicationModel.getExceptionHandler().handleUncaught(ex);
@@ -2299,23 +2458,57 @@ APSplash.checkTime("init 52.9");
     }
 
     /**
+     * reset to the size in defaults.
+     */
+    public void resizeForDefaultCanvasSize() {
+        int width= dom.getOptions().getWidth();
+        int height= dom.getOptions().getHeight();
+        logger.log(Level.FINE, "resize canvas to {0,number,#}x{1,number,#}", new Object[]{width, height});
+        resizeForCanvasSize( width,height );
+        width= dom.getCanvases(0).getWidth();
+        height= dom.getCanvases(0).getHeight();
+        logger.log(Level.FINE, "final size of canvas: {0,number,#}x{1,number,#}", new Object[]{width, height});           
+    }
+    
+    int windowExtraWidth= 0; 
+    int windowExtraHeight= 0; 
+    
+    /**
      * resize the outer GUI attempting to get a fitted canvas size.  This fixes the
      * problem where a loaded vap doesn't appear as it does when it was saved because
      * the canvas is resized.
      * 
-     * @param w the width
-     * @param h the height
+     * @param w the width of the canvas
+     * @param h the height of the canvas
      * @return nominal scale factor
      */
     public double resizeForCanvasSize( int w, int h ) {
-        
+        return resizeForCanvasSize( w, h, windowExtraWidth, windowExtraHeight );
+    }
+    
+    /**
+     * resize the outer GUI attempting to get a fitted canvas size.  This fixes the
+     * problem where a loaded vap doesn't appear as it does when it was saved because
+     * the canvas is resized.
+     * @param w the width of the canvas
+     * @param h the height of the canvas
+     * @param extraW extra width needed by the GUI
+     * @param extraH extra height needed by the GUI
+     * @return 
+     */
+    public double resizeForCanvasSize( int w, int h, int extraW, int extraH ) {
+        resizeLogger.log(Level.FINE, "resizeForCanvasSize({0,number,#},{1,number,#},{2,number,#},{3,number,#})", 
+                new Object[]{w, h, extraW, extraH});
         Component parentToAdjust;
         if ( SwingUtilities.isDescendingFrom( applicationModel.getCanvas(), this ) ) {
             parentToAdjust= this;
         } else {
             parentToAdjust= SwingUtilities.getWindowAncestor(applicationModel.getCanvas());
         }
+        boolean fitted= this.applicationModel.dom.getCanvases(0).isFitted();
         Dimension dout= parentToAdjust.getSize();
+        resizeLogger.log(Level.FINER, "old parentToAdjust.getSize: {0,number,#}x{1,number,#}", 
+                new Object[]{dout.width, dout.height});
         Dimension din= this.applicationModel.getCanvas().getSize();
         Dimension desiredAppSize= new Dimension();
 
@@ -2325,16 +2518,22 @@ APSplash.checkTime("init 52.9");
         
         boolean maximize= false;
         
-        if ( this.applicationModel.dom.getCanvases(0).isFitted() ) {
-            int maximizedPixelGain= 0; // the number of pixels gained by maximizing.  Windows doesn't draw borders when window is maximized.
+        if ( fitted ) {
+            int maximizedPixelGain= 0; // number of pixels gained by maximizing. Windows doesn't draw borders when window is maximized.
             String osName= System.getProperty("os.name");
             if ( osName.startsWith("Windows") ) { // TODO: figure out how to measure this.
                 maximizedPixelGain= 8;
             } else if ( osName.startsWith("Linux") ) {
                 maximizedPixelGain= 10;
             } 
-            desiredAppSize.width= w + ( dout.width - din.width );
-            desiredAppSize.height= h + ( dout.height - din.height );
+            
+            windowExtraHeight= extraH;
+            windowExtraWidth= extraW;
+                        
+            resizeLogger.log(Level.FINER, "windowExtraWidth={0} windowExtraHeight={1}", 
+                    new Object[] { windowExtraWidth, windowExtraHeight } );
+            desiredAppSize.width= w + windowExtraWidth ;
+            desiredAppSize.height= h + windowExtraHeight;
             
             if ( w > screenSize.getWidth() - maximizedPixelGain && 
                     w < screenSize.getWidth() ) {
@@ -2357,19 +2556,29 @@ APSplash.checkTime("init 52.9");
         } else if ( maximize ) {
             if ( parentToAdjust instanceof JFrame ) {
                 ((JFrame)parentToAdjust).setExtendedState( JFrame.MAXIMIZED_BOTH );
+                resizeLogger.log(Level.FINER, "resizeForCanvasSize parentToAdjust maximized");
                 setStatus("Window maximized to approximate original size");
             } else {
                 this.applicationModel.dom.getCanvases(0).setFitted(false);
                 this.applicationModel.dom.getCanvases(0).setHeight(h);
                 this.applicationModel.dom.getCanvases(0).setWidth(w);
+                resizeLogger.log(Level.FINER, "resizeForCanvasSize resets canvas fitted=false {0,number,#}x{1,number,#}", 
+                        new Object[]{ w, h } );
             }
             
         } else if ( desiredAppSize.width>screenSize.getWidth() || desiredAppSize.height>screenSize.getHeight() ) {
-
-            String[] options= new String[] { "Scale to fit display", "Use scrollbars" };
-            int i= JOptionPane.showOptionDialog( this, "Canvas size doesn't fit well on this display.", "Incompatible Canvas Size", 
-                    JOptionPane.OK_OPTION, JOptionPane.INFORMATION_MESSAGE, ERROR_ICON,
-                    options, options[1] );
+            int i;
+            
+            String defaultOption= System.getProperty("resizeOption","");
+            logger.log(Level.FINE, "System property resizeOption set to \"{0}\"", defaultOption);
+            if ( defaultOption.equals("") ) {
+                String[] options= new String[] { "Scale to fit display", "Use scrollbars","Always use scrollbars" };
+                i= JOptionPane.showOptionDialog( this, "Canvas size doesn't fit well on this display.  See http://autoplot.org/resizeOption", "Incompatible Canvas Size", 
+                        JOptionPane.OK_OPTION, JOptionPane.INFORMATION_MESSAGE, ERROR_ICON,
+                        options, options[1] );
+            } else {
+                i= defaultOption.equals("scrollbars") ? 1 : 0;
+            }
             if ( i!= JOptionPane.CLOSED_OPTION ) {
                 if ( i==0 ) {
                     double aspect= 1.0*h/w;
@@ -2385,16 +2594,30 @@ APSplash.checkTime("init 52.9");
                     scale= (double)nw/w;
                     //Font newFont= f.deriveFont( f.getSize2D() * scale );
                     //this.applicationModel.dom.getCanvases(0).setFont(newFont.toString());
-                    parentToAdjust.setSize( nw + ( dout.width - din.width ), nh + ( dout.height - din.height ) );
+                    int newW=  nw + ( dout.width - din.width );
+                    int newH=  nh + ( dout.height - din.height );
+                    parentToAdjust.setSize( newW, newH );
+                    resizeLogger.log(Level.FINE, "resizeForCanvasSize parentToAdjust.setSize (scaling): {0,number,#}x{1,number,#}", 
+                            new Object[]{ newW, newH });
 
                 } else if ( i==1 ) { // scrollbars option.
                     this.applicationModel.dom.getCanvases(0).setFitted(false);
                     this.applicationModel.dom.getCanvases(0).setHeight(h);
                     this.applicationModel.dom.getCanvases(0).setWidth(w);
+                    resizeLogger.log(Level.FINE, "resizeForCanvasSize (scrollbars) {0,number,#}x{1,number,#}", new Object[]{ w, h });
+                    
+                } else if ( i==2 ) { // always scrollbars
+                    System.setProperty("resizeOption", "scrollbars");
+                    this.applicationModel.dom.getCanvases(0).setFitted(false);
+                    this.applicationModel.dom.getCanvases(0).setHeight(h);
+                    this.applicationModel.dom.getCanvases(0).setWidth(w);
+                    resizeLogger.log(Level.FINE, "resizeForCanvasSize (scrollbars) {0,number,#}x{1,number,#}", new Object[]{ w, h });
+                    
                 }
             }
         } else {
-            // there's actually a new bug here, at least on Linux you can't resize to > one screen...
+            resizeLogger.log(Level.FINE, "resizeForCanvasSize parentToAdjust.setSize  {0,number,#}x{1,number,#}", 
+                    new Object[]{ desiredAppSize.width, desiredAppSize.height });
             parentToAdjust.setSize( desiredAppSize.width, desiredAppSize.height );
             if ( parentToAdjust.getSize().getWidth()!=desiredAppSize.width ) {
                 this.applicationModel.dom.getCanvases(0).setFitted(false);
@@ -2402,13 +2625,30 @@ APSplash.checkTime("init 52.9");
             }
             this.applicationModel.dom.getCanvases(0).setHeight(h);
             this.applicationModel.dom.getCanvases(0).setWidth(w);
+            resizeLogger.log(Level.FINE, "resizeForCanvasSize set canvas size to  {0,number,#}x{1,number,#}", new Object[]{ w, h });
         }
         if ( oldFitted==true && this.applicationModel.dom.getCanvases(0).isFitted()==false ) {
             setStatus("warning: canvas is no longer fitted, see options->plot style->canvas size");
         }
 
+        resizeLogger.log(Level.FINE, "resizeForCanvasSize exiting, scale={0}", scale);
+        
         return scale;
     }
+
+    @Override
+    public void setSize(int width, int height) {
+        resizeLogger.log(Level.FINE, "AutoplotUI.setSize({0},{1})", new Object[]{width, height});
+        super.setSize(width, height);
+    }
+
+    @Override
+    public void setSize(Dimension d) {
+        resizeLogger.log(Level.FINE, "AutoplotUI.setSize({0})", d);
+        super.setSize(d); 
+    }
+    
+    
 
     /**
      * set the status message, with "busy:" or "warning:" prefix.
@@ -2594,8 +2834,8 @@ APSplash.checkTime("init 52.9");
         final PersistentStateSupport stateSupport = new PersistentStateSupport(parent, null, "vap") {
 
             @Override
-            protected void saveImpl(File f,String scheme) throws IOException {
-                applicationModel.doSave(f,scheme);
+            protected void saveImpl(File f,String scheme,Map<String,Object> options) throws IOException {
+                applicationModel.doSave(f,scheme,options);
                 applicationModel.addRecent( DataSetURI.fromFile( f ));
                 parent.setStatus("saved " + f);
             }
@@ -2659,6 +2899,8 @@ APSplash.checkTime("init 52.9");
         jMenuItem1 = new javax.swing.JMenuItem();
         jMenuItem2 = new javax.swing.JMenuItem();
         resetFontMI = new javax.swing.JMenuItem();
+        addSizeMenu = new javax.swing.JMenu();
+        resetAppSize = new javax.swing.JMenuItem();
         jSeparator4 = new javax.swing.JPopupMenu.Separator();
         resetZoomMenu = new javax.swing.JMenu();
         resetZoomMenuItem = new javax.swing.JMenuItem();
@@ -2670,10 +2912,6 @@ APSplash.checkTime("init 52.9");
         zoomOutMenuItem = new javax.swing.JMenuItem();
         optionsMenu = new javax.swing.JMenu();
         renderingOptionsMenu = new javax.swing.JMenu();
-        textAntiAlias = new javax.swing.JCheckBoxMenuItem();
-        drawAntiAliasMenuItem = new javax.swing.JCheckBoxMenuItem();
-        specialEffectsMenuItem = new javax.swing.JCheckBoxMenuItem();
-        overRenderingMenuItem = new javax.swing.JCheckBoxMenuItem();
         drawGridCheckBox = new javax.swing.JCheckBoxMenuItem();
         doyCB = new javax.swing.JCheckBoxMenuItem();
         nnCb = new javax.swing.JCheckBoxMenuItem();
@@ -2692,6 +2930,7 @@ APSplash.checkTime("init 52.9");
         autoLabellingCheckBoxMenuItem = new javax.swing.JCheckBoxMenuItem();
         autoLayoutCheckBoxMenuItem = new javax.swing.JCheckBoxMenuItem();
         additionalOptionsMI = new javax.swing.JMenuItem();
+        saveOptionsMenuItem = new javax.swing.JMenuItem();
         bookmarksMenu = new javax.swing.JMenu();
         toolsMenu = new javax.swing.JMenu();
         cacheMenu = new javax.swing.JMenu();
@@ -2921,6 +3160,18 @@ APSplash.checkTime("init 52.9");
         textSizeMenu.add(resetFontMI);
 
         viewMenu.add(textSizeMenu);
+
+        addSizeMenu.setText("App Size");
+
+        resetAppSize.setText("Reset to default size");
+        resetAppSize.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                resetAppSizeActionPerformed(evt);
+            }
+        });
+        addSizeMenu.add(resetAppSize);
+
+        viewMenu.add(addSizeMenu);
         viewMenu.add(jSeparator4);
 
         resetZoomMenu.setText("Reset Zoom");
@@ -2993,51 +3244,32 @@ APSplash.checkTime("init 52.9");
 
         renderingOptionsMenu.setText("Rendering Options");
 
-        textAntiAlias.setSelected(true);
-        textAntiAlias.setText("Text Antialias");
-        textAntiAlias.setToolTipText("Enable/Disable Text Antialiasing");
-        textAntiAlias.addActionListener(new java.awt.event.ActionListener() {
-            public void actionPerformed(java.awt.event.ActionEvent evt) {
-                textAntiAliasActionPerformed(evt);
-            }
-        });
-        renderingOptionsMenu.add(textAntiAlias);
-
-        drawAntiAliasMenuItem.setSelected(true);
-        drawAntiAliasMenuItem.setText("Graphics Antialias");
-        drawAntiAliasMenuItem.setToolTipText("Enable/Disable Graphics Antialiasing");
-        drawAntiAliasMenuItem.addActionListener(new java.awt.event.ActionListener() {
-            public void actionPerformed(java.awt.event.ActionEvent evt) {
-                drawAntiAliasMenuItemActionPerformed(evt);
-            }
-        });
-        renderingOptionsMenu.add(drawAntiAliasMenuItem);
-
-        specialEffectsMenuItem.setText("Special Effects");
-        specialEffectsMenuItem.setToolTipText("Enable animated axes and other visual clues");
-        specialEffectsMenuItem.addActionListener(new java.awt.event.ActionListener() {
-            public void actionPerformed(java.awt.event.ActionEvent evt) {
-                specialEffectsMenuItemActionPerformed(evt);
-            }
-        });
-        renderingOptionsMenu.add(specialEffectsMenuItem);
-
-        overRenderingMenuItem.setSelected(true);
-        overRenderingMenuItem.setText("Over-Rendering");
-        overRenderingMenuItem.setToolTipText("Render (and load) data outside plot bounds to improve appearance.");
-        renderingOptionsMenu.add(overRenderingMenuItem);
-
         drawGridCheckBox.setSelected(true);
         drawGridCheckBox.setText("Draw Grid");
         drawGridCheckBox.setToolTipText("Draw gridlines at major ticks");
+        drawGridCheckBox.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                drawGridCheckBoxActionPerformed(evt);
+            }
+        });
         renderingOptionsMenu.add(drawGridCheckBox);
 
         doyCB.setText("Day of Year Labels");
         doyCB.setToolTipText("Use Day of Year instead of Year-Month-Day for labels");
+        doyCB.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                doyCBActionPerformed(evt);
+            }
+        });
         renderingOptionsMenu.add(doyCB);
 
         nnCb.setText("Nearest Neighbor Spectrograms");
         nnCb.setToolTipText("Use Nearest Neighbor rebinning for new spectrograms");
+        nnCb.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                nnCbActionPerformed(evt);
+            }
+        });
         renderingOptionsMenu.add(nnCb);
 
         optionsMenu.add(renderingOptionsMenu);
@@ -3143,6 +3375,15 @@ APSplash.checkTime("init 52.9");
         });
         optionsMenu.add(additionalOptionsMI);
 
+        saveOptionsMenuItem.setText("Save Options");
+        saveOptionsMenuItem.setToolTipText("Save options for future sessions.");
+        saveOptionsMenuItem.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                saveOptionsMenuItemActionPerformed(evt);
+            }
+        });
+        optionsMenu.add(saveOptionsMenuItem);
+
         jMenuBar1.add(optionsMenu);
 
         bookmarksMenu.setText("Bookmarks");
@@ -3237,6 +3478,7 @@ APSplash.checkTime("init 52.9");
         toolsMenu.add(jSeparator2);
 
         jMenuItem6.setText("Events List");
+        jMenuItem6.setToolTipText("Use an events list to control time range");
         jMenuItem6.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
                 jMenuItem6ActionPerformed(evt);
@@ -3245,7 +3487,7 @@ APSplash.checkTime("init 52.9");
         toolsMenu.add(jMenuItem6);
 
         fixLayoutMenuItem.setAccelerator(javax.swing.KeyStroke.getKeyStroke(java.awt.event.KeyEvent.VK_F, java.awt.event.InputEvent.CTRL_MASK));
-        fixLayoutMenuItem.setText("Fix Layout");
+        fixLayoutMenuItem.setText("Fix Layout...");
         fixLayoutMenuItem.setToolTipText("Run new layout routine that removes spaces between plots");
         fixLayoutMenuItem.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
@@ -3480,7 +3722,12 @@ APSplash.checkTime("init 52.9");
             public void run() {
                 if ( AutoplotUI.this.isExpertMode() ) {
                     if ( ( modifiers & KeyEvent.CTRL_MASK ) == KeyEvent.CTRL_MASK ) {
-                        plotAnotherUrl();
+                        if ( ( modifiers & KeyEvent.SHIFT_MASK ) == KeyEvent.SHIFT_MASK ) {
+                            String uri= (String) dataSetSelector.getValue();
+                            plotAnotherUrl( uri, Collections.singletonMap( "direction", LayoutConstants.ABOVE ));
+                        } else {
+                            plotAnotherUrl();
+                        }
                     } else if ( ( modifiers & KeyEvent.SHIFT_MASK ) == KeyEvent.SHIFT_MASK )  {
                         overplotAnotherUrl();
                     } else {
@@ -3537,32 +3784,25 @@ APSplash.checkTime("init 52.9");
         fontAndColorsDialog.setVisible(true);
     }//GEN-LAST:event_fontsAndColorsMenuItemActionPerformed
 
-    private void specialEffectsMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_specialEffectsMenuItemActionPerformed
-        org.das2.util.LoggerManager.logGuiEvent(evt);
-        applicationModel.getDocumentModel().getOptions().setSpecialEffects(specialEffectsMenuItem.isSelected());
-    }//GEN-LAST:event_specialEffectsMenuItemActionPerformed
-
-    private void drawAntiAliasMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_drawAntiAliasMenuItemActionPerformed
-        org.das2.util.LoggerManager.logGuiEvent(evt);
-        applicationModel.getDocumentModel().getOptions().setDrawAntiAlias(drawAntiAliasMenuItem.isSelected());
-    }//GEN-LAST:event_drawAntiAliasMenuItemActionPerformed
-
-    private void textAntiAliasActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_textAntiAliasActionPerformed
-        org.das2.util.LoggerManager.logGuiEvent(evt);
-        applicationModel.getDocumentModel().getOptions().setTextAntiAlias(textAntiAlias.isSelected());
-    }//GEN-LAST:event_textAntiAliasActionPerformed
-
     private void aboutAutoplotMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_aboutAutoplotMenuItemActionPerformed
         org.das2.util.LoggerManager.logGuiEvent(evt);
+        about( );
+    }//GEN-LAST:event_aboutAutoplotMenuItemActionPerformed
+
+    /**
+     * show the about dialog, which has version information.
+     */
+    public void about() {
+        String releaseTag="?";
+        
+        JTextPane jtp= new JTextPane();
         try {
+            releaseTag = AboutUtil.getReleaseTag();
+            String bufStr= AutoplotUtil.getAboutAutoplotHtml( this.applicationModel );
 
-            String bufStr= AutoplotUtil.getAboutAutoplotHtml();
-
-            JTextPane jtp= new JTextPane();
             jtp.setContentType("text/html");
             jtp.read(new StringReader(bufStr), null);
             jtp.setEditable(false);
-
             jtp.addHyperlinkListener( new HyperlinkListener() {
                 @Override
                 public void hyperlinkUpdate(HyperlinkEvent e) {
@@ -3592,23 +3832,20 @@ APSplash.checkTime("init 52.9");
                     }
                 }
             });
-
-            //JLabel label= new JLabel(buffy.toString());
-            JScrollPane pane= new JScrollPane(jtp,JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED );
-            pane.getVerticalScrollBar().setUnitIncrement( 12 );
-            pane.setPreferredSize(new java.awt.Dimension( 640 + 50,480));
-
-            AutoplotUtil.showMessageDialog(this, pane, "About Autoplot "+AboutUtil.getReleaseTag(), JOptionPane.INFORMATION_MESSAGE );
-
-        } catch (IOException ex) {
-            logger.log( Level.SEVERE, ex.getMessage(), ex );
+        } catch ( IOException ex ) {
+            jtp.setText(ex.getMessage());
         }
-
-    }//GEN-LAST:event_aboutAutoplotMenuItemActionPerformed
+        //JLabel label= new JLabel(buffy.toString());
+        JScrollPane pane= new JScrollPane(jtp,JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED, JScrollPane.HORIZONTAL_SCROLLBAR_AS_NEEDED );
+        pane.getVerticalScrollBar().setUnitIncrement( 12 );
+        pane.setPreferredSize(new java.awt.Dimension( 640 + 50,480));
+        AutoplotUtil.showMessageDialog(this, pane, "About Autoplot "+releaseTag, JOptionPane.INFORMATION_MESSAGE );
+        
+    }
 
     private void aboutDas2MenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_aboutDas2MenuItemActionPerformed
         org.das2.util.LoggerManager.logGuiEvent(evt);
-        AutoplotUtil.openBrowser("http://das2.org");
+        AutoplotUtil.openBrowser("https://das2.org");
     }//GEN-LAST:event_aboutDas2MenuItemActionPerformed
 
     private void autoplotHomepageButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_autoplotHomepageButtonActionPerformed
@@ -3626,7 +3863,11 @@ private void scriptPanelMenuItemActionPerformed(java.awt.event.ActionEvent evt) 
     applicationModel.getDocumentModel().getOptions().setScriptVisible(scriptPanelMenuItem.isSelected());
     if (scriptPanelMenuItem.isSelected() && jythonScriptPanel == null) {
         jythonScriptPanel= new JPanel( new BorderLayout() );
-        scriptPanel = new JythonScriptPanel( AutoplotUI.this, this.dataSetSelector);
+        scriptPanel = new JythonScriptPanel( AutoplotUI.this, this.dataSetSelector);        
+        if ( logConsole!=null ) {
+            logConsole.addConsoleListener( scriptPanel.getConsoleListener() );
+        }
+        addEditorCustomActions( scriptPanel );
         jythonScriptPanel.add(scriptPanel, BorderLayout.CENTER );
         tabs.insertTab(TAB_SCRIPT, null, jythonScriptPanel,
                 String.format(  TAB_TOOLTIP_SCRIPT, TABS_TOOLTIP), 4);
@@ -3640,6 +3881,7 @@ private void scriptPanelMenuItemActionPerformed(java.awt.event.ActionEvent evt) 
     } else {
         tabs.remove( jythonScriptPanel );
     }
+    setStatus( "Use [menubar]->Options->Save Options to use this setting in future sessions.");
 }//GEN-LAST:event_scriptPanelMenuItemActionPerformed
 
 private void logConsoleMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_logConsoleMenuItemActionPerformed
@@ -3654,13 +3896,13 @@ private void logConsoleMenuItemActionPerformed(java.awt.event.ActionEvent evt) {
     } else if ( logConsoleMenuItem.isSelected() && logConsolePanel!=null ) {
         tabs.addTab(TAB_CONSOLE, null, logConsolePanel,
             String.format(  TAB_TOOLTIP_LOGCONSOLE, TABS_TOOLTIP) );
-        
     } else {
         if ( logConsoleMenuItem.isSelected() && logConsolePanel!=null ) {
             logConsole.undoLogConsoleMessages();
         }
         tabs.remove(logConsolePanel);
     }
+    setStatus( "Use [menubar]->Options->Save Options to use this setting in future sessions.");
 }//GEN-LAST:event_logConsoleMenuItemActionPerformed
 
 private void serverCheckBoxMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_serverCheckBoxMenuItemActionPerformed
@@ -3670,7 +3912,6 @@ private void serverCheckBoxMenuItemActionPerformed(java.awt.event.ActionEvent ev
         initServer();
     } else {
         stopServer();
-        JOptionPane.showMessageDialog( rootPane, "<html>The server will not be stopped completely.<br>https://sourceforge.net/tracker/?func=detail&aid=3441071&group_id=199733&atid=970682" );
     }
     serverCheckBoxMenuItem.setSelected( rlistener!=null );
     serverCheckBoxMenuItem.setToolTipText( rlistener==null ? null : ( "listening on port " + rlistener.getPort() ) );
@@ -3693,11 +3934,8 @@ private void jMenuItem3ActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FI
     JDialog dia = new JDialog(this, "Manage Cache", true);
     dia.add(panel);
     dia.pack();
-    RequestProcessor.invokeLater( new Runnable() {
-        @Override
-        public void run() {
-            panel.scan( new File( AutoplotSettings.settings().resolveProperty( AutoplotSettings.PROP_FSCACHE ) ) );
-        }
+    RequestProcessor.invokeLater(() -> {
+        panel.scan( new File( AutoplotSettings.settings().resolveProperty( AutoplotSettings.PROP_FSCACHE ) ) );
     });
     dia.setLocationRelativeTo( this );
     dia.setVisible(true);
@@ -3735,7 +3973,6 @@ private void editDomMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//G
 private void statusLabelMouseClicked(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_statusLabelMouseClicked
     //statusLabel.setText("");
     statusLabel.setIcon(IDLE_ICON);
-    statusTextField.setText("");
 }//GEN-LAST:event_statusLabelMouseClicked
 
 private void inspectVapFileMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_inspectVapFileMenuItemActionPerformed
@@ -3770,12 +4007,10 @@ private void createPngWalkMenuItemActionPerformed(java.awt.event.ActionEvent evt
                 CreatePngWalk.doIt( applicationModel.dom, null );
             } catch ( IOException ex ) {
                 logger.log( Level.SEVERE, ex.getMessage(), ex );
-                ex.printStackTrace();
                 setStatus( AutoplotUI.ERROR_ICON,"Unable to create PNG Walk: " + ex.getMessage() );
                 applicationModel.showMessage( "<html>Unable to create PNG Walk:<br>"+ex.getMessage(), "PNG Walk Error", JOptionPane.WARNING_MESSAGE );
             } catch ( ParseException | InterruptedException ex) {
                 logger.log( Level.SEVERE, ex.getMessage(), ex );
-                ex.printStackTrace();
                 throw new RuntimeException(ex);
                 // this mimics the jython behavior
             }
@@ -3821,9 +4056,9 @@ private void exceptionReportActionPerformed(java.awt.event.ActionEvent evt) {//G
     org.das2.util.LoggerManager.logGuiEvent(evt);
     ExceptionHandler eh= applicationModel.getExceptionHandler();
     if ( eh==null || !( eh instanceof GuiExceptionHandler ) ) {
-        new GuiExceptionHandler().submitRuntimeException(new RuntimeException("user-generated comment"), false);
+        new GuiExceptionHandler().submitFeedback(new RuntimeException("user-generated comment"));
     } else {
-        ((GuiExceptionHandler)eh).submitRuntimeException(new RuntimeException("user-generated comment"), false);
+        ((GuiExceptionHandler)eh).submitFeedback(new RuntimeException("user-generated comment"));
     }
 }//GEN-LAST:event_exceptionReportActionPerformed
 
@@ -3886,27 +4121,33 @@ private void canvasSizeMenuItemActionPerformed(java.awt.event.ActionEvent evt) {
         firePropertyChange(PROP_EDITORCARD, oldEditorCard, editorCard);
     }
 
-public void switchToEditorCard( String selector ) {
-    //String old= timeRangeEditor.isCardSelected() ? CARD_TIME_RANGE_SELECTOR : CARD_DATA_SET_SELECTOR;
-    //if ( old.equals(selector) ) {
-    //    return;
-    //}
-    logger.log(Level.FINE, "switch to selector: {0}", selector);
-    ((CardLayout)timeRangePanel.getLayout()).show( timeRangePanel, selector );
-    if ( CARD_TIME_RANGE_SELECTOR.equals(selector) ) {
-        uriTimeRangeToggleButton1.setPosition( 0 );
-        dataSetSelector.setCardSelectedNoEventKludge(false);
-        timeRangeEditor.setCardSelected(true);
-    } else if ( CARD_DATA_SET_SELECTOR.equals(selector) ) {
-        uriTimeRangeToggleButton1.setPosition( 1 );
-        timeRangeEditor.setCardSelectedNoEventKludge(false);
-        dataSetSelector.setCardSelected(true);
-    } else {
-        throw new IllegalArgumentException("huh card?");
+    public void switchToEditorCard( String selector ) {
+        //String old= timeRangeEditor.isCardSelected() ? CARD_TIME_RANGE_SELECTOR : CARD_DATA_SET_SELECTOR;
+        //if ( old.equals(selector) ) {
+        //    return;
+        //}
+        logger.log(Level.FINE, "switch to selector: {0}", selector);
+        if ( selector==null ) {
+            throw new IllegalArgumentException("null passed in for selector");
+        }
+        ((CardLayout)timeRangePanel.getLayout()).show( timeRangePanel, selector );
+        switch (selector) {
+            case CARD_TIME_RANGE_SELECTOR:
+                uriTimeRangeToggleButton1.setPosition( 0 );
+                dataSetSelector.setCardSelectedNoEventKludge(false);
+                timeRangeEditor.setCardSelected(true);
+                break;
+            case CARD_DATA_SET_SELECTOR:
+                uriTimeRangeToggleButton1.setPosition( 1 );
+                timeRangeEditor.setCardSelectedNoEventKludge(false);
+                dataSetSelector.setCardSelected(true);
+                break;
+            default:
+                throw new IllegalArgumentException("huh card?");
+        }
+        uriTimeRangeToggleButton1.setPosition( CARD_TIME_RANGE_SELECTOR.equals(selector) ? 1 : 0 );
+        dom.getOptions().setUseTimeRangeEditor(CARD_TIME_RANGE_SELECTOR.equals(selector));
     }
-    uriTimeRangeToggleButton1.setPosition( CARD_TIME_RANGE_SELECTOR.equals(selector) ? 1 : 0 );
-    dom.getOptions().setUseTimeRangeEditor(CARD_TIME_RANGE_SELECTOR.equals(selector));
-}
 
 private void dataSetSelectorMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_dataSetSelectorMenuItemActionPerformed
     org.das2.util.LoggerManager.logGuiEvent(evt);
@@ -3924,22 +4165,28 @@ private void timeRangeSelectorMenuItemActionPerformed(java.awt.event.ActionEvent
 
 private void editOptionsActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_editOptionsActionPerformed
     org.das2.util.LoggerManager.logGuiEvent(evt);
-    OptionsDialog p= new OptionsDialog();
-    p.setOptions( applicationModel.dom.getOptions() );
-    if ( AutoplotUtil.showConfirmDialog( this, p, "Options", JOptionPane.OK_CANCEL_OPTION )==JOptionPane.OK_OPTION ) {
-        p.copyOptions( applicationModel.dom.getOptions() );
-    }
+    PropertyEditor edit= new PropertyEditor(applicationModel.dom.getOptions());
+    edit.showDialog(this,"DOM Options",new ImageIcon(this.getClass().getResource("/resources/logo16.png")).getImage());
 }//GEN-LAST:event_editOptionsActionPerformed
 
 private void fixLayoutMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_fixLayoutMenuItemActionPerformed
     org.das2.util.LoggerManager.logGuiEvent(evt);
-    Runnable run= new Runnable() {
-        @Override
-        public void run() {
-                org.autoplot.dom.DomOps.newCanvasLayout(dom);
-        }
-    };
-    new Thread(run,"canvas layout").start();
+    Application dom0= (Application)dom.copy();
+    FixLayoutPanel flp= new FixLayoutPanel();
+    flp.setPreview(dom);
+    if ( JOptionPane.OK_OPTION==
+            JOptionPane.showConfirmDialog( this, flp, "Fix Layout Options",
+                    JOptionPane.OK_CANCEL_OPTION, JOptionPane.QUESTION_MESSAGE ) ) {
+        dom.syncTo(dom0);
+        final Map<String,String> options=flp.getOptions();
+        Runnable run= () -> {
+            org.autoplot.dom.DomOps.fixLayout(dom,options);
+        };
+        new Thread(run,"canvas layout").start();
+    } else {
+        dom.syncTo(dom0);
+    }
+
 }//GEN-LAST:event_fixLayoutMenuItemActionPerformed
 
 private void resetXMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_resetXMenuItemActionPerformed
@@ -4132,29 +4379,7 @@ private void resetMemoryCachesMIActionPerformed(java.awt.event.ActionEvent evt) 
             dataSetSelector.maybePlot( KeyEvent.ALT_MASK );
         } else {
             final DataMashUp dm= new DataMashUp();
-            dm.setResolver(new DataMashUp.Resolver() {
-                @Override
-                public QDataSet getDataSet(String uri) {
-                    try {
-                        return DataSetURI.getDataSource(uri).getDataSet( new NullProgressMonitor() );
-                    } catch (Exception ex) {
-                        logger.log(Level.INFO,null,ex);
-                        return null;
-                    }
-                }
-
-                @Override
-                public BufferedImage getImage(QDataSet qds) {
-                    return AutoplotUtil.createImage( qds, 120, 60 );
-                }
-
-                @Override
-                public void interactivePlot( QDataSet qds ) {
-                    Window w= SwingUtilities.getWindowAncestor(dm);
-                    ApplicationModel model= ScriptContext.newDialogWindow( w, qds.toString() );
-                    model.setDataSet( qds );
-                }
-            });
+            dm.setResolver( new PlotDataMashupResolver(dm) );
 
             if ( JOptionPane.OK_OPTION==AutoplotUtil.showConfirmDialog( this, dm, "Data Mash Up", JOptionPane.OK_CANCEL_OPTION ) ) {
                 dataSetSelector.setValue(dm.getAsJythonInline());
@@ -4164,49 +4389,53 @@ private void resetMemoryCachesMIActionPerformed(java.awt.event.ActionEvent evt) 
     }//GEN-LAST:event_mashDataMenuItemActionPerformed
 
     private void runBatchMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_runBatchMenuItemActionPerformed
-        BatchMaster mmm= new BatchMaster(dom);
-        JDialog dia= new JDialog( this, "Run Batch" );
+        RunBatchTool mmm= new RunBatchTool(dom);
+        final JDialog dia= new JDialog( this, "Run Batch" );
+        dia.getRootPane().registerKeyboardAction((ActionEvent e) -> {
+            org.das2.util.LoggerManager.logGuiEvent(e);
+            dia.setVisible(false);
+            dia.dispose();
+        }, KeyStroke.getKeyStroke( KeyEvent.VK_ESCAPE, 0 ), JComponent.WHEN_IN_FOCUSED_WINDOW );       
+
+        dia.setJMenuBar( mmm.getMenuBar() );
         dia.setContentPane(mmm);
         dia.pack();
         dia.setLocationRelativeTo(this);
         dia.setVisible(true);
     }//GEN-LAST:event_runBatchMenuItemActionPerformed
 
+    private void resetAppSizeActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_resetAppSizeActionPerformed
+        ScriptContext.setCanvasSize( 724, 656 ); // this is the arbitrary size of the app when its size is now saved.
+    }//GEN-LAST:event_resetAppSizeActionPerformed
+
+    private void saveOptionsMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_saveOptionsMenuItemActionPerformed
+        dom.getOptions().setWidth( dom.getCanvases(0).getWidth() );
+        dom.getOptions().setHeight( dom.getCanvases(0).getHeight() );
+        dom.getOptions().getController().copyOptionsToPersistentPreferences();
+    }//GEN-LAST:event_saveOptionsMenuItemActionPerformed
+
+    private void drawGridCheckBoxActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_drawGridCheckBoxActionPerformed
+        setMessage("Use Options->Save Options to make the change persist between sessions.");
+    }//GEN-LAST:event_drawGridCheckBoxActionPerformed
+
+    private void doyCBActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_doyCBActionPerformed
+        setMessage("Use Options->Save Options to make the change persist between sessions.");
+    }//GEN-LAST:event_doyCBActionPerformed
+
+    private void nnCbActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_nnCbActionPerformed
+        setMessage("New spectrograms will be affected.  Use Options->Save Options to make the change persist between sessions.");
+    }//GEN-LAST:event_nnCbActionPerformed
+
+    
 private transient PropertyChangeListener optionsListener= new PropertyChangeListener() {
     @Override
     public void propertyChange( PropertyChangeEvent ev ) {
         switch (ev.getPropertyName()) {
-            case Options.PROP_LAYOUTVISIBLE:
-                if ( Boolean.TRUE.equals(ev.getNewValue()) ) {
-                    if ( layoutPanel == null ) {
-                        layoutPanel = new LayoutPanel();
-                        layoutPanel.setApplication(dom);
-                        layoutPanel.setApplicationModel(applicationModel);                        
-                    }
-                    int idx= tabs.indexOfTab("style");
-                    if ( idx==-1 ) idx=  tabs.getTabCount();
-                    JScrollPane jsp = new JScrollPane();
-                    jsp.setViewportView(layoutPanel);
-                    tabs.insertTab("layout", null, jsp,
-                            String.format( TAB_TOOLTIP_LAYOUT, TABS_TOOLTIP ), idx+1 );
-                } else {
-                    if ( layoutPanel!=null ) tabs.remove(layoutPanel.getParent().getParent());
-                }
+            case Options.PROP_LAYOUTVISIBLE: 
+                makeLayoutVisible((Boolean)ev.getNewValue());
                 break;
-            case Options.PROP_DATAVISIBLE:
-                if ( Boolean.TRUE.equals(ev.getNewValue()) ) {
-                    if ( dataPanel == null ) {
-                        dataPanel = new DataPanel( AutoplotUI.this );
-                    }
-                    int idx= tabs.indexOfTab("metadata");
-                    if ( idx==-1 ) idx=  tabs.getTabCount();
-                    JScrollPane jsp = new JScrollPane();
-                    jsp.setViewportView(dataPanel);
-                    tabs.insertTab("data", null, jsp,
-                            String.format( TAB_TOOLTIP_DATA, TABS_TOOLTIP ), idx );
-                } else {
-                    if ( dataPanel!=null ) tabs.remove(dataPanel.getParent().getParent());
-                }
+            case Options.PROP_DATAVISIBLE: 
+                makeDataVisible((Boolean)ev.getNewValue());
                 break;
             case Options.PROP_USE_TIME_RANGE_EDITOR:
                 if ( Boolean.TRUE.equals(ev.getNewValue()) ) {
@@ -4221,6 +4450,87 @@ private transient PropertyChangeListener optionsListener= new PropertyChangeList
     }
 };
 
+private void makeDataVisible( final boolean newValue ) {
+    Runnable run= new Runnable() {
+        @Override
+        public void run() {
+            makeDataVisibleImmediately(newValue);
+        }
+    };
+    if ( SwingUtilities.isEventDispatchThread() ) {
+        run.run();
+    } else {
+        try {
+            SwingUtilities.invokeAndWait(run);
+        } catch (InterruptedException | InvocationTargetException ex) {
+            logger.log(Level.SEVERE, null, ex);
+        }
+    }
+}
+
+private void makeDataVisibleImmediately( boolean newValue ) {
+    if ( !SwingUtilities.isEventDispatchThread() ) {
+        throw new IllegalArgumentException("should be run on the event thread");
+    }
+    if ( Boolean.TRUE.equals(newValue) ) {
+        if ( dataPanel == null ) {
+            dataPanel = new DataPanel( AutoplotUI.this );
+        }
+        int idx= tabs.indexOfTab("metadata");
+        if ( idx==-1 ) idx=  tabs.getTabCount();
+        JScrollPane jsp = new JScrollPane();
+        jsp.setViewportView(dataPanel);
+        tabs.insertTab("data", null, jsp,
+                String.format( TAB_TOOLTIP_DATA, TABS_TOOLTIP ), idx );
+        setStatus( "Use [menubar]->Options->Save Options to make data tab visible in future sessions.");
+    } else {
+        if ( dataPanel!=null ) {
+            Component dataPanelComponent= dataPanel.getParent();
+            if ( dataPanelComponent!=null ) dataPanelComponent= dataPanelComponent.getParent();
+            if ( dataPanelComponent!=null ) {
+                tabs.remove(dataPanel.getParent().getParent());
+            }
+        }
+    }      
+}
+
+private void makeLayoutVisible( final boolean newValue ) {
+    Runnable run= new Runnable() {
+        @Override
+        public void run() {
+            makeLayoutVisibleImmediately(newValue);
+        }
+    };
+    if ( SwingUtilities.isEventDispatchThread() ) {
+        run.run();
+    } else {
+        try {
+            SwingUtilities.invokeAndWait(run);
+        } catch (InterruptedException | InvocationTargetException ex) {
+            logger.log(Level.SEVERE, null, ex);
+        }
+    }
+}
+
+private void makeLayoutVisibleImmediately( boolean newValue ) {
+    if ( Boolean.TRUE.equals(newValue) ) {
+        if ( layoutPanel == null ) {
+            layoutPanel = new LayoutPanel();
+            layoutPanel.setApplication(dom);
+            layoutPanel.setApplicationModel(applicationModel);                        
+        }
+        int idx= tabs.indexOfTab("style");
+        if ( idx==-1 ) idx=  tabs.getTabCount();
+        JScrollPane jsp = new JScrollPane();
+        jsp.setViewportView(layoutPanel);
+        tabs.insertTab("layout", null, jsp,
+                String.format( TAB_TOOLTIP_LAYOUT, TABS_TOOLTIP ), idx+1 );
+        setStatus( "Use [menubar]->Options->Save Options to make layout tab visible in future sessions.");
+    } else {
+        if ( layoutPanel!=null ) tabs.remove(layoutPanel.getParent().getParent());
+    }    
+}
+
 /**
  * return the processID (pid), or the fallback if the pid cannot be found.
  * @param fallback the string (null is okay) to return when the pid cannot be found.
@@ -4233,14 +4543,7 @@ public static String getProcessId(final String fallback) {
 private void updateFrameTitle() {
     final String suri= applicationModel.getVapFile();
 
-    String v= APSplash.getVersion();
-    if ( v.equals("untagged_version") ) {
-        v= "(dev)";
-    }
-    if ( v.equals("(dev)") ) {
-        v= "(dev"+getProcessId("")+")";
-    }
-    final String title0= "Autoplot "+v;
+    final String title0= "Autoplot "+apversion;
     final String isoffline= FileSystem.settings().isOffline() ? " (offline)" : "";
 
     final String server= rlistener==null ? "" : ( " (port="+rlistener.getPort()+")" );
@@ -4329,7 +4632,9 @@ private void updateFrameTitle() {
                    if ( argv[i].equals("-open") ) argv[i]="--open";
                 }
 
-                alm.process(argv);
+                if ( !alm.process(argv) ) {
+                    System.exit( alm.getExitCode() );
+                }
 
                 final JFrame frame = (JFrame) ScriptContext.getViewWindow();
                 if ( frame!=null ) {
@@ -4416,7 +4721,7 @@ private void updateFrameTitle() {
                 } else {
                         msg= String.format(
                         "<html>Autoplot is already running. Autoplot can use this address in a new window, <br>"
-                        + "or replace the current plot with the new URI, possibly entering the editor <br>"
+                        + "or replace the current plot with the new URI, possibly entering the editor, <br>"
                         + "or always enter the editor to inspect before plotting.<br>"
                         + "View in new window, replace, or add plot, using<br>%s?", ssuri );
                 }
@@ -4476,6 +4781,7 @@ private void updateFrameTitle() {
 
             if ( app!=null ) app.setStatus( READY_MESSAGE );
             if ( quit ) { 
+                if ( app!=null && app.logConsole!=null ) app.logConsole.undoLogConsoleMessages();
                 AppManager.getInstance().quit();
             }
         } catch ( IOException ex ) {
@@ -4513,6 +4819,7 @@ private void updateFrameTitle() {
         };
         return r;
     }
+    
     /**
      * @param args the command line arguments
      */
@@ -4592,22 +4899,26 @@ private void updateFrameTitle() {
         alm.addOptionalSwitchArgument("port", "p", "port", "-1", "enable scripting via this port (deprecated, use server instead)");
         alm.addBooleanSwitchArgument("scriptPanel", null, "scriptPanel", "enable script panel");
         alm.addBooleanSwitchArgument("logConsole", "l", "logConsole", "enable log console");
-        alm.addOptionalSwitchArgument("nativeLAF", "n", "nativeLAF", alm.TRUE, "use the system look and feel (T or F)");
+        alm.addOptionalSwitchArgument("nativeLAF", "n", "nativeLAF", ArgumentList.TRUE, "use the system look and feel (T or F)");
+        alm.addOptionalSwitchArgument("macUseScreenMenuBar",null,"macUseScreenMenuBar",ArgumentList.FALSE, "use Mac menu bar (T or F)");
         alm.addOptionalSwitchArgument("open", "o", "open", null, "open this URI (to support javaws)");
         alm.addOptionalSwitchArgument("print", null, "print", "", "print this URI (to support javaws)");
         alm.addOptionalSwitchArgument("script", "s", "script", "", "run this script after starting.  " +
                 "Arguments following are " +
                 "passed into the script as sys.argv");
+        alm.addBooleanSwitchArgument( "scriptExit",null,"scriptExit","force exit after running the script");
         alm.addOptionalSwitchArgument("testPngFilename", null, "testPngFilename", "", "write canvas to this png file after script is run" );
-        alm.addOptionalSwitchArgument("autoLayout",null,"autoLayout",alm.TRUE,"turn on/off initial autolayout setting");
+        alm.addOptionalSwitchArgument("autoLayout",null,"autoLayout",ArgumentList.TRUE,"turn on/off initial autolayout setting");
         alm.addOptionalSwitchArgument("mode","m","mode","expert","start in basic (browse,reduced) mode or expert mode" );
         //alm.addOptionalSwitchArgument("exit", null, "exit", "0", "exit after running script" );
-        alm.addBooleanSwitchArgument( "eventThreadMonitor", null, "eventThreadMonitor", "monitor the event thread for long unresponsive pauses (deprecated, use enableResponseMonitor)");
         alm.addBooleanSwitchArgument( "enableResponseMonitor", null, "enableResponseMonitor", "monitor the event thread for long unresponsive pauses");
         alm.addBooleanSwitchArgument( "samp", null, "samp", "enable SAMP connection for use with European Space Agency applications and websites");
         alm.addOptionalSwitchArgument( "server", null, "server", "-1", "start server at the given port listening to commands. (Replaces port)");
         alm.addBooleanSwitchArgument( "nop", null, "nop", "no operation, to be a place holder for jnlp script.");
         alm.addBooleanSwitchArgument( "headless", null, "headless", "run in headless mode" );
+        alm.addBooleanSwitchArgument( "noAskParams", null, "noAskParams", "don't ask for parameters when running a script");
+        alm.addBooleanSwitchArgument( "sandbox", null, "sandbox", "enable sandbox, which limits which disks are used." );
+        alm.addBooleanSwitchArgument( "version", null, "version", "print the version" );
         
        for ( int i=0; i<args.length; i++ ) {  // kludge for java webstart, which uses "-open" not "--open"
            if ( args[i].equals("-print") ) args[i]="--print";
@@ -4646,33 +4957,60 @@ private void updateFrameTitle() {
                 break;
             }
         }
-        alm.process(args);
+        
+        final String[] fargs= args;
+        
+        if ( !alm.process(args) ) {
+            System.exit( alm.getExitCode() );
+        }
+
+        String tag;
+        try {
+            tag = AboutUtil.getReleaseTag(APSplash.class);            
+        } catch (IOException ex) {
+            logger.log(Level.SEVERE, null, ex);
+            tag= "???";
+        }
+        
+        if ( alm.getBooleanValue("version") ) {    
+            System.err.println("Autoplot version "+tag );
+            return;
+        }
+                
+        if ( alm.getBooleanValue("sandbox") ) {
+            logger.warning("sandbox is still experimental and may be further restricted.");
+            Sandbox.enterSandbox();
+        }
         
         if ( alm.getBooleanValue("headless") ) {
             System.setProperty("java.awt.headless","true");
         }
-
+        final boolean headless= "true".equals( System.getProperty("java.awt.headless") ) ;
+        
         AutoplotUtil.maybeLoadSystemProperties();
+        AutoplotUtil.maybeInitializeEditorColors();
                         
         String welcome= "welcome to autoplot";
-        String tag;
-        try {
-            tag = AboutUtil.getReleaseTag(APSplash.class);
-            welcome+=" ("+tag+")";
-            System.setProperty("http.agent", "Autoplot-"+tag );
-            
-        } catch (IOException ex) {
-            logger.log(Level.SEVERE, ex.getMessage(), ex);
-        }
 
-        final boolean headless=  "true".equals( System.getProperty("java.awt.headless") ) ;
-        
+        String pid= AutoplotUtil.getProcessId("???");
+        if ( tag.equals("(dev)") ) {
+            welcome+=" ("+tag.substring(1,4)+"-"+pid+")";
+        } else {
+            welcome+=" ("+tag+")";
+        }
+        System.setProperty("http.agent", "Autoplot-"+tag );
+
         System.err.println(welcome);
         logger.info(welcome);
         final ApplicationModel model = new ApplicationModel();
+        
+        if ( alm.getBooleanValue("sandbox") ) {
+            model.setSandboxed(true);
+        }
+                
         String initialURL;
         final String bookmarks;
-
+        
         if (alm.getValue("URI") != null) {
             initialURL = alm.getValue("URI").trim();
         } else if ( alm.getValue("open") !=null ) {
@@ -4691,15 +5029,21 @@ private void updateFrameTitle() {
         if ( initialURL!=null && initialURL.length()>1 ) { // check for relative filenames 
             int i= initialURL.indexOf(':');
             logger.log(Level.FINE, "setting initial URI to >>>{0}<<<", initialURL);
-            if ( i==-1 ) { // it's a file.
-                boolean isAbsolute= initialURL.startsWith("/");
+            if ( i==-1 || i>8 ) { // it's a file, no http:
+                boolean isAbsolute= initialURL.startsWith("/") || initialURL.startsWith("\\") || ( initialURL.length()>2 && initialURL.charAt(1)==':' );
                 if ( !isAbsolute ) {
                     try {
                         String pwd= new File(".").getCanonicalPath();
                         if ( pwd.length()>2 ) {
-                            pwd= pwd + "/"; //TODO: Windows...
+                            if ( "Windows".equals(System.getProperty("os.family")) ) {
+                                pwd= pwd + "\\";
+                                initialURL= pwd + initialURL;
+                            } else {
+                                initialURL = URISplit.makeAbsolute( pwd, initialURL );
+                            }   
+                        } else {
+                            initialURL= pwd + initialURL;
                         }
-                        initialURL= pwd + initialURL;
                     } catch ( IOException ex ) {
                         logger.log( Level.WARNING, null, ex );
                     }
@@ -4713,15 +5057,31 @@ private void updateFrameTitle() {
 
         if (alm.getBooleanValue("scriptPanel")) {
             logger.fine("enable scriptPanel");
-            model.getDocumentModel().getOptions().setScriptVisible(true);
+            model.getDom().getOptions().setScriptVisible(true);
         }
 
         if (alm.getBooleanValue("logConsole")) {
             logger.fine("enable scriptPanel");
-            model.getDocumentModel().getOptions().setLogConsoleVisible(true);
+            model.getDom().getOptions().setLogConsoleVisible(true);
         }
 
-        if ( !headless && alm.getBooleanValue("nativeLAF")) {
+        logger.fine("add shutdown hook");
+        Runtime.getRuntime().addShutdownHook(getShutdownHook(model));
+
+        boolean nativeLAF= alm.getBooleanValue("nativeLAF");
+        if ( alm.getBooleanValue("macUseScreenMenuBar") ) {
+            logger.fine("use Mac menu bar");
+            System.setProperty("apple.laf.useScreenMenuBar", "true");
+            nativeLAF= true;
+        }
+        
+        if ( alm.getBooleanValue("macUseScreenMenuBar") && System.getProperty("os.name").startsWith("Mac") ) {
+            URL r= AutoplotUI.class.getResource("macMenuBar.jy");
+            logger.log(Level.INFO, "running soon: {0}", r);
+            setupMacMenuBarSoon();
+        }
+        
+        if ( !headless && nativeLAF ) {
             logger.fine("nativeLAF");
             try {
                 String s= javax.swing.UIManager.getSystemLookAndFeelClassName();
@@ -4738,7 +5098,7 @@ private void updateFrameTitle() {
                 logger.log( Level.SEVERE, e.getMessage(), e );
             }
         }
-       
+        
         logger.fine("invokeLater()");
 
         java.awt.EventQueue.invokeLater(new Runnable() {
@@ -4757,8 +5117,9 @@ private void updateFrameTitle() {
                     APSplash.showSplash();
                 }
 APSplash.checkTime("init -100");
-                OptionsPrefsController opc= new OptionsPrefsController( model.dom.getOptions() );
-                opc.loadPreferences();
+                //TODO: it's strange that there are two places where this code is called.
+                OptionsPrefsController opc= new OptionsPrefsController( model, model.dom.getOptions() );
+                opc.loadPreferencesWithEvents();
 
                 if ( !alm.getBooleanValue("autoLayout") ) { // Chris had a vap that autolayout was mucking with.
                    logger.fine("set autoLayout");
@@ -4785,15 +5146,16 @@ APSplash.checkTime("init -70");
 
                     app.createDropTargetListener( app.dataSetSelector );
 
-                    Preferences prefs= AutoplotSettings.settings().getPreferences( AutoplotUI.class );
-                    int posx= prefs.getInt( "locationx", app.getLocation().x );
-                    int posy= prefs.getInt( "locationy", app.getLocation().y );
-                    if ( posx!= app.getLocation().x || posy!=app.getLocation().y ) {
-                        boolean scncheck= java.awt.Toolkit.getDefaultToolkit().getScreenSize().width==prefs.getInt( "locationscreenwidth", 0 );
-                        if ( scncheck ) { // don't position if the screen size changes.
-                            app.setLocation( posx, posy );
-                        }
-                    }
+                    WindowManager.getInstance().recallWindowSizePosition(app);
+                    //Preferences prefs= AutoplotSettings.settings().getPreferences( AutoplotUI.class );
+                    //int posx= prefs.getInt( "locationx", app.getLocation().x );
+                    //int posy= prefs.getInt( "locationy", app.getLocation().y );
+                    //if ( posx!= app.getLocation().x || posy!=app.getLocation().y ) {
+                    //    boolean scncheck= java.awt.Toolkit.getDefaultToolkit().getScreenSize().width==prefs.getInt( "locationscreenwidth", 0 );
+                    //    if ( scncheck ) { // don't position if the screen size changes.
+                    //        app.setLocation( posx, posy );
+                    //    }
+                    //}
 APSplash.checkTime("init 200");
                     boolean addSingleInstanceListener= true;
                     if ( addSingleInstanceListener ) {
@@ -4803,9 +5165,9 @@ APSplash.checkTime("init 200");
                         org.autoplot.AddSampListener.addSampListener( app );
                         app.setMessage("SAMP listener started");
                     }
-
+                    app.noAskParams= alm.getBooleanValue("noAskParams");
                 }
-
+                
 APSplash.checkTime("init 210");
 
                 if ( !headless && finitialURL!=null && app!=null ) {
@@ -4878,13 +5240,14 @@ APSplash.checkTime("init 220");
                     //SwingUtilities.invokeLater(repaintRunnable);
 
                     if ( System.getProperty("enableResponseMonitor","false").equals("true")
-                            || alm.getBooleanValue("eventThreadMonitor") || alm.getBooleanValue("enableResponseMonitor") ) {
+                            || alm.getBooleanValue("enableResponseMonitor") ) {
                         EventThreadResponseMonitor emon= new EventThreadResponseMonitor();
                         if ( app!=null ) {
                             emon.addToMap( GuiExceptionHandler.UNDO_REDO_SUPPORT, app.undoRedoSupport );
                             emon.addToMap( GuiExceptionHandler.APP_MODEL, app.applicationModel );
                         }
                         emon.start();
+                        app.responseMonitor= emon;
                     }
                     
                     logger.fine("UI is visible");
@@ -4941,7 +5304,22 @@ APSplash.checkTime("init 230");
                     String s= URISplit.makeAbsolute( new File(".").getAbsolutePath(), script );
                     
                     if ( app!=null ) app.setStatus("running script "+s);
-                    Runnable run= getRunScriptRunnable(app, model, s, scriptArgs, headless && !server, alm.getValue("testPngFilename") );
+                    
+                    if ( scriptArgs.contains("--help") ) {
+                        try {
+                            printScriptUsage(fargs,s,scriptArgs,System.out);
+                        } catch ( IOException ex ) {
+                            System.err.println("Unable to retrieve script: "+s);
+                        }
+                        System.exit(-1);
+                    }
+                    boolean scriptExit= alm.getBooleanValue("scriptExit");
+                    Runnable run= getRunScriptRunnable(app, 
+                            model, 
+                            s, 
+                            scriptArgs, 
+                            scriptExit || ( headless && !server ), 
+                            alm.getValue("testPngFilename") );
                     new Thread(run,"batchRunScriptThread").start();
                     
                     try {
@@ -4959,6 +5337,14 @@ APSplash.checkTime("init 240");
                     checkStatusLoop(app);
                 }
                 
+//                Runnable resetRun= new Runnable() {
+//                    @Override
+//                    public void run() {
+//                        app.resizeForDefaultCanvasSize();
+//                    }
+//                };
+//                SwingUtilities.invokeLater(resetRun);
+                
                 if ( !headless && finitialURL!=null) {
                     if ( app!=null ) {
                         Runnable run = new Runnable() {
@@ -4973,9 +5359,53 @@ APSplash.checkTime("init 240");
                 }
                 
             };
+
         } );
     }
 
+    /**
+     * print a usage document to the print stream.
+     * @param args Autoplot's args
+     * @param s the script URI
+     * @param scriptArgs
+     * @param out
+     * @throws IOException 
+     */
+    private static void printScriptUsage( String[] args, String s, List<String> scriptArgs, PrintStream out) throws IOException {
+        File f= DataSetURI.getFile(s,new NullProgressMonitor());
+        String script= org.autoplot.jythonsupport.JythonUtil.readScript( new FileReader(f) );
+        //List<org.autoplot.jythonsupport.JythonUtil.Param> parms= org.autoplot.jythonsupport.JythonUtil.getGetParams( script );
+        org.autoplot.jythonsupport.JythonUtil.ScriptDescriptor sd= org.autoplot.jythonsupport.JythonUtil.describeScript(script,null);
+        
+        String label= sd.getLabel();
+        if ( label.length()==0 ) {
+            out.println("# "+f.getName());
+        } else {
+            out.println("# "+label);
+        }
+        if ( sd.getTitle().length()>0 ) {
+            out.println( sd.getTitle() );
+        }
+        if ( sd.getDescription().length()>0 ) {
+            out.println( sd.getDescription() );
+        }
+        out.println("Usage: <AUTOPLOT> " + Util.strjoin( Arrays.asList(args), " " ) + " [args]");
+        for ( org.autoplot.jythonsupport.Param p: sd.getParams() ) {
+            String l;
+            Object deft;
+            if ( p.deft.toString().trim().contains(" ") ) {
+                deft= "'"+p.deft+"'";
+            } else {
+                deft= p.deft;
+            }
+            l= ""+p.name+"="+deft+"\t"+p.doc;
+            if ( p.enums!=null ) {
+                l= l + " (one of: "+ p.enums.toString()+ ")";
+            }
+            out.println( "  "+l );
+        }
+    }
+    
     Icon currentIcon; // the current icon on the status bar
     String currentIconTooltip;  // the current tooltip on the status bar
     
@@ -5035,6 +5465,9 @@ APSplash.checkTime("init 240");
                     } else {
                         app.currentIcon = IDLE_ICON;
                         app.currentIconTooltip = null;
+                        app.windowExtraHeight= app.getHeight() - app.dom.getCanvases(0).getHeight();
+                        app.windowExtraWidth= app.getWidth() - app.dom.getCanvases(0).getWidth();
+                        resizeLogger.log(Level.FINER, "reset windowExtraWidth and windowExtraHeight to {0},{1}", new Object[]{app.windowExtraWidth, app.windowExtraHeight});
                     }
                 }
                 app.dom.getController().setPendingChangeCount( changes.size() );
@@ -5060,6 +5493,22 @@ APSplash.checkTime("init 240");
         };
         app.apbusy.schedule(run, 500, 200);
         
+    }
+    
+    /**
+     * return the extra pixels needed by the GUI for borders and address bar.
+     * @return the extra pixels needed by the GUI for borders and address bar.
+     */
+    public int getWindowExtraWidth() {
+        return windowExtraWidth;
+    }
+    
+    /**
+     * return the extra pixels needed by the GUI for borders and address bar.
+     * @return the extra pixels needed by the GUI for borders and address bar.
+     */
+    public int getWindowExtraHeight() {
+        return windowExtraHeight;
     }
     
     /**
@@ -5141,7 +5590,12 @@ APSplash.checkTime("init 240");
                         socket.close();
                     } else {
                         logger.log(Level.FINE, "connection from {0}", socket);
-                        rhandler.handleRequest( socket.getInputStream(), model, socket.getOutputStream());
+                        rhandler.handleRequest(socket.getInputStream(), model, socket.getOutputStream(), rlistener);
+                        org.das2.util.LoggerManager.getLogger("autoplot.server").log(Level.INFO, "disconnect @ {0}", new Date( System.currentTimeMillis() ));
+                        serverCheckBoxMenuItem.setSelected(false);
+                        if ( rlistener!=null && !rlistener.isListening() ) {
+                            stopServer();
+                        }
                     }
                 } catch (IOException ex) {
                     logger.log(Level.SEVERE, ex.getMessage(), ex);
@@ -5201,7 +5655,9 @@ APSplash.checkTime("init 240");
                         statusTextField.setToolTipText(fmessage);
                     } catch ( ArrayIndexOutOfBoundsException e ) {
                         logger.log( Level.SEVERE, e.getMessage(), e ); // rte_0759798375_20121111_205149_*.xml
-                    }
+                    } catch ( java.lang.AssertionError e ) {
+                        logger.log( Level.SEVERE, e.getMessage(), e ); // rte_1865701214_20230125_111810_*.xml
+                    }                    
                 } catch ( Exception e ) {
                     logger.log( Level.SEVERE, e.getMessage(), e ); // rte_0759798375_20121111_205149_*.xml
                 }
@@ -5217,6 +5673,7 @@ APSplash.checkTime("init 240");
     // Variables declaration - do not modify//GEN-BEGIN:variables
     private javax.swing.JMenuItem aboutAutoplotMenuItem;
     private javax.swing.JMenuItem aboutDas2MenuItem;
+    private javax.swing.JMenu addSizeMenu;
     private javax.swing.JMenuItem additionalOptionsMI;
     private javax.swing.ButtonGroup addressBarButtonGroup;
     private javax.swing.JMenu addressBarMenu;
@@ -5240,7 +5697,6 @@ APSplash.checkTime("init 240");
     private javax.swing.JRadioButtonMenuItem dataSetSelectorMenuItem;
     private javax.swing.JMenuItem decodeURLItem;
     private javax.swing.JCheckBoxMenuItem doyCB;
-    private javax.swing.JCheckBoxMenuItem drawAntiAliasMenuItem;
     private javax.swing.JCheckBoxMenuItem drawGridCheckBox;
     private javax.swing.JMenuItem editDomMenuItem;
     private javax.swing.JSeparator editDomSeparator;
@@ -5274,7 +5730,6 @@ APSplash.checkTime("init 240");
     private javax.swing.JMenuItem mashDataMenuItem;
     private javax.swing.JCheckBoxMenuItem nnCb;
     private javax.swing.JMenu optionsMenu;
-    private javax.swing.JCheckBoxMenuItem overRenderingMenuItem;
     private javax.swing.JMenuItem pasteDataSetURLMenuItem;
     private javax.swing.JMenu plotStyleMenu;
     private javax.swing.JMenuItem pngWalkMenuItem;
@@ -5283,6 +5738,7 @@ APSplash.checkTime("init 240");
     private javax.swing.JMenuItem reloadAllMenuItem;
     private javax.swing.JMenu renderingOptionsMenu;
     private javax.swing.JMenuItem replaceFileMenuItem;
+    private javax.swing.JMenuItem resetAppSize;
     private javax.swing.JMenuItem resetFontMI;
     private javax.swing.JMenuItem resetMemoryCachesMI;
     private javax.swing.JMenuItem resetXMenuItem;
@@ -5291,14 +5747,13 @@ APSplash.checkTime("init 240");
     private javax.swing.JMenu resetZoomMenu;
     private javax.swing.JMenuItem resetZoomMenuItem;
     private javax.swing.JMenuItem runBatchMenuItem;
+    private javax.swing.JMenuItem saveOptionsMenuItem;
     private javax.swing.JCheckBoxMenuItem scriptPanelMenuItem;
     private javax.swing.JMenuItem searchToolTipsMenuItem;
     private javax.swing.JCheckBoxMenuItem serverCheckBoxMenuItem;
-    private javax.swing.JCheckBoxMenuItem specialEffectsMenuItem;
     private javax.swing.JLabel statusLabel;
     private javax.swing.JTextField statusTextField;
     private javax.swing.JPanel tabbedPanelContainer;
-    private javax.swing.JCheckBoxMenuItem textAntiAlias;
     private javax.swing.JMenu textSizeMenu;
     private javax.swing.JPanel timeRangePanel;
     private javax.swing.JRadioButtonMenuItem timeRangeSelectorMenuItem;
@@ -5523,8 +5978,17 @@ APSplash.checkTime("init 240");
      * return the current state of this application window.  Note this is
      * the actual and not a copy, so it should not be modified.
      * @return the application state.
+     * @see #getDom() 
      */
     public Application getDocumentModel() {
+        return this.applicationModel.getDocumentModel();
+    }
+    
+    /**
+     * return the dom (application state) associated with this application.
+     * @return the dom associated with this application.
+     */
+    public Application getDom() {
         return this.applicationModel.getDocumentModel();
     }
     
@@ -5552,7 +6016,128 @@ APSplash.checkTime("init 240");
         return dataPanel;
     }
 
+    JComponent leftPanel=null;
+    
+    /**
+     * add the component (typically a JPanel) to the left
+     * side of the application.
+     * @param c null or the component to add
+     * @see ScriptContext#addTab(java.lang.String, javax.swing.JComponent) 
+     * @see #clearLeftPanel() 
+     * @see #setRightPanel(javax.swing.JComponent) 
+     * @see #setBottomPanel(javax.swing.JComponent) 
+     */
+    public void setLeftPanel( final JComponent c ) {
+        if ( c==null ) throw new NullPointerException("use clearLeftPanel");
+        Runnable run= new Runnable() {
+            @Override
+            public void run() {
+                if ( leftPanel!=null ) tabbedPanelContainer.remove(leftPanel);
+                JScrollPane p= new JScrollPane();
+                p.setViewportView(c);
+                tabbedPanelContainer.add( p, BorderLayout.WEST );
+                leftPanel= p;
+                revalidate();
+            }
+        };
+        SwingUtilities.invokeLater(run);
+    }
 
+    /**
+     * remove any extra component added to the left of the tabs.  This calls invokeLater to make sure
+     * the event is on the event thread.
+     * @see #setLeftPanel(javax.swing.JComponent) 
+     */
+    public void clearLeftPanel() {
+        Runnable run= new Runnable() {
+            @Override
+            public void run() {
+                if ( leftPanel!=null ) tabbedPanelContainer.remove(leftPanel);
+                leftPanel= null;
+                revalidate();
+            }
+        };
+        SwingUtilities.invokeLater(run);
+    }
+    
+    JComponent rightPanel= null;
+    
+    /**
+     * add the component (typically a JPanel) to the right
+     * side of the application.
+     * @param c  null or the component to add
+     * @see #setLeftPanel(javax.swing.JComponent) 
+     */
+    public void setRightPanel( final JComponent c ) {
+        if ( c==null ) throw new NullPointerException("use clearRightPanel");
+        Runnable run= new Runnable() {
+            @Override
+            public void run() {
+                if ( rightPanel!=null ) tabbedPanelContainer.remove(rightPanel);
+                JScrollPane p= new JScrollPane();
+                p.setViewportView(c);
+                tabbedPanelContainer.add( p, BorderLayout.EAST );
+                rightPanel= p;
+                revalidate();
+            }
+        };
+        SwingUtilities.invokeLater(run);
+    }
+
+    /**
+     * remove any extra component added to the right of the tabs.
+     */
+    public void clearRightPanel() {
+        Runnable run= new Runnable() {
+            @Override
+            public void run() {
+                if ( rightPanel!=null ) tabbedPanelContainer.remove(rightPanel);
+                rightPanel= null;
+                revalidate();
+            } 
+        };
+        SwingUtilities.invokeLater(run);
+    }
+    
+    JComponent bottomPanel= null;
+    
+    /**
+     * add the component (typically a JPanel) below the tabs and above the 
+     * status indicator
+     * @param c  null or the component to add
+     * @see #setLeftPanel(javax.swing.JComponent) 
+     */
+    public void setBottomPanel( final JComponent c ) {
+        if ( c==null ) throw new NullPointerException("use clearBottomPanel");
+        Runnable run= new Runnable() {
+            @Override
+            public void run() {
+                if ( bottomPanel!=null ) tabbedPanelContainer.remove(bottomPanel);
+                JScrollPane p= new JScrollPane();
+                p.setViewportView(c);
+                tabbedPanelContainer.add( p, BorderLayout.SOUTH );
+                bottomPanel= p;
+                revalidate();
+            }
+        };
+        SwingUtilities.invokeLater(run);
+    }
+
+    /**
+     * remove any extra component added below the tabs.
+     */
+    public void clearBottomPanel() {
+        Runnable run= new Runnable() {
+            @Override
+            public void run() {
+                if ( bottomPanel!=null ) tabbedPanelContainer.remove(bottomPanel);
+                bottomPanel= null;
+                revalidate();
+            }
+        };
+        SwingUtilities.invokeLater(run);
+    }
+    
     /**
      * turn on basic mode, where users can only use the app for browsing existing products.
      */
@@ -5599,15 +6184,20 @@ APSplash.checkTime("init 240");
             }
         }
         dataSetSelector.setExpertMode(expert);
+        if ( expert ) {
+            addDataFromMenu.setText("Add Plot From");
+        } else {
+            addDataFromMenu.setText("Load Plot From");
+        }
         
         final boolean fexpert= expert;
         SwingUtilities.invokeLater(new Runnable() {
             @Override
             public void run() {
                 if ( !fexpert ) {
-                    setEditorCard( CARD_TIME_RANGE_SELECTOR);
+                    setEditorCard( CARD_TIME_RANGE_SELECTOR );
                 } else {
-                    setEditorCard( CARD_DATA_SET_SELECTOR);
+                    setEditorCard( CARD_DATA_SET_SELECTOR );
                 }
             }
         } );
@@ -5666,12 +6256,23 @@ APSplash.checkTime("init 240");
             Runnable run= new Runnable() {
                 @Override
                 public void run() {
+                    //TODO: there's a problem that the PWD has been lost.  Map<String,String> env= new HashMap<>();
                     try ( BufferedReader reader= new BufferedReader( new FileReader(ff) ) ) {
-                        Map<String,String> doc= org.autoplot.jythonsupport.JythonUtil.getDocumentation( reader );
+                        Map<String,String> doc= org.autoplot.jythonsupport.JythonUtil.getDocumentation( reader, resourceUri);
                         String title= doc.get( "TITLE" );
                         if ( title!=null ) b.setDescription(title); //TODO: bookmarks use inconsistent names... 
                         String label= doc.get( "LABEL" );
+                        if ( label==null && title!=null && title.length()<40 ) label= title;
                         if ( label!=null ) b.setTitle(label);
+                        String iconURl= doc.get("ICONURL");
+                        if ( iconURl!=null ) {
+                            try {
+                                ImageIcon icon= new ImageIcon( new URL(iconURl) );
+                                b.setIcon(icon);
+                            } catch ( IOException ex ) {
+                                logger.log( Level.WARNING, ex.getMessage(), ex );
+                            }
+                        }
                         Window w= ScriptContext.getViewWindow();
                         if ( w instanceof AutoplotUI ) {
                             ((AutoplotUI)w).reloadTools();
@@ -5719,27 +6320,43 @@ APSplash.checkTime("init 240");
     
     /**
      * run the script, using the reference on the tools menu.  The security is going to be a bit different soon.
-     * @param script 
+     * This should be called from the event thread because it creates GUI components.
+     * @param script the URI of the script to run
      */
     public void runScriptTools( final String script ) {
         runScript(script);
+    }
+        
+    /**
+     * present the "Run Script" dialog, asking the user to review the 
+     * script before running it.
+     * This should be called from the event thread because it creates GUI components.
+     * @param script the URI of the script to run
+     */
+    private void runScript( final String script ) {
+        runScript( script, true );
     }
     
     /**
      * present the "Run Script" dialog, asking the user to review the 
      * script before running it.
-     * This should be called from the event thread.
-     * @param script 
+     * This should be called from the event thread because it creates GUI components.
+     * @param script the URI of the script to run
      */
-    private void runScript( final String script ) {
+    private void runScript( final String script, final boolean askParams ) {
         try {
             final URISplit split= URISplit.parse(script);
-            final File ff = DataSetURI.getFile(DataSetURI.getURI(script), DasProgressPanel.createFramed(AutoplotUI.this,"downloading script"));
+            
+            if ( split.path==null ) {
+                JOptionPane.showMessageDialog( AutoplotUI.this, "Unable to run script because path is missing: "+script, "script missing path", JOptionPane.OK_OPTION );
+                return;
+            }
+            //final File ff = DataSetURI.getFile(DataSetURI.getURI(script), DasProgressPanel.createFramed(AutoplotUI.this,"downloading script"));
             final RunScriptPanel pp = new RunScriptPanel();
             final HashMap params= URISplit.parseParams(split.params);
-            pp.loadFile(ff);
+            pp.loadFileSoon(AutoplotUI.this,script);
 
-            final ProgressMonitor mon= DasProgressPanel.createFramed(AutoplotUI.this,"Running script "+ff );
+            final DasProgressPanel mon= DasProgressPanel.createFramed(AutoplotUI.this,"Running script "+script );
             File tools= new File( AutoplotSettings.settings().resolveProperty(AutoplotSettings.PROP_AUTOPLOTDATA), "tools" );
                         
             boolean isTool= split.path.contains(tools.toString()); // here is the trust...
@@ -5748,14 +6365,33 @@ APSplash.checkTime("init 240");
             
             final boolean fisTool= isTool;
             
+            mon.addPropertyChangeListener( DasProgressPanel.PROP_FINISHED, new PropertyChangeListener() {
+                @Override
+                public void propertyChange(PropertyChangeEvent evt) {
+                    Runnable run= new Runnable() {
+                        @Override
+                        public void run() {
+                            if ( script.endsWith("createScreenShot.jy") ) {
+                                logger.fine("kludge to avoid getting createScreenShot.jy in data set selector");
+                            } else {
+                                getDataSetSelector().setValue(script);
+                            }
+                        }
+                    };
+                    SwingUtilities.invokeLater(run);
+                }
+            });
+            
             Runnable run= new Runnable() {
                 @Override
                 public void run() {
                     try {
+                        boolean doShowScript= !split.resourceUri.toString().endsWith("createScreenShot.jy");
+                        JythonRunListener runListener= makeJythonRunListener( AutoplotUI.this, split.resourceUri, doShowScript );
                         int res= JythonUtil.invokeScriptSoon( split.resourceUri, dom, 
-                                params, true, !fisTool, scriptPanel, mon );
+                                params, askParams, !fisTool, runListener, mon );
                         if ( res==JOptionPane.OK_OPTION ) {
-                            split.params= URISplit.formatParams(params);
+                            split.params= params.isEmpty() ? null : URISplit.formatParams(params);
                             dom.getController().getApplicationModel().addRecent(URISplit.format(split));
                             //TODO: bug 1408: can we not somehow set the address bar URI here?
                         }
@@ -5765,10 +6401,7 @@ APSplash.checkTime("init 240");
                     }
                 }
             };
-            SwingUtilities.invokeLater(run);
-        } catch (URISyntaxException ex) {
-            setMessage(WARNING_ICON,ex.getMessage());
-            logger.log(Level.SEVERE, ex.getMessage(), ex);
+            new Thread(run,"downloadReviewScript").start();
         } catch (HtmlResponseIOException ex ) {
             handleHtmlResponse(script, ex);
         } catch (IOException ex) {
@@ -5849,12 +6482,13 @@ APSplash.checkTime("init 240");
     }
     
     /**
-     * access the editor for scripts, if available.  This was initially added to provide
-     * a way to experiment with setting editor colors, but might be useful
-     * for other purposes.  
+     * access the editor for scripts, if available.  This was initially added 
+     * to provide a way to experiment with setting editor colors, but might be 
+     * useful for other purposes.  
      * @return null or the editor panel
+     * @see #getScriptPanel() which returns the panel
      */
-    public EditorTextPane getScriptPanel() {
+    public EditorTextPane getScriptEditor() {
         if ( this.scriptPanel!=null ) {
             return this.scriptPanel.getEditorPanel();
         } else {
@@ -5862,6 +6496,22 @@ APSplash.checkTime("init 240");
         }
     }
 
+    /**
+     * Return the script editor panel.  Until v2020a_2 and 20200202a, this 
+     * returned the EditorTextPane rather than the tab itself.  This is 
+     * inconsistent with other calls.  For example:
+     * <pre>
+     * s= getApplication().getScriptPanel().getFilename() 
+     * print( 'script editor filename:' )
+     * print( s )
+     * </pre>
+     * @see #getScriptEditor() which returns the editor itself.
+     * @return the editor panel in the script tab.
+     */
+    public JythonScriptPanel getScriptPanel() {
+        return this.scriptPanel;
+    }
+    
 //
 //    /**
 //     * temporary to debug https://sourceforge.net/p/autoplot/bugs/1520/
@@ -5878,4 +6528,132 @@ APSplash.checkTime("init 240");
 //    public javax.swing.JTextField getStatusTextField() {
 //        return statusTextField;
 //    }
+
+    private void addEditorCustomActions(final JythonScriptPanel scriptPanel) {
+        JMenuItem mi= new JMenuItem( new AbstractAction("Editor Bookmarks") {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    LoggerManager.logGuiEvent(e);
+                    BookmarksManager bm= new BookmarksManager(AutoplotUI.this,true,"editor");
+                    bm.setPrefNode("editor");
+                    bm.setVisible(true);
+                    scriptPanel.doRebuildMenu();
+                    addEditorCustomActions( scriptPanel );
+                }
+            } );
+        mi.setToolTipText( "add scripts for editor actions" );
+
+        scriptPanel.addSettingsMenuItem( mi );
+        
+        File fdir= new File( AutoplotSettings.settings().resolveProperty( AutoplotSettings.PROP_AUTOPLOTDATA ), "bookmarks" );
+        final File f= new File( fdir, "editor.xml" );
+        if ( f.exists() ) {
+            JMenu j= new JMenu("Custom Actions");
+            Runnable run= new Runnable() {
+                public void run() {
+                try {
+                List<Bookmark> bs= Bookmark.parseBookmarks(f.toURI().toURL());
+                DelayMenu.calculateMenu(j, bs, (ActionEvent e) -> {
+                    final String cmd= e.getActionCommand();
+                    Runnable run= () -> {
+                        try {
+                            File f1 = DataSetURI.getFile( cmd, new NullProgressMonitor() );
+                            final Map<String,Object> env= new HashMap<>();
+                            URISplit split= URISplit.parse(cmd);
+                            env.put( "PWD", split.path );
+                            ScriptContext.setApplication(AutoplotUI.this);
+                            JythonUtil.invokeScriptNow(env, f1);
+                        }catch (IOException ex) {
+                            logger.log(Level.SEVERE, null, ex);
+                        }
+                    };
+                    new Thread( run, "ScriptAction" ).start();
+                });
+                for ( Component c: j.getMenuComponents() ) {
+                    if ( c instanceof JMenuItem ) {
+                        scriptPanel.addMenuItem((JMenuItem)c);
+                    }
+                }
+                                } catch (MalformedURLException ex) {
+                Logger.getLogger(AutoplotUI.class.getName()).log(Level.SEVERE, null, ex);
+            } catch (IOException | SAXException | BookmarksException ex) {
+                Logger.getLogger(AutoplotUI.class.getName()).log(Level.SEVERE, null, ex);
+            }
+                }
+                };
+                new Thread(run).start();
+
+        }
+
+    }
+    
+    /**
+     * a reference to the app's JythonScriptPanel was leaking out and preventing the AutoplotServlet from being
+     * compiled.  This hides the app stuff from JythonUtil.
+     * @param app
+     * @param uri
+     * @param doShowScript
+     * @return 
+     */
+    private static JythonRunListener makeJythonRunListener( AutoplotUI app, final URI uri, boolean doShowScript ) {
+        JythonRunListener runListener= new JythonRunListener() {
+            @Override
+            public void runningScript(File file) {
+                if ( app.scriptPanel==null ) return;
+                if ( ! app.scriptPanel.isDirty() && doShowScript ) { // makeTool==false means it's already a tool
+                    try {
+                        if ( file!=null ) app.scriptPanel.loadFile(file);
+                    } catch (IOException ex) {
+                        logger.log(Level.SEVERE, null, ex);
+                    }
+                }
+                app.scriptPanel.setRunningScript(file);
+            }
+
+            @Override
+            public void exceptionEncountered(File fn,PyException ex) {
+                if ( app.scriptPanel==null ) return;
+                try {
+                    File file = DataSetURI.getFile( uri, new NullProgressMonitor() ); 
+                    if ( file.equals( fn ) ) {
+                        app.scriptPanel.getAnnotationsSupport().annotateError( ex, 0 );
+                    }
+                } catch (BadLocationException | IOException ex1) {
+                    logger.log(Level.SEVERE, null, ex1);
+                }
+            }
+            
+        };
+        return runListener;
+    }
+    
+//    /**
+//     * invoke the Jython script on another thread.  Script parameters can be passed in, and the scientist can be 
+//     * provided a dialog to set the parameters.  Note this will return before the script is actually
+//     * executed, and monitor should be used to detect that the script is finished.
+//     * This should be called from the event thread!
+//     * @param uri the resource URI of the script (without parameters).
+//     * @param file the file which has been downloaded.
+//     * @param dom if null, then null is passed into the script and the script must not use dom.
+//     * @param params values for parameters, or null.
+//     * @param askParams if true, query the scientist for parameter settings.
+//     * @param makeTool if true, offer to put the script into the tools area for use later (only if askParams).
+//     * @param scriptPanel null or place to mark error messages and to mark as running a script.
+//     * @param mon1 monitor to detect when script is finished.  If null, then a NullProgressMonitor is created.
+//     * @return JOptionPane.OK_OPTION of the script is invoked.
+//     * @throws java.io.IOException
+//     */
+//    public static int invokeScriptSoon( 
+//            final URI uri, 
+//            final File file, 
+//            final Application dom, 
+//            Map<String,String> params, 
+//            boolean askParams, 
+//            final boolean makeTool, 
+//            final JythonScriptPanel scriptPanel,
+//            ProgressMonitor mon1) throws IOException {        
+//        JythonRunListener runListener= makeJythonRunListener( app, uri, makeTool );
+//                        
+//        return JythonUtil.invokeScriptSoon( uri, file, dom, params, askParams, makeTool, runListener, mon1 );
+//    }    
 }

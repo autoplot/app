@@ -11,6 +11,7 @@ import javax.servlet.ServletException;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import org.das2.util.FileUtil;
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -71,6 +72,10 @@ public class CapabilitiesServlet extends HttpServlet {
         
         File capFile= new File( Util.getHapiHome(), "capabilities.json" );
         if ( capFile.exists() ) {
+            String s= FileUtil.readFileToString(capFile);
+            if ( !Util.validateJSON(s) ) {
+                throw new ServletException("Internal error, JSON file for capabilities does not parse.");
+            }
             logger.log(Level.FINE, "using cached capabilities file {0}", capFile);
             Util.transfer( new FileInputStream(capFile), response.getOutputStream() );
             return;

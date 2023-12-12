@@ -6,15 +6,20 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.io.PrintWriter;
+import java.nio.charset.Charset;
 import java.util.Arrays;
 import java.util.Calendar;
+import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.TimeZone;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import javax.servlet.ServletContext;
+import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import org.das2.qds.DataSetUtil;
 import org.json.JSONArray;
@@ -48,6 +53,17 @@ public class Util {
         }
     }
     
+    /**
+     * if HAPI_HOME has not been set, then set it.
+     * @param context 
+     */
+    public static void maybeInitialize( ServletContext context ) {
+        if ( HAPI_HOME==null ) {
+            String s= context.getInitParameter(HAPI_SERVER_HOME_PROPERTY);
+            setHapiHome( new File( s ) );
+        }
+    }
+    
     private static volatile File HAPI_HOME=null;
     
     /**
@@ -56,7 +72,7 @@ public class Util {
      */
     public static File getHapiHome() {
         if ( Util.HAPI_HOME==null ) {
-            throw new IllegalArgumentException("Util.HAPI_HOME is not set.");
+            throw new IllegalArgumentException("Util.HAPI_HOME is not set, load info page first.");
         } else {
             return Util.HAPI_HOME;
         }
@@ -81,17 +97,76 @@ public class Util {
      * This directory should contain catalog.json, capabilities.json and a 
      * subdirectory "info" which contains files with the name &lt;ID&gt;.json,
      * each containing the info response.  Note these should also contain a
-     * tag "uri" which is the Autoplot URI that serves this data.
+     * tag "x_uri" which is the Autoplot URI that serves this data.
      */
     public static final String HAPI_SERVER_HOME_PROPERTY = "HAPI_SERVER_HOME";
 
+    /**
+     * return the HAPI protocol version.
+     * @return the HAPI protocol version.
+     */
     public static final String hapiVersion() {
-        return "2.0";
+        return "3.0";
     }
     
+    /**
+     * return the server implementation version.
+     * @return the server implementation version. 
+     */
+    public static final String serverVersion() {
+        return "20220212.1011";
+    }
+    
+    /**
+     * return true if the client is trusted and additional information about
+     * the server for debugging can be included in the response.
+     * @param request
+     * @return 
+     */
+    public static final boolean isTrustedClient( HttpServletRequest request ) {
+        String remoteAddr= request.getRemoteAddr();
+        if ( remoteAddr.equals("127.0.0.1" ) || remoteAddr.equals("0:0:0:0:0:0:0:1") ) {
+            Enumeration<String> hh= request.getHeaders("X-Forwarded-For");
+            if ( hh.hasMoreElements() ) {
+                remoteAddr = hh.nextElement();
+            }
+        }            
+        return remoteAddr.equals("127.0.0.1" ) || remoteAddr.equals("0:0:0:0:0:0:0:1");
+    }
+    
+    private static final Pattern PATTERN_KEY= Pattern.compile("\\d{8}+");
+    
     static boolean isKey(String key) {
-        Pattern p= Pattern.compile("\\d{8}+");
-        return p.matcher(key).matches();
+        return PATTERN_KEY.matcher(key).matches();
+    }
+    
+    /**
+     * convert IDs and NAMEs into safe names which will work on all platforms.
+     * If the name is modified, it will start with an underscore (_). 
+     * <li>poolTemperature -> poolTemperature
+     * <li>Iowa City Conditions -> _Iowa+City+Conditions
+     * @param s
+     * @return 
+     */
+    public static final String fileSystemSafeName( String s ) {
+        Pattern p= Pattern.compile("[a-zA-Z0-9\\-\\+\\*\\._]+");
+        Matcher m= p.matcher(s);
+        if ( m.matches() ) {
+            return s;
+        } else {
+            String s1= s.replaceAll("\\+","2B");
+            s1= s1.replaceAll(" ","\\+");
+            if ( p.matcher(s1).matches() ) {
+                return "_" + s1;
+            } else {
+                byte[] bb= s.getBytes( Charset.forName("UTF-8") );
+                StringBuilder sb= new StringBuilder("_");
+                for ( byte b: bb ) {
+                    sb.append( String.format("%02X", b) );
+                }
+                return sb.toString();
+            }
+        }
     }
     
     /**
@@ -106,7 +181,7 @@ public class Util {
         }
         File keyFile= new File( getHapiHome(), "keys" );
         if ( !keyFile.exists() ) return false;
-        keyFile= new File( keyFile, id + ".json" );
+        keyFile= new File( keyFile, fileSystemSafeName(id) + ".json" );
         if ( !keyFile.exists() ) return false;
         try {
             JSONObject jo= HapiServerSupport.readJSON(keyFile);
@@ -133,7 +208,7 @@ public class Util {
         }
         File keyFile= new File( getHapiHome(), "keys" );
         if ( !keyFile.exists() ) return false;
-        keyFile= new File( keyFile, id + ".json" );
+        keyFile= new File( keyFile, fileSystemSafeName(id) + ".json" );
         if ( !keyFile.exists() ) return false;
         try {
             JSONObject jo= HapiServerSupport.readJSON(keyFile);
@@ -160,7 +235,7 @@ public class Util {
         }
         File keyFile= new File( getHapiHome(), "keys" );
         if ( !keyFile.exists() ) return false;
-        keyFile= new File( keyFile, id + ".json" );
+        keyFile= new File( keyFile, fileSystemSafeName(id) + ".json" );
         if ( !keyFile.exists() ) return false;
         try {
             JSONObject jo= HapiServerSupport.readJSON(keyFile);
@@ -195,6 +270,21 @@ public class Util {
     }
     
     /**
+     * return true if this is valid JSON, false otherwise, and log the exception at SEVERE.
+     * @param json
+     * @return 
+     */
+    public static boolean validateJSON( String json ) {
+        try {
+            new JSONObject( json );
+            return true;
+        } catch (JSONException ex) {
+            Logger.getLogger(Util.class.getName()).log(Level.SEVERE, null, ex);
+            return false;
+        }
+    }
+    
+    /**
      * send a "bad id" response to the client.
      * @param id the id.
      * @param response the response object
@@ -211,54 +301,102 @@ public class Util {
             status.put( "message", msg );
             jo.put("status",status);
             String s= jo.toString(4);
-            try {
-                //response.setStatus(404);
-                response.sendError(404,"Bad request - unknown dataset id (HAPI 1406)");
-            } catch (IOException ex) {
-                Logger.getLogger(Util.class.getName()).log(Level.SEVERE, null, ex);
-            }
+            response.setStatus(404);
+            response.setContentType("application/json;charset=UTF-8");
             out.write(s);
+            
         } catch (JSONException ex) {
             throw new RuntimeException(ex);
         }
     }
     
     /**
-     * return a new JSONObject for the info request, with the subset of parameters.
-     * @param jo
-     * @param parameters comma-delimited list of parameters.
-     * @return
+     * send a "bad id" response to the client.
+     * @param id the id.
+     * @param ex an exception
+     * @param response the response object
+     * @param out the print writer for the response object.
+     */
+    public static void raiseMisconfiguration(String id, Exception ex, HttpServletResponse response, final PrintWriter out) {
+        try {
+            JSONObject jo= new JSONObject();
+            jo.put("HAPI",Util.hapiVersion());
+            jo.put("createdAt",String.format("%tFT%<tRZ",Calendar.getInstance(TimeZone.getTimeZone("Z"))));
+            JSONObject status= new JSONObject();
+            status.put( "code", 1500 );
+            String msg= "unrecognized id: "+id + "error: "+ ex.getMessage();
+            status.put( "message", msg );
+            jo.put("status",status);
+            String s= jo.toString(4);
+            response.setStatus(200);
+            response.setContentType("application/json;charset=UTF-8");
+            out.write(s);
+        } catch (JSONException jex) {
+            throw new RuntimeException(jex);
+        }
+    }
+    
+    /**
+     * return the total number of elements of each parameter.
+     * @param info the info
+     * @return an int array with the number of elements in each parameter.
      * @throws JSONException 
      */
-    public static JSONObject subsetParams( JSONObject jo, String parameters ) throws JSONException {
-        jo= new JSONObject( jo.toString() );
+    public static int[] getNumberOfElements( JSONObject info ) throws JSONException {
+        JSONArray parameters= info.getJSONArray("parameters");
+        int[] result= new int[parameters.length()];
+        for ( int i=0; i<parameters.length(); i++ ) {
+            int len=1;
+            if ( parameters.getJSONObject(i).has("size") ) {
+                JSONArray jarray1= parameters.getJSONObject(i).getJSONArray("size");
+                for ( int k=0; k<jarray1.length(); k++ ) {
+                    len*= jarray1.getInt(k);
+                }
+            }
+            result[i]= len;
+        }    
+        return result;
+    }
+    
+    /**
+     * return a new JSONObject for the info request, with the subset of parameters.
+     * @param info the root node of the info response.
+     * @param parameters comma-delimited list of parameters.
+     * @return the new JSONObject, with special tag __indexmap__ showing which columns are to be included in a data response.
+     * @throws JSONException 
+     */
+    public static JSONObject subsetParams( JSONObject info, String parameters ) throws JSONException {
+        info= new JSONObject( info.toString() ); // force a copy
         String[] pps= parameters.split(",");
-        Map<String,Integer> map= new HashMap();
-        JSONArray jsonParameters= jo.getJSONArray("parameters");
+        Map<String,Integer> map= new HashMap();  // map from name to index in dataset.
+        Map<String,Integer> iMap= new HashMap(); // map from name to position in csv.
+        JSONArray jsonParameters= info.getJSONArray("parameters");
+        int index=0;
+        int[] lens= getNumberOfElements(info);
         for ( int i=0; i<jsonParameters.length(); i++ ) {
-            map.put( jsonParameters.getJSONObject(i).getString("name"), i ); // really--should name/id are two names for the same thing...
+            String name= jsonParameters.getJSONObject(i).getString("name");
+            map.put( name, i ); 
+            iMap.put( name, index );
+            index+= lens[i];
         }
         JSONArray newParameters= new JSONArray();
         int[] indexMap= new int[pps.length];
-        int[] lengths= new int[pps.length];
+        for ( int i=0; i<pps.length; i++ ) {
+            indexMap[i]=-1;
+        }
+        int[] lengths= new int[pps.length]; //lengths for the new infos
         boolean hasTime= false;
         for ( int ip=0; ip<pps.length; ip++ ) {
             Integer i= map.get(pps[ip]);
             if ( i==null ) {
                 throw new IllegalArgumentException("bad parameter: "+pps[ip]);
             }
-            indexMap[ip]= i;
+            indexMap[ip]= iMap.get(pps[ip]);
             if ( i==0 ) {
                 hasTime= true;
             }
             newParameters.put( ip, jsonParameters.get(i) );
-            lengths[ip]= 1;
-            if ( jsonParameters.getJSONObject(i).has("size") ) {
-                JSONArray jarray1= jsonParameters.getJSONObject(i).getJSONArray("size");
-                for ( int k=0; k<jarray1.length(); k++ ) {
-                    lengths[ip]*= jarray1.getInt(k);
-                }
-            }
+            lengths[ip]= lens[i];
         }
 
         // add time if it was missing.  This demonstrates a feature that is burdensome to implementors, I believe.
@@ -286,23 +424,23 @@ public class Util {
                     indexMap1[c]= indexMap[k];
                     c++;
                 } else {
-                    for ( int l=0; l<lengths[k]; l++ ) { //TODO: there's a bug here if there is anything after the spectrogram, but I'm hungry for turkey...
+                    for ( int l=0; l<lengths[k]; l++ ) { 
                         indexMap1[c]= indexMap[k]+l;
                         c++;
-                    }
-                    if ( k<lengths.length-1 ) {
-                        throw new IllegalArgumentException("not properly implemented");
                     }
                 }
             }
             indexMap= indexMap1;
         }
+        if ( indexMap[indexMap.length-1]==-1 ) {
+            throw new IllegalArgumentException("last index of index map wasn't set--server implementation error");
+        }
 
         jsonParameters= newParameters;
-        jo.put( "parameters", jsonParameters );        
+        info.put( "parameters", jsonParameters );        
 
-        jo.put( "__indexmap__", indexMap );
-        return jo;
+        info.put( "x_indexmap", indexMap );
+        return info;
     }
 
     /**
@@ -343,6 +481,25 @@ public class Util {
             }
             return Arrays.copyOfRange(result, 0, j0);
         }
+    }
+    
+    /**
+     * properly trim the byte array containing a UTF-8 String to a limit
+     * @param bytes the bytes
+     * @param k the number of bytes
+     * @return 
+     */
+    public static byte[] trimUTF8( byte[] bytes, int k ) {
+        if ( bytes.length==k ) return bytes;
+        int b= bytes[k];
+        if ( b>127 ) { // uh-oh, we are mid-UTF8-extended character.
+            while ( k>0 && b>127 ) {
+                k=k-1;
+                b= bytes[k];
+            }
+        }
+        bytes= Arrays.copyOf( bytes, k );
+        return bytes;
     }
     
     public static void main( String[] args ) {

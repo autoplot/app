@@ -5,13 +5,17 @@ import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
 import java.beans.PropertyChangeSupport;
 import java.io.File;
+import java.io.IOException;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.prefs.Preferences;
+import org.autoplot.util.MigratePreference;
 import org.das2.util.filesystem.FileSystem;
 
 /**
- * Autoplot's settings are stored in Java preferences.
+ * Autoplot's settings, stored in Java preferences, include
+ * things like the last folder opened.  Also this code handles
+ * property resolution like ${HOME}/autoplot_data.
  * @author jbf
  */
 public final class AutoplotSettings {
@@ -58,23 +62,48 @@ public final class AutoplotSettings {
     static Preferences prefs;
 
     /**
-     * load the preferences from getPreferences( AutoplotSettings.class ),
+     * load the preferences,
      * which include the location of the autoplot_data directory and fscache.
      * The system property AUTOPLOT_DATA will override the user preference 
-     * /opt/virbo/datasource/autoplotData which is by default "${HOME}/autoplot_data", and
-     * can be set on the command line.  AUTOPLOT_FSCACHE is the location of the remote
+     * autoplotData which is by default "${HOME}/autoplot_data", and
+     * can be set on the command line.  The environment variable AUTOPLOT_DATA
+     * will also override the default location.
+     * AUTOPLOT_FSCACHE is the location of the remote
      * file mirror storing lots of data and can be moved separately.
      */
     public void loadPreferences() {
         this.autoplotData= prefs.get( PROP_AUTOPLOTDATA, "${HOME}/autoplot_data" );
         String p= System.getProperty("AUTOPLOT_DATA");
+        if ( p==null ) {
+            p= System.getenv("AUTOPLOT_DATA");
+            if ( p!=null ) {
+                logger.log(Level.FINE, "AUTOPLOT_DATA environment variable used to set AUTOPLOT_DATA={0}", p);
+            }
+        } else {
+            logger.log(Level.FINE, "AUTOPLOT_DATA system property (-D on cmd line) used to set AUTOPLOT_DATA={0}", p);
+        }
         if ( p!=null ) {
-            logger.log(Level.WARNING, "AUTOPLOT_DATA system property used to set AUTOPLOT_DATA={0}", p);
-            this.autoplotData= p;
+            File f= new File(p);
+            try {
+                if (f.getCanonicalPath().equals(f.getAbsolutePath()) ) {
+                    logger.log(Level.FINE, "Canonical path is not equal to path, may be a link: {0}", f);
+                }
+                this.autoplotData= f.getAbsolutePath();
+            } catch (IOException ex) {
+                this.autoplotData= p;
+            }
         }
         this.fscache= prefs.get( PROP_FSCACHE, this.autoplotData+"/fscache" );
         p= System.getProperty("AUTOPLOT_FSCACHE");
         if ( p!=null ) this.fscache= p;
+        if ( p==null ) {
+            p= System.getenv("AUTOPLOT_FSCACHE");
+            if ( p!=null ) {
+                logger.log(Level.FINE, "AUTOPLOT_FSCACHE environment variable used to set AUTOPLOT_FSCACHE={0}", p);
+            }
+        } else {
+            logger.log(Level.FINE, "AUTOPLOT_FSCACHE system property (-D on cmd line) used to set AUTOPLOT_FSCACHE={0}", p);
+        }
     }
     
     /**
@@ -83,8 +112,9 @@ public final class AutoplotSettings {
      * @param c the class requesting preferences.
      * @return the preferences object this class should use.
      */
-    public Preferences getPreferences( Class c ) {
+    public static Preferences getPreferences( Class c ) {
         String s= c.getPackage().getName();
+        Preferences p1= Preferences.userRoot().node("/"+s.replace('.','/'));
         switch (s) {
             case "org.autoplot.dom":
                 s= "org.virbo.autoplot.dom";
@@ -101,7 +131,9 @@ public final class AutoplotSettings {
             default:
                 break;
         }
-        return Preferences.userRoot().node("/"+s.replace('.','/'));
+        Preferences p2= Preferences.userRoot().node("/"+s.replace('.','/'));
+        return new MigratePreference(p1,p2); // use org.autoplot before org.virbo.
+        
     }
     
     /**

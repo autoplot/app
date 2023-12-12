@@ -1,7 +1,4 @@
-/*
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
- */
+
 package org.autoplot.binarydatasource;
 
 import java.io.File;
@@ -18,8 +15,8 @@ import org.das2.qds.AbstractRank1DataSet;
 import org.das2.qds.DataSetUtil;
 import org.das2.qds.MutablePropertyDataSet;
 import org.das2.qds.QDataSet;
-import org.das2.qds.SemanticOps;
 import org.autoplot.datasource.AbstractDataSource;
+import org.das2.qds.ops.Ops;
 
 /**
  * BinaryDataSource returns data backed by binary data files.  Data
@@ -34,9 +31,45 @@ public class BinaryDataSource extends AbstractDataSource {
         super(uri);
     }
 
+    private long parseLong( String sval ) {
+        String[] ssum= sval.split("\\+");
+        if ( ssum.length==1 ) {
+            String[] sprod= sval.split("\\*");
+            if ( sprod.length==1 ) {
+                int result = Integer.parseInt(sval);
+                return result;
+            } else {
+                long prod= parseLong(sprod[0]);
+                for ( int i=1; i<sprod.length; i++ ) {
+                    prod *= parseLong(sprod[i]);
+                }
+                return prod;
+            }
+        } else {
+            long sum=parseLong(ssum[0]);
+            for ( int i=1; i<ssum.length; i++ ) {
+                sum += parseLong(ssum[i]);
+            }
+            return sum;
+        }
+    }
+    
     private int getIntParameter(String name, int deflt) {
         String sval = params.get(name);
-        int result = sval == null ? deflt : Integer.parseInt(sval);
+        if ( sval==null ) {
+            return deflt;
+        } else {
+            long l= parseLong(sval);
+            if ( l>Integer.MAX_VALUE ) {
+                throw new IllegalArgumentException("parameter must be 32-bit integer: "+ name+"="+sval);
+            }
+            return (int)parseLong(sval);
+        }
+    }
+
+    private long getLongParameter(String name, long deflt) {
+        String sval = params.get(name);
+        long result = sval == null ? deflt : parseLong(sval);
         return result;
     }
 
@@ -134,10 +167,10 @@ public class BinaryDataSource extends AbstractDataSource {
 
         FileChannel fc = new FileInputStream(f).getChannel();
 
-        final int offset = getIntParameter("byteOffset", 0);
+        final long offset = getLongParameter("byteOffset", 0);
 
-        int defLen= (int) f.length() - offset;
-        int length = getIntParameter("byteLength", defLen );
+        long defLen= f.length() - offset;
+        long length= getLongParameter("byteLength", defLen );
 
         if ( length == defLen && ( f.length()-(long)offset ) > Integer.MAX_VALUE ) {
             throw new IllegalArgumentException("default length (entire file) is bigger than 2G, which is not supported.");
@@ -146,6 +179,11 @@ public class BinaryDataSource extends AbstractDataSource {
         int fieldCount = getIntParameter("fieldCount", params.get("depend0") == null ? 1 : 2);
 
         int recCount= getIntParameter("recCount", Integer.MAX_VALUE );
+        
+        if ( f.length()<(offset+length) ) {
+            String info= String.format( "(byteOffset=%d byteLength=%d file.length=%d)", offset, length, f.length() );
+            throw new IllegalArgumentException("byteLength and byteOffset parameters would read past the end of the file. "+info );
+        }
                 
         ByteBuffer buf = fc.map(MapMode.READ_ONLY, offset, length);
 
@@ -217,10 +255,10 @@ public class BinaryDataSource extends AbstractDataSource {
             if (s.contains(":")) {
                 String[] ss = s.split(":",-2);
                 if (ss[0].length() > 0) {
-                    first = Integer.parseInt(ss[0]);
+                    first = (int) parseLong(ss[0]);
                 }
                 if (ss.length > 1 && ss[1].length() > 0) {
-                    last = Integer.parseInt(ss[1]);
+                    last = (int)parseLong(ss[1]);
                 }
             }
             if ( last==-999 ) last= fieldCount;
@@ -229,6 +267,20 @@ public class BinaryDataSource extends AbstractDataSource {
             if ( col<0 ) col= fieldCount + col;
             if ( first>fieldCount ) throw new IndexOutOfBoundsException("rank 2 index is greater than field count");
             if ( last>fieldCount ) throw new IndexOutOfBoundsException("rank 2 index is greater than field count");
+        }
+        
+        int[] dims=null;
+        
+        o= params.get("dims");
+        if ( o!=null ) {
+            if ( o.startsWith("[") ) o=o.substring(1);
+            if ( o.endsWith("]") ) o=o.substring(0,o.length()-1);
+            String[] ss= o.split(",",-2);
+            dims= new int[ss.length];;
+            for ( int i=0; i<ss.length; i++ ) {
+                dims[i]= (int)parseLong(ss[i]);
+            }
+            rank2 = new int[]{0,DataSetUtil.product(dims)};
         }
 
         int recOffset= getIntParameter( "recOffset", -1 );
@@ -284,14 +336,15 @@ public class BinaryDataSource extends AbstractDataSource {
             }
             ds.putProperty(QDataSet.DEPEND_0, dep0ds);
         } else {
-            boolean reportOffset= !( getParameter( "reportOffset", "no" ).equals("no") );
+            String ro= getParameter( "reportOffset", "F" );            
+            boolean reportOffset= !( ro.startsWith("F") || ro.equals("no") );
             if ( reportOffset ) {
                 final int finalRecSizeBytes= recSizeBits/8;
                 final int finalRecOffset= recOffset;
                 MutablePropertyDataSet dep0ds= new AbstractRank1DataSet(frecCount) {
                     @Override
                     public double value(int i) {
-                        return offset + finalRecOffset + i * finalRecSizeBytes;
+                        return offset + finalRecOffset + ((long)i) * finalRecSizeBytes;
                     }
                 };
                 dep0ds.putProperty( QDataSet.CADENCE, DataSetUtil.asDataSet((double)recSizeBits/8) );
@@ -323,10 +376,19 @@ public class BinaryDataSource extends AbstractDataSource {
 
         s= params.get( "format" );
         if ( s!=null ) {
+            if ( s.length()==1 && !s.startsWith("%") ) {
+                s= "%"+s;
+            }
             ds.putProperty( QDataSet.FORMAT, s );
         }
-            
-        return ds;
+        
+        if ( dims!=null ) {
+            QDataSet dds= Ops.reform( ds, ds.length(), dims );
+            return dds;
+        } else {
+            return ds;
+        }
+        
     }
 
 }

@@ -27,6 +27,8 @@ import org.das2.qds.SemanticOps;
 import org.autoplot.datasource.MetadataModel;
 import org.autoplot.datasource.DataSourceUtil;
 import org.autoplot.datasource.LogNames;
+import org.das2.qds.DDataSet;
+import org.das2.qds.FDataSet;
 import org.das2.qds.ops.Ops;
 
 /**
@@ -128,6 +130,36 @@ public class IstpMetadataModel extends MetadataModel {
     }
 
     /**
+     * Return the range from VALIDMIN to VALIDMAX, as an array of two numbers.  Note I found
+     * as soon as I wrote this, that the CDF library has already converted them to doubles.  This is too
+     * bad, and should be fixed at some point.  If the unit is an ordinal unit 
+     * (see LABL_PTR_1), then return null.
+     * Note QDataSet only allows times from 1000AD to 9000AD when Units are TimeLocationUnits.
+     * Note this is used in CdfDataSource and other projects.  
+     * @param attrs the ISTP attributes
+     * @param units the units for this variable, used to interpret doubles.
+     * @return the range.
+     */
+    private static Number[] getValidRangeDs(Map attrs, Units units) {
+        Number min= (Number) attrs.get("VALIDMIN");
+        Number max= (Number) attrs.get("VALIDMAX");
+        
+        if ( UnitsUtil.isTimeLocation(units) ) {
+            DatumRange vrange= new DatumRange( 3.15569952E13, 2.840126112E14, Units.cdfEpoch ); // approx 1000AD to 9000AD
+            if ( vrange.min().doubleValue(units)>min.doubleValue() ) min= vrange.min().doubleValue(units);
+            if ( vrange.max().doubleValue(units)<max.doubleValue() ) max= vrange.max().doubleValue(units);
+            if ( vrange.min().doubleValue(units)>max.doubleValue() ) max= vrange.max().doubleValue(units); //vap+cdaweb:ds=IM_HK_FSW&id=BF_DramMbeCnt&timerange=2005-12-18
+        }
+        if ( UnitsUtil.isNominalMeasurement(units) ) {
+            logger.fine("valid range not used for ordinal units");
+            return null;
+        } else {
+            return new Number[] { min, max };
+        }
+    }
+
+    
+    /**
      * Return the range from VALIDMIN to VALIDMAX.  If the unit is an ordinal unit (see LABL_PTR_1), then return null.
      * Note QDataSet only allows times from 1000AD to 9000AD when Units are TimeLocationUnits.
      * Note this is used in CdfDataSource and other projects.
@@ -149,7 +181,12 @@ public class IstpMetadataModel extends MetadataModel {
             logger.fine("valid range not used for ordinal units");
             return null;
         } else {
-            return DatumRange.newDatumRange(min, max, units);
+            if ( min<max ) {
+                return DatumRange.newDatumRange(min, max, units);
+            } else {
+                logger.log(Level.WARNING, "VALIDMIN and VALIDMAX has min value greater than max value: {0} > {1}", new Object[]{min, max});
+                return null;
+            }
         }
     }
 
@@ -192,8 +229,21 @@ public class IstpMetadataModel extends MetadataModel {
             if ( vrange.max().doubleValue(units)<max ) max= vrange.max().doubleValue(units);
             if ( vrange.min().doubleValue(units)>max ) max= vrange.max().doubleValue(units); //vap+cdaweb:ds=IM_HK_FSW&id=BF_DramMbeCnt&timerange=2005-12-18
         }
-        range = new DatumRange(min, max, units);
-        return range;
+         if ( UnitsUtil.isNominalMeasurement(units) ) {
+            logger.fine("range not used for ordinal units");
+            return null;
+        } else {
+            if ( min<max ) {
+                return DatumRange.newDatumRange(min, max, units);
+            } else {
+                if ( Double.isFinite(min) && Double.isFinite(max) ) {
+                    logger.log(Level.WARNING, "SCALEMIN and SCALEMAX has min value greater than max value: {0} > {1}", new Object[]{min, max});
+                } else {
+                    logger.log(Level.FINE, "SCALEMIN and SCALEMAX are NaN and NaN" );
+                }
+                return null;
+            }
+        }
     }
 
     /**
@@ -271,6 +321,11 @@ public class IstpMetadataModel extends MetadataModel {
 
         if ( title.trim().length()>0 ) properties.put( QDataSet.TITLE, title.trim() );
         
+        s= (String)attrs.get("VAR_NOTES");
+        if ( s!=null ) {
+            properties.put( QDataSet.DESCRIPTION, s );
+        }
+        
         if (attrs.containsKey("DISPLAY_TYPE")) {
             String type = (String) attrs.get("DISPLAY_TYPE");
             int i= type.indexOf('>');
@@ -300,7 +355,7 @@ public class IstpMetadataModel extends MetadataModel {
             
         }
 
-        Units units;
+        Units units=null;
         String sunits= "";
         if (attrs.containsKey("UNITS")) {
             sunits = String.valueOf( attrs.get("UNITS") );
@@ -337,10 +392,24 @@ public class IstpMetadataModel extends MetadataModel {
             sunits= LatexToGranny.latexToGranny(sunits);
         }
         
-        try {
-            units = Units.lookupUnits(DataSourceUtil.unquote(sunits));
-        } catch (IllegalArgumentException e) {
-            units = Units.dimensionless;
+        String siConversion= (String)attrs.get("SI_conversion");
+        if ( siConversion!=null ) {
+            if ( siConversion.endsWith("seconds") ) {
+                int i= siConversion.indexOf(">");
+                double d= Double.parseDouble( siConversion.substring(0,i) );
+                if ( d==1e-9 ) {
+                    units= Units.cdfTT2000;
+                    sunits= units.toString();
+                }
+            }
+        }
+        
+        if ( units==null ) {
+            try {
+                units = Units.lookupUnits(DataSourceUtil.unquote(sunits));
+            } catch (IllegalArgumentException e) {
+                units = Units.dimensionless;
+            }
         }
 
         // we need to distinguish between ms and epoch times.
@@ -361,17 +430,33 @@ public class IstpMetadataModel extends MetadataModel {
             properties.put(QDataSet.FILL_VALUE, dv );
         }
 
-        boolean isEpoch = ( units == Units.milliseconds && !isMillis ) || "Epoch".equals(attrs.get(QDataSet.NAME)) || "Epoch".equalsIgnoreCase(DataSourceUtil.unquote((String) attrs.get("LABLAXIS")));
+        Object olablaxis= attrs.get("LABLAXIS");
+        if ( olablaxis!=null && !(olablaxis instanceof String) ) {
+            logger.log(Level.WARNING, "LABLAXIS should be type String: {0}", olablaxis);
+        }
+        String label = olablaxis==null ? null : String.valueOf( attrs.get("LABLAXIS") );
+            
+        boolean isEpoch = ( units == Units.milliseconds && !isMillis ) 
+                || "Epoch".equals(attrs.get(QDataSet.NAME)) 
+                || "Epoch".equalsIgnoreCase(DataSourceUtil.unquote( String.valueOf(attrs.get("LABLAXIS"))) );
         if (isEpoch) {
             if ( ofv!=null && ofv instanceof Long ) {
                 units= Units.cdfTT2000;
                 properties.put(QDataSet.FILL_VALUE, ofv );
             } else {
-                units = Units.cdfEpoch;
+                if ( UnitsUtil.isTimeLocation(units) ) {
+                    // do nothing, assume that they know what they are doing.  
+                    // (Steven's NetCDF file, https://sourceforge.net/p/autoplot/feature-requests/724/).
+                } else {
+                    units = Units.cdfEpoch;
+                }
             }
         } else {
-            String label = (String) attrs.get("LABLAXIS");
-            String sslice1= (String) attrs.get("slice1");
+            Object oslice1= attrs.get("slice1");
+            if ( oslice1!=null && !(oslice1 instanceof String ) ) {
+                logger.warning("internal error, slice1 should be string");
+            }
+            String sslice1= (String) oslice1;
             if ( sslice1!=null ) {
                 int islice= Integer.parseInt(sslice1);
                 Object o = (Object) attrs.get("slice1_labels");
@@ -380,10 +465,12 @@ public class IstpMetadataModel extends MetadataModel {
                         logger.log(Level.WARNING, "slice1_labels property of {0} should be a QDataSet", name);
                     }
                 } else {
-                    QDataSet lablDs= (QDataSet) attrs.get("slice1_labels");
-                    if ( lablDs!=null ) { // TODO: I think this is trivially true.
-                        Units u= (Units) lablDs.property(QDataSet.UNITS);
-                        label= u.createDatum(lablDs.value(islice)).toString();
+                    if ( attrs.get("DEPEND_2")==null ) {                        
+                        QDataSet lablDs= (QDataSet) attrs.get("slice1_labels");
+                        if ( lablDs!=null ) { // TODO: I think this is trivially true.
+                            Units u= (Units) lablDs.property(QDataSet.UNITS);
+                            label= lablDs.slice(islice).svalue();
+                        }
                     }
                 }
             }
@@ -422,11 +509,17 @@ public class IstpMetadataModel extends MetadataModel {
                     properties.put(QDataSet.VALID_MIN, range.min().doubleValue(units));
                     properties.put(QDataSet.VALID_MAX, range.max().doubleValue(units));
                 }
+                
+//                Number[] rangeDs = getValidRangeDs(attrs, units);
+//                if ( rangeDs!=null ) {
+//                    properties.put(QDataSet.VALID_MIN, rangeDs[0]);
+//                    properties.put(QDataSet.VALID_MAX, rangeDs[1]);
+//                }
 
                 if ( ofv!=null && ofv instanceof Number ) {
                     Number fillVal= (Number) ofv;
                     double fillVald= fillVal.doubleValue();
-                    if( fillVald>=range.min().doubleValue(units) && fillVald<=range.max().doubleValue(units) ) {
+                    if( range!=null && fillVald>=range.min().doubleValue(units) && fillVald<=range.max().doubleValue(units) ) {
                         properties.put( QDataSet.FILL_VALUE, fillVal );
                     }
                 } else if ( ofv!=null && ofv.getClass().isArray() ) {
@@ -439,7 +532,7 @@ public class IstpMetadataModel extends MetadataModel {
                         }
                     }
                     double fillVald= fillVal.doubleValue();
-                    if( fillVald>=range.min().doubleValue(units) && fillVald<=range.max().doubleValue(units) ) {
+                    if( range!=null && fillVald>=range.min().doubleValue(units) && fillVald<=range.max().doubleValue(units) ) {
                         properties.put( QDataSet.FILL_VALUE, fillVal );
                     }
                     

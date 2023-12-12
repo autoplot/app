@@ -2,54 +2,63 @@
 package org.autoplot.jythonsupport.ui;
 
 import ZoeloeSoft.projects.JFontChooser.JFontChooser;
-import java.awt.Dimension;
+import java.awt.BorderLayout;
+import java.awt.Component;
+import java.awt.FlowLayout;
 import java.awt.Font;
 import org.das2.components.propertyeditor.PropertyEditor;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.awt.event.InputEvent;
+import java.awt.event.KeyEvent;
 import java.awt.print.PrinterException;
 import java.beans.PropertyChangeEvent;
-import java.beans.PropertyChangeListener;
 import java.io.BufferedReader;
+import java.io.File;
 import java.io.IOException;
 import java.io.StringReader;
-import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.swing.AbstractAction;
 import javax.swing.Action;
+import javax.swing.JButton;
 import javax.swing.JDialog;
-import javax.swing.JEditorPane;
+import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JMenu;
 import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
+import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
-import javax.swing.JScrollPane;
+import javax.swing.JSeparator;
+import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import javax.swing.text.BadLocationException;
 import javax.swing.text.DefaultEditorKit;
 import javax.swing.text.Element;
-import jsyntaxpane.DefaultSyntaxKit;
 import jsyntaxpane.SyntaxStyle;
 import jsyntaxpane.SyntaxStyles;
-import jsyntaxpane.TokenType;
 import jsyntaxpane.actions.ActionUtils;
 import jsyntaxpane.actions.IndentAction;
+import jsyntaxpane.actions.RedoAction;
+import jsyntaxpane.actions.UndoAction;
+import org.autoplot.datasource.AutoplotSettings;
 import org.das2.jythoncompletion.CompletionSettings;
 import org.das2.jythoncompletion.JythonCompletionProvider;
 import org.das2.util.LoggerManager;
-import org.python.parser.SimpleNode;
 import org.autoplot.datasource.DataSetSelector;
 import org.autoplot.datasource.DataSourceUtil;
-import org.autoplot.jythonsupport.JythonToJavaConverter;
-import org.autoplot.jythonsupport.JythonUtil;
+import org.autoplot.jythonsupport.ClipboardEditorPanel;
+import org.autoplot.jythonsupport.JavaJythonConverter;
+import org.autoplot.jythonsupport.MathematicaJythonConverter;
+import static org.das2.jythoncompletion.JythonCompletionTask.CLIENT_PROPERTY_INTERPRETER_PROVIDER;
+import org.das2.jythoncompletion.JythonInterpreterProvider;
 
 /**
  *
  * @author jbf
  */
-public class EditorContextMenu {
+public final class EditorContextMenu {
 
     private static final Logger logger= Logger.getLogger("jython.editor");
 
@@ -58,61 +67,77 @@ public class EditorContextMenu {
     private DataSetSelector dataSetSelector;
     private JMenu examplesMenu;
     private JMenu jumpToMenu;
-    private int jumpToMenuPosition;
     private JMenu actionsMenu;
+    private JMenu settingsMenu;
+    private int jumpToMenuPosition;
+    private int menuInsertIndex= 0;
+    private int menuInsertCount= 0;
+    
+    private static final int BASE_INSERT_INDEX=5;
     
     public EditorContextMenu( EditorTextPane edit  ) {
         this.editor = edit;
-        maybeCreateMenu();
-
-        JythonCompletionProvider.getInstance().settings().addPropertyChangeListener( new PropertyChangeListener() {
-            @Override
-            public void propertyChange(PropertyChangeEvent evt) {
-                switch (evt.getPropertyName()) {
-                    case CompletionSettings.PROP_EDITORFONT:
-                        editor.setFont( Font.decode((String)evt.getNewValue() ) );
-                        break;
-                    case CompletionSettings.PROP_TABISSPACES:
-                        {
-                            boolean tabIsSpaces= (Boolean)evt.getNewValue();
-                            Action get = ActionUtils.getAction( editor, IndentAction.class );
-                            if ( get==null ) {
-                                logger.warning("Expected to find IndentAction");
-                            } else {
-                                ((IndentAction)get).setInsertTab(!tabIsSpaces);
-                            }       break;
-                        }
-                    case CompletionSettings.PROP_TAB_IS_COMPLETION:
-                        {
-                            boolean tabIsCompletion= (Boolean)evt.getNewValue();
-                            Action get = ActionUtils.getAction( editor, IndentAction.class );
-                            if ( get==null ) {
-                                logger.warning("Expected to find IndentAction");
-                            } else {
-                                ((IndentAction)get).setInsertTab(!tabIsCompletion);
-                            }       break;
-                        }
-                    case CompletionSettings.PROP_SHOWTABS:
-                        SyntaxStyle deflt= SyntaxStyles.getInstance().getStyle(null);
-                        boolean value= (Boolean)evt.getNewValue();
-                        deflt.setDrawTabs(value);
-                        editor.repaint();
-                        break;
-                    default:
-                        break;
-                }
-            } 
-        });
-
-        editor.setComponentPopupMenu(menu); // override the default popup for the editor.
         
-        menu.addPropertyChangeListener( "visible", new PropertyChangeListener() {
-            @Override
-            public void propertyChange(PropertyChangeEvent evt) {
-                doRebuildJumpToMenu();
+        doRebuildMenu();
+    
+        JythonCompletionProvider.getInstance().settings().addPropertyChangeListener((PropertyChangeEvent evt) -> {
+            switch (evt.getPropertyName()) {
+                case CompletionSettings.PROP_EDITORFONT:
+                    editor.setFont( Font.decode((String)evt.getNewValue() ) );
+                    break;
+                case CompletionSettings.PROP_TABISSPACES:
+                {
+                    boolean tabIsSpaces= (Boolean)evt.getNewValue();
+                    Action get = ActionUtils.getAction( editor, IndentAction.class );
+                    if ( get==null ) {
+                        logger.warning("Expected to find IndentAction");
+                    } else {
+                        ((IndentAction)get).setInsertTab(!tabIsSpaces);
+                    }       break;
+                }
+                case CompletionSettings.PROP_TAB_IS_COMPLETION: 
+                {
+                    boolean tabIsCompletion= (Boolean)evt.getNewValue();
+                    Action get = ActionUtils.getAction( editor, IndentAction.class );
+                    if ( get==null ) {
+                        logger.warning("Expected to find IndentAction");
+                    } else {
+                        ((IndentAction)get).setInsertTab(!tabIsCompletion);
+                    }       break;
+                }
+                case CompletionSettings.PROP_SHOWTABS:
+                    SyntaxStyle deflt= SyntaxStyles.getInstance().getStyle(null);
+                    boolean value= (Boolean)evt.getNewValue();
+                    deflt.setDrawTabs(value);
+                    editor.repaint();
+                    break;
+                default:
+                    break;
             }
         });
 
+    }
+    
+    /**
+     * add the menu or menuitem to the actions menu.
+     * @param menuitem
+     */
+    public void addSettingsMenuItem( JMenuItem menuitem ) {        
+        settingsMenu.add(menuitem);
+    }
+    
+    /**
+     * add the menu or menuitem to the menu. separators will be added.
+     * @param menuitem
+     */
+    public void addMenuItem( JMenuItem menuitem ) {
+        //actionsMenu.add(menuitem);
+        if ( menuInsertCount==0 ) {
+            menu.add( new javax.swing.JSeparator(), BASE_INSERT_INDEX);
+        }
+        menu.add(menuitem, BASE_INSERT_INDEX+menuInsertIndex);
+        menuInsertIndex++;
+        menuInsertCount++;
     }
     
     private void doRebuildJumpToMenu() {
@@ -124,28 +149,29 @@ public class EditorContextMenu {
             tree.add( new JMenuItem( new AbstractAction( ss[i] ) {
                 @Override
                 public void actionPerformed(ActionEvent e) {
-                    if ( fs.equals("top") ) {
-                        editor.setCaretPosition(0);
-                    } else if ( fs.equals("bottom") ) {
-                        editor.setCaretPosition(editor.getDocument().getLength()-1);
-                    } else {
-                       int i= fs.indexOf(":");
-                       if ( i>-1 ) {
-                           int line= Integer.parseInt(fs.substring(0,i));
-                           Element ee= editor.getDocument().getDefaultRootElement().getElement(line-1);
-                           editor.setCaretPosition(ee.getStartOffset());
-                       }
+                    switch (fs) {
+                        case "top":
+                            editor.setCaretPosition(0);
+                            break;
+                        case "bottom":
+                            editor.setCaretPosition(editor.getDocument().getLength()-1);
+                            break;
+                        default:
+                            int i= fs.indexOf(":");
+                            if ( i>-1 ) {
+                                int line= Integer.parseInt(fs.substring(0,i));
+                                Element ee= editor.getDocument().getDefaultRootElement().getElement(line-1);
+                                editor.setCaretPosition(ee.getStartOffset());
+                            }    
+                            break;
                     }
                 }
 
             } ) );
         }
-        Runnable run= new Runnable() {
-            @Override
-            public void run() {
-                actionsMenu.remove(jumpToMenuPosition);
-                actionsMenu.add( tree, jumpToMenuPosition );
-            }
+        Runnable run= () -> {
+            actionsMenu.remove(jumpToMenuPosition);
+            actionsMenu.add( tree, jumpToMenuPosition );
         };
         run.run();
 
@@ -306,9 +332,10 @@ public class EditorContextMenu {
         return s;
     }
     
-    private synchronized void maybeCreateMenu() {
+    private void maybeCreateMenu() {
         if ( menu==null ) {
             menu= new JPopupMenu();
+            menu.setName("t0:"+System.currentTimeMillis());
             Action a;
             JMenuItem item;
             JMenu insertCodeMenu= new JMenu("Insert Code");
@@ -410,11 +437,13 @@ public class EditorContextMenu {
 
             fragmentsMenu.add( createInsertMenuItem( "try-except", "try:\n  fil=downloadResourceAsTempFile(URL('http://autoplot.org/data/nofile.dat'),monitor)\nexcept java.io.IOException,ex:\n  print 'file not found'\n" ) );
 
+            fragmentsMenu.add( createInsertMenuItem( "except-traceback", "try:\n  fil=downloadResourceAsTempFile(URL('http://autoplot.org/data/nofile.dat'),monitor)\nexcept:\n  import traceback\n  traceback.print_exc()\n" ) );
+
             fragmentsMenu.add( createInsertMenuItem( "raise exception", "if ( ds.length()==0 ):\n  raise Exception('Dataset is empty')") );
 
             fragmentsMenu.add( createInsertMenuItem( "raise NoDataInIntervalException", "from org.das2.dataset import NoDataInIntervalException\nraise NoDataInIntervalException('no files found')") );
 
-            fragmentsMenu.add( createInsertMenuItem( "documentation block", "# title: the one-line title\n# label: terse label") );
+            fragmentsMenu.add( createInsertMenuItem( "documentation block", "setScriptDescription('''Multi-line description''')\nsetScriptTitle('One-Line Title')\nsetScriptLabel('Terse Label')\n") );
 
             fragmentsMenu.add( createInsertMenuItem( "multi-argument procedure", "# return a set of datasets which are synchronized to the same timetags.\n" +
 "def mysynchronize( ds1, *dss ):\n" +
@@ -471,18 +500,48 @@ public class EditorContextMenu {
 
             JMenuItem printMenuItem= new JMenuItem( "Print" );
             printMenuItem.setToolTipText("Print to printer");
-            printMenuItem.addActionListener( new ActionListener() {
-                @Override
-                public void actionPerformed(ActionEvent e) {
-                    try {
-                        editor.print();
-                    } catch (PrinterException ex) {
-                        Logger.getLogger(EditorContextMenu.class.getName()).log(Level.SEVERE, null, ex);
-                    }
+            printMenuItem.addActionListener((ActionEvent e) -> {
+                try {
+                    editor.print();
+                } catch (PrinterException ex) {
+                    Logger.getLogger(EditorContextMenu.class.getName()).log(Level.SEVERE, null, ex);
                 }
             });
             actionsMenu.add(printMenuItem);
 
+            JMenuItem runMenuItem= new JMenuItem( "Run Selected" );
+            runMenuItem.setToolTipText("Run Selected Commands");
+            runMenuItem.addActionListener((ActionEvent e) -> {
+                final String doThis= editor.getSelectedText();
+                if ( doThis==null ) {
+                    JOptionPane.showMessageDialog( editor, "Select portion of the code to execute");
+                    return;
+                }
+                String[] sss= doThis.split("\n");
+                for ( String s: sss ) {
+                    if ( s.length()>0 && Character.isWhitespace(s.charAt(0)) ) {
+                        JOptionPane.showMessageDialog( menu, "Sorry no indents" );
+                        return;
+                    }
+                }
+                final JythonInterpreterProvider pp =
+                        (JythonInterpreterProvider) editor.getClientProperty(CLIENT_PROPERTY_INTERPRETER_PROVIDER);
+                if ( pp==null ) {
+                    JOptionPane.showMessageDialog( menu, "Sorry no Jython session to run commands" );
+                    return;
+                }
+                
+                Runnable run= () -> {
+                    try {
+                        pp.createInterpreter().exec(doThis);
+                    } catch (IOException ex) {
+                        logger.log(Level.SEVERE, null, ex);
+                    }
+                };
+                
+                new Thread(run).start();
+            });
+            actionsMenu.add(runMenuItem);
             
             JMenuItem mi;
             
@@ -495,16 +554,54 @@ public class EditorContextMenu {
                         doThis= editor.getText();
                     }
                     try {
-                        String java= JythonToJavaConverter.convert(doThis);
-                        JEditorPane a= new JEditorPane();
-                        DefaultSyntaxKit.initKit();
-                        SyntaxStyles.getInstance().getStyle(TokenType.DELIMITER).isDrawTabs();
-                        a.setContentType("text/java");
-                        a.setText(java);
+                        JavaJythonConverter cc= new JavaJythonConverter(editor,JavaJythonConverter.DIR_JYTHON_TO_JAVA);
+                        cc.setPythonSource(doThis);
                         JDialog d= new JDialog();
-                        a.setMinimumSize( new Dimension(400,400) );
-                        a.setPreferredSize( new Dimension(400,400) );
-                        d.getContentPane().add(new JScrollPane(a));
+                        d.setContentPane(cc);
+                        d.pack();
+                        d.setVisible(true);
+                    } catch ( Exception ex ) {
+                        JOptionPane.showMessageDialog( menu, ex.toString() );
+                    }
+                }                
+            });
+            developerMenu.add(mi);
+
+            mi= new JMenuItem( new AbstractAction("Convert Java To Jython") {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    LoggerManager.logGuiEvent(e);
+                    String doThis= editor.getSelectedText();
+                    if ( doThis==null || doThis.length()==0 ) {
+                        doThis= editor.getText();
+                    }
+                    try {
+                        JavaJythonConverter cc= new JavaJythonConverter(editor);
+                        cc.setJavaSource(doThis);
+                        JDialog d= new JDialog();
+                        d.setContentPane(cc);
+                        d.pack();
+                        d.setVisible(true);
+                    } catch ( Exception ex ) {
+                        JOptionPane.showMessageDialog( menu, ex.toString() );
+                    }
+                }                
+            });
+            developerMenu.add(mi);
+
+            mi= new JMenuItem( new AbstractAction("Convert Mathematica To Jython") {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    LoggerManager.logGuiEvent(e);
+                    String doThis= editor.getSelectedText();
+                    if ( doThis==null || doThis.length()==0 ) {
+                        doThis= editor.getText();
+                    }
+                    try {
+                        MathematicaJythonConverter cc= new MathematicaJythonConverter(editor);
+                        cc.setJavaSource(doThis);
+                        JDialog d= new JDialog();
+                        d.setContentPane(cc);
                         d.pack();
                         d.setVisible(true);
                     } catch ( Exception ex ) {
@@ -524,21 +621,26 @@ public class EditorContextMenu {
             
             developerMenu.add(mi);
             
+            mi= new JMenuItem( new AbstractAction("Show Simplified Script Used for Parameters") {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    LoggerManager.logGuiEvent(e);       
+                    editor.showParametersView();
+                }
+            } );
+            mi.setAccelerator( KeyStroke.getKeyStroke( KeyEvent.VK_F12, InputEvent.SHIFT_DOWN_MASK | InputEvent.CTRL_DOWN_MASK ) ); 
+             
+            developerMenu.add(mi);            
+                        
             mi= new JMenuItem( new AbstractAction("Plot") {
                 @Override
                 public void actionPerformed(ActionEvent e) {
                     LoggerManager.logGuiEvent(e);                
-                    String doThis= editor.getSelectedText();
-                    if ( doThis==null ) return;
-                    try {
-                        editor.plotSoon(doThis);
-                    } catch ( IllegalArgumentException ex ) {
-                        JOptionPane.showMessageDialog( editor,
-                            "<html>A debugging session must be active.  Insert stop to halt script execution.</html>");
-                    }
+                    editor.plotItem();
                 }
             } );
             mi.setToolTipText("Plot dataset reference in a second Autoplot with its server port open");
+            mi.setAccelerator( KeyStroke.getKeyStroke( KeyEvent.VK_C, InputEvent.SHIFT_DOWN_MASK | InputEvent.CTRL_DOWN_MASK ) ); 
             actionsMenu.add( mi );
                         
             mi= new JMenuItem( new AbstractAction("Inspect URI") {
@@ -630,28 +732,31 @@ public class EditorContextMenu {
             mi.setToolTipText("uncomment the selected block of lines");
             actionsMenu.add( mi );
 
-            menu.add( actionsMenu );
-
             mi= new JMenuItem( new AbstractAction("Show Usages") {
                 @Override
                 public void actionPerformed(ActionEvent e) {
-                    LoggerManager.logGuiEvent(e);  
-                    String script= editor.getText();
-                    String var= editor.getSelectedText();
-                    if ( var==null || var.length()==0 ) {
-                        var= EditorAnnotationsSupport.getSymbolAt( editor );
-                    }
-                    editor.getEditorAnnotationsSupport().clearAnnotations();
-                    List<SimpleNode> usages= JythonUtil.showUsage( script,var );
-                    for ( SimpleNode n: usages ) {
-                        editor.getEditorAnnotationsSupport().annotateChars( n.beginLine, n.beginColumn, n.beginColumn+var.length(), EditorAnnotationsSupport.ANNO_USAGE, var, null );
-                    }
+                    LoggerManager.logGuiEvent(e);
+                    editor.showUsages();
                 }
             } );
-            mi.setToolTipText( "highlite usages" );
+            mi.setToolTipText( "highlite use of name" );
+            mi.setAccelerator( KeyStroke.getKeyStroke( KeyEvent.VK_U, InputEvent.SHIFT_DOWN_MASK | InputEvent.CTRL_DOWN_MASK ) );
             actionsMenu.add( mi );
-
-            JMenu settingsMenu= new JMenu("Settings");
+            
+            mi= new JMenuItem( new AbstractAction("Import Java Code") {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    LoggerManager.logGuiEvent(e);
+                    editor.doImports();
+                }
+            } );
+            mi.setToolTipText( "search for and add import" );
+            mi.setAccelerator( KeyStroke.getKeyStroke( KeyEvent.VK_I, InputEvent.SHIFT_DOWN_MASK | InputEvent.ALT_DOWN_MASK ) );
+            actionsMenu.add( mi );
+            
+            menu.add( actionsMenu );
+            
+            settingsMenu= new JMenu("Settings");
             mi= new JMenuItem( new AbstractAction("Edit Settings") {
                 @Override
                 public void actionPerformed(ActionEvent e) {
@@ -682,6 +787,78 @@ public class EditorContextMenu {
             mi.setToolTipText("Pick Font for editor");
             settingsMenu.add( mi );
 
+            mi= new JMenuItem( new AbstractAction("Reload Syntax Colors") {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    LoggerManager.logGuiEvent(e);
+                    String s= editor.getText();
+                    editor.setEditorKit(null);
+                    editor.getInitializeRunnable().run();
+                    editor.setText(s);
+                }
+            } );
+            mi.setToolTipText("Reload editor colors from autoplot_data/config/jsyntaxpane.properties");
+            settingsMenu.add( mi );
+
+            mi= new JMenuItem( new AbstractAction("Edit Syntax Colors") {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    try {
+                        LoggerManager.logGuiEvent(e);
+                        File configFile= new File( AutoplotSettings.settings().resolveProperty( AutoplotSettings.PROP_AUTOPLOTDATA)+ "/config/jsyntaxpane.properties" );
+                        SyntaxColorBean bean= new SyntaxColorBean();
+                        bean.readFromConfig(configFile);
+                        PropertyEditor edit = new org.das2.components.propertyeditor.PropertyEditor(bean);
+                        JPanel p= new JPanel();
+                        p.setLayout( new BorderLayout() );
+                        p.add( edit, BorderLayout.CENTER );
+                        JButton loadButton= new JButton("Load...");
+                        JButton saveButton= new JButton("Save...");
+                        JPanel actionsPanel= new JPanel();
+                        actionsPanel.setLayout(new FlowLayout(FlowLayout.LEFT));
+                        actionsPanel.add(loadButton);
+                        actionsPanel.add(saveButton);
+                        p.add( actionsPanel, BorderLayout.SOUTH );
+                        loadButton.addActionListener((ActionEvent e1) -> {
+                            JFileChooser choose= new JFileChooser();
+                            choose.setCurrentDirectory(configFile.getParentFile());
+                            int returnValue = choose.showOpenDialog(p);
+                            if ( returnValue==JFileChooser.APPROVE_OPTION ) {
+                                try {
+                                    bean.readFromConfig(choose.getSelectedFile());
+                                    edit.refresh();
+                                } catch (IOException ex) {
+                                    logger.log(Level.SEVERE, null, ex);
+                                }
+                            }
+                        });
+                        saveButton.addActionListener((ActionEvent e1) -> {
+                            JFileChooser choose= new JFileChooser();
+                            choose.setCurrentDirectory(configFile.getParentFile());
+                            int returnValue = choose.showSaveDialog(p);
+                            if ( returnValue==JFileChooser.APPROVE_OPTION ) {
+                                try {
+                                    bean.writeToConfig(choose.getSelectedFile());
+                                } catch (IOException ex) {
+                                    logger.log(Level.SEVERE, null, ex);
+                                }
+                            }
+                        });
+                        if ( JOptionPane.OK_OPTION==JOptionPane.showConfirmDialog( (Component)e.getSource(), p, "Editor Colors", JOptionPane.OK_CANCEL_OPTION ) ) {
+                            String s= editor.getText();
+                            bean.writeToConfig(configFile);
+                            editor.setEditorKit(null);
+                            editor.getInitializeRunnable().run();
+                            editor.setText(s);            
+                        }
+                    } catch (IOException ex) {
+                        Logger.getLogger(EditorContextMenu.class.getName()).log(Level.SEVERE, null, ex);
+                    }
+                }
+            } );
+            mi.setToolTipText("Edit the colors used in autoplot_data/config/jsyntaxpane.properties");
+            settingsMenu.add( mi );
+            
             mi = new JMenuItem(new AbstractAction("Keyboard Shortcuts...") {
                 @Override
                 public void actionPerformed(ActionEvent e) {
@@ -694,10 +871,13 @@ public class EditorContextMenu {
                             + "<tr><td>SHIFT-F5</td><td> settings </td> <br></tr>"
                             + "<tr><td>CTRL-SHIFT-C</td><td> plot expression via server mode (See [menubar]->Options->Enable Feature->Server)\" </td> <br></tr>"
                             + "<tr><td>CTRL-SHIFT-U</td><td> show usages of a variable<br></td></tr>"
+                            + "<tr><td>ALT-SHIFT-U</td><td>import the symbol<br></td></tr>"
                             + "<tr><td>CTRL-S</td><td>  Save<br></td></tr>"
                             + "<tr><td>F6</td><td> Execute<br></td> </tr>"
                             + "<tr><td>SHIFT-F6</td><td> Execute with Parameters Dialog<br></td> </tr>"
+                            + "<tr><td>CRTL-SHIFT-F12</td><td> Used for script editor development<br></td> </tr>"
                             + "<tr><td>CTRL-SPACE</td><td> Show completions<br></td> </tr>"
+                            + "<tr><td>CTRL-F</td><td> Show Search bar<br></td> </tr>"
                             + "</table></html>";
                             
                     JOptionPane.showMessageDialog( actionsMenu, msg );
@@ -707,7 +887,35 @@ public class EditorContextMenu {
             settingsMenu.add( mi );
             
             menu.add( settingsMenu );
-
+            
+            JSeparator sep= new JSeparator();
+            sep.setName("customMenuItems");
+            menu.add(sep);
+            
+            mi = new JMenuItem(new AbstractAction("Static Code Analysis") {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    LoggerManager.logGuiEvent(e);
+                    editor.doStaticCodeAnalysis();
+                }
+            } );
+            mi.setToolTipText("Run Static Code Analysis, looking for unused symbols which might hint at a semmantic error.");
+            menu.add( mi );
+            
+            menu.addSeparator();
+            mi = new JMenuItem(new AbstractAction("Search...") {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    LoggerManager.logGuiEvent(e);
+                    JOptionPane.showMessageDialog(menu,"Ctrl-F is Search");
+                }
+            } );           
+            JMenu editMenu= new JMenu("Edit");
+            editMenu.add( new UndoAction() ).setText("Undo");
+            editMenu.add( new RedoAction() ).setText("Redo");
+            editMenu.add( mi ).setText("Find");
+            menu.add( editMenu );
+            
             menu.addSeparator();
             JMenuItem cutItem = menu.add(new DefaultEditorKit.CutAction());
             cutItem.setText("Cut");
@@ -715,6 +923,27 @@ public class EditorContextMenu {
             copyItem.setText("Copy");
             JMenuItem pasteItem = menu.add(new DefaultEditorKit.PasteAction());
             pasteItem.setText("Paste");
+            Action editClipboardAction= new AbstractAction("Edit Clipboard before Paste") {
+                @Override
+                public void actionPerformed(ActionEvent e) {
+                    ClipboardEditorPanel ep= new ClipboardEditorPanel();
+                    ep.setTextFromClipboard();
+                    if ( JOptionPane.OK_OPTION==JOptionPane.showConfirmDialog( editor, ep, "Edit Text before Paste", JOptionPane.OK_CANCEL_OPTION ) ) {
+                        try {
+                            if ( editor.getSelectionStart()<editor.getSelectionEnd() ) {
+                                editor.getDocument().remove( editor.getSelectionStart(), editor.getSelectionEnd()-editor.getSelectionStart() );
+                            }
+                            editor.getDocument().insertString( editor.getCaretPosition(), ep.getText(), null );
+                        } catch (BadLocationException ex) {
+                            logger.log(Level.SEVERE, null, ex);
+                        }
+                    }
+                }
+            };
+            JMenuItem editClipboard= new JMenuItem( editClipboardAction );
+            menu.add( editClipboard );
+            
+            
 
         }
     }
@@ -747,6 +976,23 @@ public class EditorContextMenu {
      */
     public void addExampleAction( Action a ) {
         this.examplesMenu.add(a);
+    }
+
+    /**
+     * request that the menu be rebuilt.
+     */
+    public void doRebuildMenu() {
+        this.menu= null;
+        this.menuInsertCount= 0;
+        this.menuInsertIndex= 0;
+        
+        maybeCreateMenu();
+        editor.setComponentPopupMenu(menu); // override the default popup for the editor.
+        
+        menu.addPropertyChangeListener("visible", (PropertyChangeEvent evt) -> {
+            doRebuildJumpToMenu();
+        });
+
     }
 
 }

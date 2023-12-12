@@ -5,12 +5,13 @@ import java.awt.Dimension;
 import java.awt.Window;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
-import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.io.File;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
 import java.util.logging.Logger;
 import java.util.prefs.Preferences;
 import javax.swing.AbstractAction;
@@ -21,9 +22,11 @@ import javax.swing.ButtonGroup;
 import javax.swing.JCheckBox;
 import javax.swing.JFileChooser;
 import javax.swing.JMenu;
+import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 import javax.swing.filechooser.FileFilter;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import org.das2.datum.DatumRange;
 
 /**
@@ -50,22 +53,40 @@ public class DataSetSelectorSupport {
      * Show a file chooser component, and return the name of a .vap file.
      * @param parent parent component for focus.  If a dataSetSelector is
      * used then its timerange is used for the initial timerange.
+     * This will now allow a non-local vap to be browsed as well.
      * @param initialSelection if non-null, then the initial selection.
      * @return the URI for the vap file, or null if cancel was pressed.
      */
     public static String browseLocalVap( java.awt.Component parent, String initialSelection) {
-        Preferences prefs = AutoplotSettings.settings().getPreferences( AutoplotSettings.class);
+        Preferences prefs = AutoplotSettings.getPreferences( AutoplotSettings.class);
 
         String currentDirectory = prefs.get( AutoplotSettings.PREF_LAST_OPEN_VAP_FOLDER, prefs.get(AutoplotSettings.PREF_LAST_OPEN_FOLDER, userHome().toString() ) );
         String currentFile=  prefs.get( AutoplotSettings.PREF_LAST_OPEN_VAP_FILE, "" );
-        JFileChooser chooser = new JFileChooser(currentDirectory);
 
-        if ( currentFile.length()>0 ) {
-            chooser.setSelectedFile( new File( currentFile ) );
+        boolean isRemote= initialSelection!=null && ( initialSelection.startsWith("https:/") 
+                || initialSelection.startsWith("http:/")
+                || initialSelection.startsWith("ftp:/") 
+                || initialSelection.startsWith("sftp:/") );
+        boolean isLocal= initialSelection==null || initialSelection.isEmpty() || !isRemote;
+        
+        JFileChooser chooser;
+        
+        chooser= new JFileChooser();
+        try {
+            chooser.setCurrentDirectory( new File( currentDirectory ) );
+        } catch ( SecurityException ex ) {
+            logger.info("unable to set current directory");
         }
-        if ( initialSelection!=null ) {
+        if ( currentFile.length()>0 ) {
+            try {
+                chooser.setSelectedFile( new File( currentFile ) );
+            } catch ( SecurityException ex ) {
+                logger.info("unable to set current file");
+            }
+        }
+        if ( initialSelection!=null && isLocal ) {
             URISplit split= URISplit.parse(initialSelection);
-            if ( split.file!=null ) {
+            if ( split.file!=null && "vap".equals(split.ext) ) {
                 chooser.setSelectedFile( new File( split.file ));
             }
         }
@@ -114,47 +135,46 @@ public class DataSetSelectorSupport {
         
         trPanel.add( Box.createVerticalGlue() );
         
-        chooser.setAccessory(trPanel);
+        if ( chooser!=null ) {
+            chooser.setAccessory(trPanel);
         
-        FileFilter ff;
-        ff = new FileFilter() {
+            FileFilter ff;
+            ff = new FileNameExtensionFilter( ".vap files", "vap" );
 
-            @Override
-            public boolean accept(File f) {
-                if (f.isDirectory()) {
-                    return true;
+            chooser.addChoosableFileFilter(ff);
+            chooser.setFileFilter(ff);
+
+            Window w= parent==null ? null : SwingUtilities.getWindowAncestor( parent);
+            int result = chooser.showOpenDialog(w);
+            if (result == JFileChooser.APPROVE_OPTION) {
+                prefs.put(AutoplotSettings.PREF_LAST_OPEN_VAP_FOLDER, chooser.getSelectedFile().getParent() );
+                if ( b2.isSelected() ) {
+                    return chooser.getSelectedFile().toURI().toString() + "?timerange="+ t.getRange().toString().replaceAll("\\s+", "+");
+                } else {
+                    return chooser.getSelectedFile().toURI().toString();
                 }
-                String t = f.toString();
-                if (t==null ) {
-                    // bug https://sourceforge.net/p/autoplot/bugs/429/, where Windows returns an f whose toString returns null.
-                    return false;
-                }
-                return t.endsWith(".vap");
-            }
-
-            @Override
-            public String getDescription() {
-                return ".vap files";
-            }
-        };
-
-
-        chooser.addChoosableFileFilter(ff);
-        FileFilter select = ff;
-
-        chooser.setFileFilter(select);
-
-        Window w= SwingUtilities.getWindowAncestor(parent);
-        int result = chooser.showOpenDialog(w);
-        if (result == JFileChooser.APPROVE_OPTION) {
-            prefs.put(AutoplotSettings.PREF_LAST_OPEN_VAP_FOLDER, chooser.getSelectedFile().getParent() );
-            if ( b2.isSelected() ) {
-                return chooser.getSelectedFile().toURI().toString() + "?timerange="+ t.getRange().toString().replaceAll("\\s+", "+");
             } else {
-                return chooser.getSelectedFile().toURI().toString();
+                return null;
             }
         } else {
-            return null;
+            if ( JOptionPane.showConfirmDialog( parent, trPanel, "New Time Range", JOptionPane.OK_CANCEL_OPTION )==JOptionPane.OK_OPTION ) {
+                URISplit split= URISplit.parse( initialSelection );
+                Map<String,String> params= URISplit.parseParams(split.params);
+                if ( b2.isSelected() ) {
+                    params.put( "timerange", t.getRange().toString().replaceAll("\\s","+") );
+                } else {
+                    params.remove("timerange");
+                }
+                if ( params.isEmpty() ) {
+                    split.params= null;
+                } else {
+                    split.params= URISplit.formatParams(params);
+                }
+                return URISplit.format(split);
+            } else {
+                return null;
+            }
+            
         }
 
     }
@@ -168,9 +188,14 @@ public class DataSetSelectorSupport {
         Preferences prefs = AutoplotSettings.settings().getPreferences(DataSetSelectorSupport.class);
 
         String currentDirectory = prefs.get(AutoplotSettings.PREF_LAST_OPEN_FOLDER, userHome().toString());
-        final HashMap exts = DataSourceRegistry.getInstance().dataSourcesByExt;
-
-        JFileChooser chooser = new JFileChooser(currentDirectory);
+        final HashMap<String,Object> exts = DataSourceRegistry.getInstance().dataSourcesByExt;
+        
+        JFileChooser chooser = new JFileChooser();
+        try {
+            chooser.setCurrentDirectory( new File(currentDirectory) );
+        } catch ( SecurityException ex ) {
+            logger.info("unable to set current directory because of security");
+        }
 
         final boolean isAutoplotApp;
         if ( parent instanceof DataSetSelector ) {
@@ -187,14 +212,12 @@ public class DataSetSelectorSupport {
                 if (f.isDirectory()) {
                     return true;
                 }
-                String t = f.toString();
-                if (t==null ) {
-                    // bug https://sourceforge.net/p/autoplot/bugs/429/, where Windows returns an f whose toString returns null.
-                    return false;
-                }
+                String t = f.getName();
                 String ext = DataSetURI.getExt(t);
                 if ( ext!=null ) ext= "."+ext;
-                return ( t.endsWith(".zip") || t.endsWith(".ZIP") ) || (ext != null && ( exts.containsKey(ext) ) || ( isAutoplotApp && t.endsWith(".vap") ));
+                return ( t.endsWith(".zip") || t.endsWith(".ZIP") ) 
+                    || ( t.endsWith(".tar") || t.endsWith(".tgz") || t.endsWith(".tar.gz") )
+                    || (ext != null && ( exts.containsKey(ext) ) || ( isAutoplotApp && t.endsWith(".vap") ));
             }
 
             @Override
@@ -203,53 +226,35 @@ public class DataSetSelectorSupport {
             }
         };
 
-
         chooser.addChoosableFileFilter(ff);
         FileFilter select = ff;
-
-        for (Object ext1 : exts.keySet()) {
-            final String extf = (String) ext1;
-            ff = new FileFilter() {
-
-                @Override
-                public boolean accept(File f) {
-                    if ( f.toString()==null ) return false;
-                    if (f.isDirectory()) {
-                        return true;
-                    }
-                    String t = f.toString();
-                    String ext = DataSetURI.getExt(t);
-                    if ( ext!=null ) ext= "."+ext;
-                    return (ext != null && extf.equals(ext));
+        
+        ArrayList<String> s= new ArrayList( exts.keySet() );
+        Collections.sort(s);
+        
+        HashSet<String> skip= new HashSet<>();
+        skip.add(".cdfj");
+        skip.add(".cdfn");
+        skip.add(".csv0");
+        
+        for (String ext1 : s ) {
+            if ( skip.contains(ext1) ) continue;
+            DataSourceFactory factory= DataSourceRegistry.getInstance().getSource(ext1);
+            if ( factory.isFileResource() ) {
+                final String extf = (String) ext1;
+                String desc= DataSourceRegistry.getInstance().describe( factory, extf );
+                if ( desc.length()==0 || desc.startsWith(".") ) {
+                    desc= "*"+ext1;
+                } else {
+                    desc= "*"+ext1+" " +desc;
                 }
-
-                @Override
-                public String getDescription() {
-                    return "*" + extf;
-                }
-            };
-            chooser.addChoosableFileFilter(ff);
+                ff = new FileNameExtensionFilter( desc, extf.substring(1) );
+                chooser.addChoosableFileFilter(ff);
+            }
         }
         
         if ( isAutoplotApp ) {
-            ff = new FileFilter() {
-                @Override
-                public boolean accept(File f) {
-                    if ( f.toString()==null ) return false;
-                    if (f.isDirectory()) {
-                        return true;
-                    }
-                    String t = f.toString();
-                    String ext = DataSetURI.getExt(t);
-                    if ( ext!=null ) ext= "."+ext;
-                    return (ext != null && ".vap".equals(ext));
-                }
-
-                @Override
-                public String getDescription() {
-                    return "*.vap";
-                }
-            };
+            ff = new FileNameExtensionFilter( "*.vap", "vap");
             chooser.addChoosableFileFilter(ff);
         }
 

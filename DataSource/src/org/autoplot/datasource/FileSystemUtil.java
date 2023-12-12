@@ -88,19 +88,16 @@ public class FileSystemUtil {
      *
      * @param suri URI, such as http://server.org/data/asciitable.dat
      * @return true of the resource exists and can be downloaded.
+     * @throws org.das2.util.filesystem.FileSystem.FileSystemOfflineException
+     * @throws java.net.UnknownHostException
+     * @throws java.net.URISyntaxException
      */
     public static boolean resourceExists( String suri ) throws FileSystemOfflineException, UnknownHostException, URISyntaxException {
         URISplit split= URISplit.parse(suri);
         try {
             FileSystem fs= FileSystem.create( DataSetURI.toUri( split.path ) );
-            if ( fs.getFileObject(split.file.substring(split.path.length())).exists() ) {
-                return true;
-            } else {
-                return false;
-            }
-        } catch ( IllegalArgumentException ex ) {
-            return false;
-        } catch ( FileNotFoundException ex ) {
+            return fs.getFileObject(split.file.substring(split.path.length())).exists();
+        } catch ( IllegalArgumentException | FileNotFoundException ex ) {
             return false;
         }
     }
@@ -111,7 +108,11 @@ public class FileSystemUtil {
      *
      * @param suri URI, such as http://server.org/data/asciitable.dat
      * @param mon progress monitor
-     * @return
+     * @return the file
+     * @throws org.das2.util.filesystem.FileSystem.FileSystemOfflineException
+     * @throws java.net.URISyntaxException
+     * @deprecated use DataSetURI.getFile instead
+     * @see DataSetURI#getFile(java.lang.String, boolean, org.das2.util.monitor.ProgressMonitor) 
      */
     public static File doDownload(String suri,ProgressMonitor mon) throws FileSystemOfflineException, IOException, URISyntaxException  {
         URISplit split= URISplit.parse(suri);
@@ -123,8 +124,10 @@ public class FileSystemUtil {
     /**
      * returns true if the resource is already in a local cache.
      * @param suri the URI containing a file resource.
-     * @return
+     * @return true if the resource is already in a local cache.
      * @throws org.das2.util.filesystem.FileSystem.FileSystemOfflineException
+     * @throws java.net.UnknownHostException
+     * @throws java.io.FileNotFoundException
      */
     public static boolean resourceIsLocal(String suri) throws FileSystemOfflineException, UnknownHostException, FileNotFoundException {
         URISplit split= URISplit.parse(suri);
@@ -134,7 +137,7 @@ public class FileSystemUtil {
 
     /**
      * returns true if the string identifies a file resource (not a folder).
-     * @param suri
+     * @param suri return resource URI, such as "http://autoplot.org/data/autoplot.cdf"
      * @return true if the resource is a file.
      * @throws org.das2.util.filesystem.FileSystem.FileSystemOfflineException
      * @throws UnknownHostException
@@ -144,11 +147,7 @@ public class FileSystemUtil {
     protected static boolean resourceIsFile(String suri) throws FileSystemOfflineException, UnknownHostException, URISyntaxException, FileNotFoundException {
         URISplit split= URISplit.parse(suri);
         FileSystem fs= FileSystem.create( DataSetURI.toUri( split.path ) );
-        if ( fs.getFileObject(split.file.substring(split.path.length())).isData() ) {
-            return true;
-        } else {
-            return false;
-        }
+        return fs.getFileObject(split.file.substring(split.path.length())).isData();
     }
 
     /**
@@ -237,9 +236,9 @@ public class FileSystemUtil {
     
     /**
      * deletes all files where shouldDelete returns true and empty 
-     * folders below root, and root.
+     * folders below root, and root.  If a directory is left empty, then it is also deleted.
      * @param root the root of the tree to start searching.  If root does not exist, return true!
-     * @param shouldDelete return true if the file should be deleted.
+     * @param shouldDelete an object which returns true if the file should be deleted, or if null is used, then any file is deleted.
      * @throws IllegalArgumentException if it is unable to delete a file
      * @return true if the operation was successful.
      * @see org.das2.util.filesystem.FileSystemUtil#deleteAllFiles(java.io.File, java.lang.String) 
@@ -247,25 +246,25 @@ public class FileSystemUtil {
     public static boolean deleteFilesInTree( File root, Check shouldDelete ) throws IllegalArgumentException {
         if (!root.exists()) return true;
         if (!root.canRead()) throw new IllegalArgumentException("cannot read folder: "+root );
-        File[] children = root.listFiles(); // root is known to exist.
+        File[] children = root.listFiles(); 
+        if ( children==null ) return true;
         boolean success = true;
-        boolean notEmpty= children.length>0;
-        for (int i = 0; i < children.length; i++) {
-            if (children[i].isDirectory()) {
-                success = success && deleteFilesInTree(children[i],shouldDelete);
+        for (File children1 : children) {
+            if (children1.isDirectory()) {
+                success = success && deleteFilesInTree(children1, shouldDelete);
             } else {
-                if ( shouldDelete.check(children[i]) ) {
-                    success = success && ( !children[i].exists() || children[i].delete() );
+                if ( shouldDelete==null || shouldDelete.check(children1)) {
+                    success = success && (!children1.exists() || children1.delete());
                     if (!success) {
-                        throw new IllegalArgumentException("unable to delete file " + children[i]);
+                        throw new IllegalArgumentException("unable to delete file " + children1);
                     }
                 }
             }
         }
         
-        if ( notEmpty && root.listFiles().length==0 ) {
-            success = success && (!root.exists() || root.delete());
-        } else if (  root.listFiles().length==0 ) {
+        children= root.listFiles();
+        if ( children==null ) children= new File[0]; // this won't happen.
+        if ( children.length==0 ) {
             success = success && (!root.exists() || root.delete());
         }
         

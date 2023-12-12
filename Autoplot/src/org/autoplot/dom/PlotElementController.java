@@ -3,33 +3,30 @@ package org.autoplot.dom;
 
 import java.awt.Color;
 import java.awt.EventQueue;
-import java.awt.Toolkit;
 import java.awt.Window;
-import java.awt.datatransfer.Clipboard;
-import java.awt.datatransfer.ClipboardOwner;
-import java.awt.datatransfer.StringSelection;
-import java.awt.datatransfer.Transferable;
 import java.awt.event.ActionEvent;
+import java.awt.event.KeyEvent;
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
+import java.io.FileNotFoundException;
+import java.io.FileOutputStream;
+import java.io.IOException;
 import java.lang.reflect.InvocationTargetException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.prefs.Preferences;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import javax.swing.AbstractAction;
-import javax.swing.BoxLayout;
-import javax.swing.JButton;
-import javax.swing.JLabel;
 import javax.swing.JMenuItem;
-import javax.swing.JOptionPane;
-import javax.swing.JPanel;
 import javax.swing.SwingUtilities;
 import org.das2.components.DasProgressPanel;
 import org.das2.datum.Datum;
@@ -49,7 +46,7 @@ import org.das2.graph.DasPlot;
 import org.das2.graph.DefaultPlotSymbol;
 import org.das2.graph.DigitalRenderer;
 import org.das2.graph.EventsRenderer;
-import org.das2.graph.ImageVectorDataSetRenderer;
+import org.das2.graph.HugeScatterRenderer;
 import org.das2.graph.PitchAngleDistributionRenderer;
 import org.das2.graph.PsymConnector;
 import org.das2.graph.RGBImageRenderer;
@@ -71,7 +68,9 @@ import org.autoplot.AutoplotUtil;
 import static org.autoplot.AutoplotUtil.SERIES_SIZE_LIMIT;
 import org.autoplot.ExportDataPanel;
 import org.autoplot.RenderTypeUtil;
+import org.autoplot.datasource.AnonymousDataSource;
 import org.autoplot.datasource.AutoplotSettings;
+import org.autoplot.datasource.DataSource;
 import org.autoplot.dom.ChangesSupport.DomLock;
 import org.autoplot.layout.LayoutConstants;
 import org.autoplot.util.RunLaterListener;
@@ -82,13 +81,17 @@ import org.das2.qds.JoinDataSet;
 import org.das2.qds.QDataSet;
 import org.das2.qds.SemanticOps;
 import org.das2.qds.examples.Schemes;
-import org.autoplot.datasource.DataSourceFormat;
-import org.autoplot.datasource.DataSourceRegistry;
 import org.autoplot.datasource.capability.TimeSeriesBrowse;
 import org.das2.qds.ops.Ops;
 import org.autoplot.metatree.MetadataUtil;
+import org.das2.components.VerticalSpectrogramAverager;
+import org.das2.event.DataRangeSelectionListener;
+import org.das2.event.HorizontalDragRangeSelectorMouseModule;
 import org.das2.graph.BoundsRenderer;
 import org.das2.graph.PolarPlotRenderer;
+import org.das2.qds.util.QStreamFormatter;
+import org.das2.qstream.SimpleStreamFormatter;
+import org.das2.qstream.StreamException;
 
 /**
  * PlotElementController manages the PlotElement, for example resolving the datasource and loading the dataset.
@@ -118,6 +121,8 @@ public class PlotElementController extends DomNodeController {
 
     final private Application dom;
     private PlotElement plotElement;
+    private PlotElement parentPlotElement;
+    
     private DataSourceFilter dsf; // This is the one we are listening to.
     /**
      * switch over between fine and course points.
@@ -141,19 +146,36 @@ public class PlotElementController extends DomNodeController {
         plotElement.addPropertyChangeListener(PlotElement.PROP_RENDERTYPE, plotElementListener);
         plotElement.addPropertyChangeListener(PlotElement.PROP_DATASOURCEFILTERID, plotElementListener);
         plotElement.addPropertyChangeListener(PlotElement.PROP_COMPONENT, plotElementListener);
+        plotElement.addPropertyChangeListener(PlotElement.PROP_PARENT, parentElementListener );
         plotElement.getStyle().addPropertyChangeListener(styleListener);
     }
 
+    /**
+     * remove all property change listeners.
+     */
     protected void disconnect() {
         plotElement.removePropertyChangeListener(PlotElement.PROP_RENDERTYPE, plotElementListener);
         plotElement.removePropertyChangeListener(PlotElement.PROP_DATASOURCEFILTERID, plotElementListener);
         plotElement.removePropertyChangeListener(PlotElement.PROP_COMPONENT, plotElementListener);
+        plotElement.removePropertyChangeListener(PlotElement.PROP_PARENT, plotElementListener);
+        plotElement.getStyle().removePropertyChangeListener(styleListener);
         PlotElement parent= getParentPlotElement();
         if ( parent!=null ) {
             parent.removePropertyChangeListener( getParentComponentLister() );
         }
     }
 
+    /**
+     * remove any direct references this controller has as it is being deleted.
+     */
+    protected void removeReferences() {
+        this.processDataSet= null;
+        //this.plotElement= null; // bug 2054: if the thing we link to has no other references, then there is no reason to clear the reference to it.
+        //this.dsf= null;
+        this.deleted= true;
+        //this.dom= null;
+    }
+    
     /**
      * return child plotElements, which are plotElements that share a datasource but pull out
      * a component of the data.
@@ -242,8 +264,10 @@ public class PlotElementController extends DomNodeController {
     };
     
     private void resetRenderTypeImp( RenderType oldRenderType, RenderType newRenderType ) {
+        logger.entering( "PlotElementController", "resetRenderTypeImp", new Object[] { oldRenderType, newRenderType } );
         PlotElement parentEle= getParentPlotElement();
         if (parentEle != null) {
+            logger.finest("parentEle!=null branch");
             if ( parentEle.getRenderType().equals(newRenderType) ) {
                 if ( plotElement.getPlotId().length()>0 ) {  //https://sourceforge.net/p/autoplot/bugs/1038/
                     doResetRenderTypeInt(newRenderType);
@@ -254,6 +278,7 @@ public class PlotElementController extends DomNodeController {
             }
         } else {
             if ( axisDimensionsChange(oldRenderType, newRenderType) ) {
+                logger.finest("axisDimensionsChange branch");
                 resetRanges= true;
                 if ( plotElement.getComponent().equals("") ) {
                     resetPlotElement(getDataSourceFilter().getController().getFillDataSet(), plotElement.getRenderType(), "");
@@ -269,13 +294,72 @@ public class PlotElementController extends DomNodeController {
                 }
                 updateDataSet();
             } else {
+                logger.finest("axis dimensions don't change, just reset render type.");
                 doResetRenderType(newRenderType);
                 updateDataSet();
             }
             setResetPlotElement(false);
         }
+        logger.exiting("PlotElementController", "resetRenderTypeImp" );
     }
 
+    PropertyChangeListener parentComponentListener= new PropertyChangeListener() {
+        @Override
+        public void propertyChange(PropertyChangeEvent evt) {
+            if ( evt.getSource()==parentPlotElement ) {                
+                String s= (String)evt.getNewValue();
+                String component= plotElement.component;
+                String[] components= component.split("\\|",-2);
+                String[] ss= s.split("\\|",-2);
+                if ( components.length<ss.length ) {
+                    return; // transitional state
+                }
+                System.arraycopy(ss, 0, components, 0, ss.length);
+                StringBuilder sb= new StringBuilder(components[0]);
+                for ( int i=1; i<ss.length; i++ ) {
+                    sb.append("|");
+                    sb.append(ss[i]);
+                }
+                for ( int i=ss.length; i<components.length; i++ ) {
+                    sb.append("|");
+                    sb.append(components[i]);
+                }
+                plotElement.setComponent(sb.toString());
+            } else if ( evt.getSource()==plotElement ) {
+                String t= (String)evt.getNewValue();
+                String component= (String)t;
+                String[] components= component.split("\\|",-2);
+                String[] ss= parentPlotElement.component.split("\\|",-2);
+                StringBuilder sb= new StringBuilder();
+                for ( int i=1; i<ss.length; i++ ) {
+                    sb.append("|");
+                    sb.append(components[i]);
+                }
+                parentPlotElement.setComponent(sb.toString());
+            }
+        }
+    };
+            
+    PropertyChangeListener parentElementListener= new PropertyChangeListener() {
+        @Override
+        public void propertyChange(PropertyChangeEvent evt) {
+            if ( parentPlotElement!=null ) {
+                parentPlotElement.removePropertyChangeListener( "component", parentComponentListener );
+                plotElement.removePropertyChangeListener( "component", parentComponentListener );
+            }
+            String pid= plotElement.getParent();
+            if ( pid.trim().length()==0 ) {
+                return;
+            }
+            PlotElement ppe=(PlotElement)dom.controller.getElementById(pid);
+            if ( ppe!=null ) {
+                parentPlotElement= ppe;
+                parentPlotElement.addPropertyChangeListener( "component", parentComponentListener );
+                plotElement.addPropertyChangeListener( "component", parentComponentListener );
+            }
+        }  
+    };
+            
     PropertyChangeListener plotElementListener = new PropertyChangeListener() {
 
         @Override
@@ -294,15 +378,12 @@ public class PlotElementController extends DomNodeController {
                 final RenderType newRenderType = (RenderType) evt.getNewValue();
                 final RenderType oldRenderType = (RenderType) evt.getOldValue();
                 changesSupport.registerPendingChange( PlotElementController.this, PENDING_RESET_RENDER_TYPE );
-                Runnable run= new Runnable() {
-                    @Override
-                    public void run() {
-                        try {
-                            changesSupport.performingChange( PlotElementController.this, PENDING_RESET_RENDER_TYPE );
-                            resetRenderTypeImp( oldRenderType, newRenderType ); 
-                        } finally {
-                            changesSupport.changePerformed( PlotElementController.this, PENDING_RESET_RENDER_TYPE );
-                        }
+                Runnable run= () -> {
+                    try {
+                        changesSupport.performingChange( PlotElementController.this, PENDING_RESET_RENDER_TYPE );
+                        resetRenderTypeImp( oldRenderType, newRenderType );
+                    } finally {
+                        changesSupport.changePerformed( PlotElementController.this, PENDING_RESET_RENDER_TYPE );
                     }
                 };
                 if ( SwingUtilities.isEventDispatchThread() ) {
@@ -322,15 +403,12 @@ public class PlotElementController extends DomNodeController {
                         if ( getRenderer()!=null ) getRenderer().setDataSet(null); // transitional state associated with undo.  https://sourceforge.net/tracker/?func=detail&aid=3316754&group_id=199733&atid=970682
                     } else {
                         changesSupport.registerPendingChange( PlotElementController.this, PENDING_RESET_DATASOURCEFILTERID );                
-                        Runnable run= new Runnable() {
-                            @Override
-                            public void run() { 
-                                try {
-                                    changesSupport.performingChange( PlotElementController.this, PENDING_RESET_DATASOURCEFILTERID  );
-                                    updateDataSet();
-                                } finally {
-                                    changesSupport.changePerformed( PlotElementController.this, PENDING_RESET_DATASOURCEFILTERID  );
-                                }
+                        Runnable run= () -> {
+                            try {
+                                changesSupport.performingChange( PlotElementController.this, PENDING_RESET_DATASOURCEFILTERID  );
+                                updateDataSet();
+                            } finally {
+                                changesSupport.changePerformed( PlotElementController.this, PENDING_RESET_DATASOURCEFILTERID  );
                             } 
                         };
                         if ( SwingUtilities.isEventDispatchThread() ) {
@@ -341,12 +419,26 @@ public class PlotElementController extends DomNodeController {
                     }
                 }
             } else if ( evt.getPropertyName().equals( PlotElement.PROP_COMPONENT ) ) {
+                String oldv= (String)evt.getOldValue();
+                oldv= DataSetOps.makeProcessStringCanonical(oldv);
                 String newv= (String)evt.getNewValue();
-                if ( DataSetOps.changesDimensions( (String)evt.getOldValue(), newv ) ) { //TODO: why two methods see axisDimensionsChange 10 lines above
-                    logger.log(Level.FINER, "component property change requires we reset render and dimensions: {0}->{1}", new Object[]{(String) evt.getOldValue(), (String) evt.getNewValue()});
-                    setResetPlotElement(true);
-                    setResetRanges(true);
-                    if ( !dom.getController().isValueAdjusting() ) maybeSetPlotAutorange();
+                newv= DataSetOps.makeProcessStringCanonical(newv);
+                if ( DataSetOps.changesDimensions( oldv, newv ) ) { //TODO: why two methods see axisDimensionsChange 10 lines above
+                    if ( DataSetOps.changesIndependentDimensions( oldv,newv ) ) {
+                        logger.log(Level.FINER, "component property change requires we reset render and dimensions: {0}->{1}", new Object[]{(String) evt.getOldValue(), (String) evt.getNewValue()});
+                        setResetPlotElement(true);
+                        setResetRanges(true);
+                        if ( !dom.getController().isValueAdjusting() ) {
+                            maybeSetPlotAutorange();
+                        }
+                    } else {
+                        logger.log(Level.FINER, "component property change requires we reset just the y-axis: {0}->{1}", new Object[]{(String) evt.getOldValue(), (String) evt.getNewValue()});
+                        setResetPlotElement(true);
+                        setResetRanges(true);
+                        if ( !dom.getController().isValueAdjusting() ) {
+                            maybeSetPlotYZAutorange();
+                        }
+                    }
                 }
                 if ( sliceAutoranges ) {
                     setResetRanges(true);
@@ -359,27 +451,24 @@ public class PlotElementController extends DomNodeController {
                     return;
                 }
                 changesSupport.registerPendingChange(plotElementListener, PENDING_COMPONENT_OP);
-                Runnable run= new Runnable() {
-                    @Override
-                    public void run() {
-                        if ( changesSupport==null ) {
-                            logger.severe("changesSupport is null!!!");
-                            return;
-                        }
-                        // we reenter this code, so only set lock once.  See test.endtoend.Test015.java
-                        // vap+cef:file:///home/jbf/ct/hudson/data.backup/cef/C1_CP_PEA_CP3DXPH_DNFlux__20020811_140000_20020811_150000_V061018.cef?Data__C1_CP_PEA_CP3DXPH_DNFlux
-                        // bug 1480 insert breakpoint here
-                        changesSupport.performingChange(plotElementListener, PENDING_COMPONENT_OP);
-                        setStatus("busy: update data set");
-                        try {
-                            updateDataSet();
-                            setStatus("done update data set");
-                        } catch ( RuntimeException ex ) {
-                            setStatus("warning: "+ex.toString());
-                            throw ex;
-                        } finally {
-                            changesSupport.changePerformed(plotElementListener, PENDING_COMPONENT_OP);
-                        }
+                Runnable run= () -> {
+                    if ( changesSupport==null ) {
+                        logger.severe("changesSupport is null!!!");
+                        return;
+                    }
+                    // we reenter this code, so only set lock once.  See test.endtoend.Test015.java
+                    // vap+cef:file:///home/jbf/ct/hudson/data.backup/cef/C1_CP_PEA_CP3DXPH_DNFlux__20020811_140000_20020811_150000_V061018.cef?Data__C1_CP_PEA_CP3DXPH_DNFlux
+                    // bug 1480 insert breakpoint here
+                    changesSupport.performingChange(plotElementListener, PENDING_COMPONENT_OP);
+                    setStatus("busy: update data set");
+                    try {
+                        updateDataSet();
+                        setStatus("done update data set");
+                    } catch ( RuntimeException ex ) {
+                        setStatus("warning: "+ex.toString());
+                        throw ex;
+                    } finally {
+                        changesSupport.changePerformed(plotElementListener, PENDING_COMPONENT_OP);
                     }
                 };
                 
@@ -397,7 +486,11 @@ public class PlotElementController extends DomNodeController {
         public void propertyChange(PropertyChangeEvent evt) {
             LoggerManager.logPropertyChangeEvent(evt,"parentStyleListener");            
             try {
-                DomUtil.setPropertyValue(plotElement.style, evt.getPropertyName(), evt.getNewValue());
+                if ( evt.getPropertyName().equals("color") ) {
+                    logger.fine("ignoring change of parent color.");
+                } else {
+                    DomUtil.setPropertyValue(plotElement.style, evt.getPropertyName(), evt.getNewValue());
+                }
             } catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException ex) {
                 logger.log(Level.SEVERE, ex.getMessage(), ex);
             }
@@ -608,21 +701,25 @@ public class PlotElementController extends DomNodeController {
 
     private boolean rendererAcceptsData(QDataSet fillDs) {
         if ( getRenderer() instanceof SpectrogramRenderer ) {
-            if ( fillDs.rank()==3 ) {
-                QDataSet dep0= (QDataSet) fillDs.property( QDataSet.DEPEND_0 );  // only support das2 tabledataset scheme.
-                if ( dep0!=null ) return false;
-                return rendererAcceptsData( DataSetOps.slice0(fillDs,0) );
-            } else if ( fillDs.rank()==2 ) { // && !SemanticOps.isBundle(fillDs) ) {
-                return true;
-            } else {
-                if ( fillDs.property(QDataSet.PLANE_0)!=null ) {
+            switch (fillDs.rank()) {
+                case 3:
+                    QDataSet dep0= (QDataSet) fillDs.property( QDataSet.DEPEND_0 );  // only support das2 tabledataset scheme.
+                    if ( dep0!=null ) return false;
+                    return rendererAcceptsData( DataSetOps.slice0(fillDs,0) );
+                case 2:
+                    // && !SemanticOps.isBundle(fillDs) ) {
                     return true;
-                } else {
-                    return false;
-                }
+                default:
+                    if ( fillDs.property(QDataSet.PLANE_0)!=null ) {
+                        return true;
+                    } else {
+                        return false;
+                    }
             }
         } else if ( getRenderer() instanceof SeriesRenderer) {
             switch (fillDs.rank()) {
+                case 0:
+                    return true;
                 case 1:
                     return true;
                 case 2:
@@ -632,7 +729,7 @@ public class PlotElementController extends DomNodeController {
                 default:
                     return false;
             }
-        } else if ( getRenderer() instanceof ImageVectorDataSetRenderer ) {
+        } else if ( getRenderer() instanceof HugeScatterRenderer ) {
             switch (fillDs.rank()) {
                 case 1:
                     return true;
@@ -682,7 +779,22 @@ public class PlotElementController extends DomNodeController {
                     PlotController pc= plot.getController();
                     pc.doPlotElementDefaultsUnitsChange(plotElement);
                 }
-                QDataSet context= (QDataSet) fillDs.property(QDataSet.CONTEXT_0);
+                Object ocontext= fillDs.property(QDataSet.CONTEXT_0);
+                if ( ocontext!=null ) {
+                    Object altContext= fillDs.property( QDataSet.CONTEXT_1 );
+                    if ( altContext!=null && altContext instanceof QDataSet ) {
+                        Units acu= (Units)(((QDataSet)altContext).property(QDataSet.UNITS));
+                        if ( acu!=null && UnitsUtil.isTimeLocation(acu) ) {
+                            ocontext= altContext;
+                        }
+                    }
+                }
+                
+                if ( ocontext!=null && !( ocontext instanceof QDataSet ) ) {
+                    logger.warning("CONTEXT_0 is not a QDataSet");
+                    ocontext= null;
+                }
+                QDataSet context= (QDataSet)ocontext;
                 if ( context!=null ) {
                     DatumRange cdr;
                     try {
@@ -706,6 +818,7 @@ public class PlotElementController extends DomNodeController {
 
             setDataSetInternal(fillDs);
         } catch ( RuntimeException ex ) {
+            logger.log(Level.FINE, "runtime exception caught: {0}", new Object[] { ex });
             if (getRenderer() != null) {
                 getRenderer().setDataSet(null);
                 getRenderer().setException(getRootCause(ex));
@@ -860,12 +973,14 @@ public class PlotElementController extends DomNodeController {
     }
     
     /**
-     * Resolve the renderType and renderControl for the dataset.
+     * Resolve the renderType and renderControl for the dataset.  This may be
+     * set explicitly by the dataset, in its RENDER_TYPE property, or resolved
+     * using the dataset scheme.
      * 
      * @param fillds 
-     * @return the render string with canonical types.  The result will always contain a greater than (>).
+     * @return the render string with canonical types.  The result will always contain a greater than (&gt;).
      */
-    private static String resolveRenderType( QDataSet fillds ) {
+    public static String resolveRenderType( QDataSet fillds ) {
         String srenderType= (String) fillds.property(QDataSet.RENDER_TYPE);
         RenderType renderType;
         String renderControl="";
@@ -877,16 +992,21 @@ public class PlotElementController extends DomNodeController {
                 renderControl= srenderType.substring(i+1);
                 srenderType= srenderType.substring(0,i);
             }
+            boolean useHugeScatter= "true".equals( System.getProperty("useHugeScatter","true") );
             switch (srenderType) {
                 case "time_series":
-                    if (fillds.length() > SERIES_SIZE_LIMIT) {
+                    if ( useHugeScatter && fillds.length() > SERIES_SIZE_LIMIT) {
                         renderType = RenderType.hugeScatter;
                     } else {
                         renderType = RenderType.series;
                     }
                     break;
                 case "waveform":
-                    renderType = RenderType.hugeScatter;
+                    if ( useHugeScatter ) {
+                        renderType = RenderType.hugeScatter;
+                    } else {
+                        renderType = RenderType.series;
+                    }
                     break;
                 case "spectrogram":
                     RenderType specPref= RenderType.spectrogram;
@@ -906,10 +1026,17 @@ public class PlotElementController extends DomNodeController {
                     }
                     break;
             }
+            return renderType.toString() + ">" + renderControl;
         } else {
             renderType = AutoplotUtil.guessRenderType(fillds);
+            if ( renderType==RenderType.series ) {
+                if ( Schemes.isScalarSeriesWithErrors(fillds) ) {
+                    renderControl= "drawError=T";
+                }
+            }
+            return renderType.toString() + ">" + renderControl;
         }
-        return renderType.toString() + ">" + renderControl;
+        
     }
 
     private void updateDataSetImmediately() throws Exception {
@@ -923,12 +1050,15 @@ public class PlotElementController extends DomNodeController {
             QDataSet fillDs = dsf.controller.getFillDataSet();
             Exception renderException= null;
             if (fillDs != null) {
-                final String comp= plotElement.getComponent().trim();
-                logger.log(Level.FINE, "updateDataSetImmediately: {0} {1}", new Object[]{plotElement, plotElement.getRenderType() });
-                logger.log(Level.FINE, "  resetPlotElement: {0}", resetPlotElement );
-                logger.log(Level.FINE, "  resetRanges: {0}", resetRanges);
-                logger.log(Level.FINE, "  resetRenderType: {0}", resetRenderType );
-                logger.log(Level.FINE, "  dataSet: {0}", String.valueOf(fillDs) );
+                final String comp= DataSetOps.makeProcessStringCanonical( plotElement.getComponent().trim() );
+                if ( logger.isLoggable(Level.FINE) ) {
+                    logger.log(Level.FINE, "updateDataSetImmediately: {0} {1}", new Object[]{plotElement, plotElement.getRenderType() });
+                    logger.log(Level.FINE, "  resetPlotElement: {0}", resetPlotElement );
+                    logger.log(Level.FINE, "  resetRanges: {0}", resetRanges);
+                    logger.log(Level.FINE, "  resetRenderType: {0}", resetRenderType );
+                    logger.log(Level.FINE, "  component: {0}", comp );
+                    logger.log(Level.FINE, "  dataSet: {0}", String.valueOf(fillDs) );
+                }
                 
                 //This was to support the CdawebVapServlet, where partial vaps are handled.  See https://sourceforge.net/p/autoplot/bugs/1304/
                 //if ( plotElement.isAutoRenderType() ) {
@@ -947,9 +1077,21 @@ public class PlotElementController extends DomNodeController {
                     } else if ( comp.startsWith("|") ) {
                         try {
                             QDataSet fillDs2 = fillDs;
+                            //String srenderType= (String)fillDs2.property(QDataSet.RENDER_TYPE);
+                            //if ( srenderType!=null ) {
+                            //    srenderType= resolveRenderType( fillDs2 );
+                            //}
                             if ( comp.length()>0 ) fillDs2= processDataSet( comp, fillDs2 );
+                            if ( fillDs2==null ) throw new NullPointerException("operations result in null: "+comp);
                             String s= resolveRenderType( fillDs2 );
+                            //if ( comp.length()>0 && comp.startsWith("|unbundle(") && srenderType!=null ) { // vap+inline:ripplesVectorTimeSeries(200)&RENDER_TYPE=hugeScatter
+                            //    if ( !srenderType.contains(">") ) {
+                            //        srenderType= srenderType + ">";
+                            //    }
+                            //    s= srenderType;
+                            //}
                             int i= s.indexOf('>');
+                            if ( i==-1 ) i=s.length();
                             RenderType renderType= RenderType.valueOf(s.substring(0,i));
                             if ( !renderType.equals(plotElement.renderType) &&  getRenderer()!=null ) getRenderer().setDataSet(null); //bug1065
                             plotElement.renderType = renderType; // setRenderTypeAutomatically.  We don't want to fire off event here.
@@ -1016,15 +1158,13 @@ public class PlotElementController extends DomNodeController {
         registerPendingChange( this, PENDING_UPDATE_DATASET );
         //TODO: we should hand off the dataset here instead of mucking around with it...  
         if (!dom.controller.isValueAdjusting()) {
-            Runnable run= new Runnable() {
-                @Override
-                public void run() { // java complains about method not override.
-                    try {
-                        updateDataSetImmediately();
-                    } catch ( Exception ex ) {
-                        logger.log( Level.WARNING, ex.getMessage(), ex ); // wrapping somehow didn't show original exception.
-                        throw new IllegalArgumentException(ex);
-                    }
+            Runnable run= () -> {
+                // java complains about method not override.
+                try {
+                    updateDataSetImmediately();
+                } catch ( Exception ex ) {
+                    logger.log( Level.WARNING, ex.getMessage(), ex ); // wrapping somehow didn't show original exception.
+                    throw new IllegalArgumentException(ex);
                 }
             };
             //RequestProcessor.invokeLater(run); // this allows listening PlotElements to each do their stuff.
@@ -1050,8 +1190,9 @@ public class PlotElementController extends DomNodeController {
      * causes the z axis to become the yaxis.
      * @param oldRenderType
      * @param newRenderType
+     * @return true if the dimensions change.
      */
-    private boolean axisDimensionsChange( RenderType oldRenderType, RenderType newRenderType ) {
+    public static boolean axisDimensionsChange( RenderType oldRenderType, RenderType newRenderType ) {
         if ( oldRenderType==newRenderType ) return false;
         if ( newRenderType==RenderType.pitchAngleDistribution ) return true;
         if ( newRenderType==RenderType.polar ) return true;
@@ -1062,10 +1203,28 @@ public class PlotElementController extends DomNodeController {
         } else if ( newRenderType==RenderType.spectrogram || newRenderType==RenderType.nnSpectrogram ) {
             return true;
         } else {
-            if ( oldRenderType==RenderType.spectrogram || oldRenderType==RenderType.nnSpectrogram ) {
-                return true;
-            } else {
+            if ( newRenderType==RenderType.eventsBar ) {
                 return false;
+            } else {
+                if ( oldRenderType==RenderType.spectrogram || oldRenderType==RenderType.nnSpectrogram ) {
+                    return true;
+                } else {
+                    if ( oldRenderType==RenderType.scatter 
+                            || oldRenderType==RenderType.series
+                            || oldRenderType==RenderType.fillToZero 
+                            || oldRenderType==RenderType.stairSteps ) {
+                        if ( newRenderType==RenderType.scatter 
+                            || newRenderType==RenderType.series
+                            || newRenderType==RenderType.fillToZero 
+                            || newRenderType==RenderType.stairSteps ) {
+                            return false;
+                        } else {
+                            return true;
+                        }
+                    } else {
+                        return false;
+                    }
+                }
             }
         }
     }
@@ -1205,7 +1364,7 @@ public class PlotElementController extends DomNodeController {
         List<Integer> qube= new ArrayList(); // we remove elements from this one.
         int[] a= DataSetUtil.qubeDims(fillDs);
         if ( a==null ) {
-            throw new IllegalArgumentException("expected fillDs to be a qube");
+            return "|slice0(" + fillDs.length()/2+")";
         }
         for ( int i=0; i<rank; i++ ) {
             qube.add(a[i]);
@@ -1253,6 +1412,10 @@ public class PlotElementController extends DomNodeController {
                     }
                 }
             }
+            
+            if ( Schemes.isArrayOfBoundingBox(fillDs) ) {
+                return "";
+            }
 
             // pick a slice index near the middle, which is less likely to be all fill.
             int n= Math.max( 0, qube.get(sliceIndex)/2-1 );
@@ -1299,36 +1462,34 @@ public class PlotElementController extends DomNodeController {
     }
 
     /**
-     * listen for changes in the parent's component property and propagate changes
-     * to children.
-     * @param plotElement
-     * @param ele
+     * return true for a set of labels which seem to be describing different
+     * things.  This is just simply checking to see:<ul>
+     * <li> if all the first characters are number, then it is similar
+     * <li> if all the first characters are the same letter, then it is similar
+     * <li> otherwise it is dissimilar.
+     * @param chs the array of labels.
+     * @return true if they appear to be differing.
+     * @see https://sourceforge.net/p/autoplot/bugs/2571/
      */
-    private void addParentComponentListener( PlotElement plotElement, final PlotElement ele ) {
-        PropertyChangeListener pcl= new PropertyChangeListener() { // need to listen for component changes for |slice1(x)|unbundle('A')
-            @Override
-            public void propertyChange(PropertyChangeEvent evt) {
-                LoggerManager.logPropertyChangeEvent(evt,"addParentComponentListener");            
-                if ( evt.getPropertyName().equals(PlotElement.PROP_COMPONENT) ) {
-                    if ( DataSetOps.changesDimensions((String)evt.getOldValue(),(String)evt.getNewValue()) ) {
-                        return;
-                    }
-                    Object v= evt.getNewValue();
-                    int i= ele.getComponent().indexOf("|unbundle");
-                    if ( i==-1 ) {
-                        throw new IllegalArgumentException("expected to see unbundle");
-                    }
-                    String tail = ele.getComponent().substring(i);
-                    if ( i!=-1 ) {
-                        String sv= (String)v;
-                        ele.setComponent( sv+tail );
-                    }
+    private boolean dissimilarChannels( String[] chs ) {
+        if ( chs[0].length()==0 ) return true; // unnamed channels probably shouldn't happen
+        char c= chs[0].charAt(0);
+        char allStartWith= c;
+        boolean allNumbers= Character.isDigit(c) || c=='.' ;
+        for ( String ch: chs ) {
+            if ( ch.length()==0 ) return true;
+            c= ch.charAt(0);
+            if ( allNumbers ) {
+                if ( !Character.isDigit(c) && c!='.' ) {
+                    return true;
+                }
+            } else {
+                if ( c!=allStartWith ) {
+                    return true;
                 }
             }
-        };
-        plotElement.addPropertyChangeListener( pcl );
-
-        ele.getController().setParentComponentListener( pcl );
+        }
+        return false;
     }
 
     /**
@@ -1357,7 +1518,8 @@ public class PlotElementController extends DomNodeController {
             //boolean lastDimBundle= isLastDimBundle( fillDs );
             //boolean joinOfBundle= fillDs.property(QDataSet.JOIN_0)!=null && lastDimBundle;
             int ndim= Ops.dimensionCount(fillDs);
-            boolean shouldSlice= ( fillDs.rank()>2 && ndim>3 && plotElement.isAutoComponent() );
+            boolean isxyz= SemanticOps.isBundle(fillDs) && fillDs.property(QDataSet.DEPEND_0)==null;
+            boolean shouldSlice= ( fillDs.rank()>2 && ndim>3 && plotElement.isAutoComponent() && !isxyz );
             if ( renderType==RenderType.image && fillDs.rank()==3 ) {
                 shouldSlice= false; //TODO: some how render types should indicate they can handle a slice.
             }
@@ -1378,26 +1540,22 @@ public class PlotElementController extends DomNodeController {
 
             boolean isWaveform= false;
             if ( SemanticOps.isRank2Waveform(fillDs) ) {
-                QDataSet dep0= (QDataSet) fillDs.property(QDataSet.DEPEND_0);
-                QDataSet dep1= (QDataSet) fillDs.property(QDataSet.DEPEND_1);
-                if ( dep0!=null && dep1!=null ) {
-                    Units dep0units= SemanticOps.getUnits( dep0 );
-                    Units dep1units= SemanticOps.getUnits( dep1 );
-                    if ( dep0units!=Units.dimensionless && dep1units.isConvertibleTo( dep0units.getOffsetUnits() ) ) {
-                        isWaveform= true;
-                    }
-                }
+                isWaveform= true;
             }
 
-            boolean shouldHaveChildren= fillDs.rank() == 2 && !isWaveform
-                    &&  ( renderType == RenderType.hugeScatter || renderType==RenderType.series || renderType==RenderType.scatter || renderType==RenderType.stairSteps );
+            boolean shouldHaveChildren= 
+                    fillDs.rank() == 2 
+                    && !isxyz
+                    && !isWaveform
+                    &&  ( renderType == RenderType.hugeScatter 
+                    || renderType==RenderType.series 
+                    || renderType==RenderType.scatter 
+                    || renderType==RenderType.stairSteps );
             //if ( joinOfBundle ) shouldHaveChildren= true;
 
             if ( fillDs.rank()==2 && SemanticOps.isBundle(fillDs) ) { //TODO: LANL has datasets with both BUNDLE_1 and DEPEND_1 set, so the user can pick.
                 QDataSet bdesc= (QDataSet) fillDs.property(QDataSet.BUNDLE_1);
                 Object context0= bdesc.property(QDataSet.CONTEXT_0,bdesc.length()-1); // in a bundleDescriptor, this can be a string.
-                if ( context0==null ) context0=  bdesc.property(QDataSet.DEPEND_0,bdesc.length()-1); // according to guessRenderType DEPEND_0 should be used.
-                if ( context0==null ) context0=  bdesc.property(QDataSet.DEPENDNAME_0,bdesc.length()-1); 
                 if ( null!=context0 && context0 instanceof String ) {
                     shouldHaveChildren= false;
                 }
@@ -1481,6 +1639,12 @@ public class PlotElementController extends DomNodeController {
                     List<PlotElement> cp = new ArrayList<>(count);
                     int nsubsample= 1 + ( count-1 ) / 12; // 1-12 no subsample, 13-24 1 subsample, 25-36 2 subsample, etc.
 
+                    // check for inconsistencies in names, which might indictate that these are not similar channels
+                    boolean dissimilarChannels= dissimilarChannels(lnames);
+                    if ( dissimilarChannels ) {
+                        nsubsample= 1 + ( count-1 ) / 64; // 1-64 no subsample, 65...
+                    }
+                    
                     //check for non-unique labels, or labels that are simply numbers.
                     boolean uniqLabels= true;
                     assert lnames!=null;
@@ -1550,7 +1714,7 @@ public class PlotElementController extends DomNodeController {
                                 } else {
                                     s= s+"|unbundle('ch_"+i+"')";
                                 }
-                                addParentComponentListener(plotElement,ele);
+                                //addParentComponentListener(plotElement,ele);
                                 label1= llabels[i];
                             }
                         }
@@ -1609,6 +1773,7 @@ public class PlotElementController extends DomNodeController {
                 plotElement.setAutoComponent(true);
                 plotElement.setAutoRenderType(true);
                 maybeSetPlotAutorange();
+                //setDsfReset(false);
             }
         }
     };
@@ -1640,6 +1805,23 @@ public class PlotElementController extends DomNodeController {
         return isNotBound;
     }
 
+    /**
+     * we'd like the plot to autorange, so check to see if we are the only
+     * plotElement, and if so, set its autorange and autoLabel flags.
+     */
+    private void maybeSetPlotYZAutorange() {
+        Plot p= dom.controller.getPlotFor(plotElement);
+        if ( p==null ) return;
+        List<PlotElement> eles= dom.controller.getPlotElementsFor(p);
+        if ( DomUtil.oneFamily(eles) ) {
+            p.getYaxis().setAutoRange(true);
+            p.getZaxis().setAutoRange(true);
+            p.getYaxis().setAutoLabel(true);
+            p.getZaxis().setAutoLabel(true);
+            p.setAutoLabel(true);
+            p.setAutoBinding(true);
+        }
+    }    
     /**
      * we'd like the plot to autorange, so check to see if we are the only
      * plotElement, and if so, set its autorange and autoLabel flags.
@@ -1679,6 +1861,7 @@ public class PlotElementController extends DomNodeController {
     }
 
     public void setResetRanges(boolean resetRanges) {
+        logger.log(Level.FINE, "{0}.setResetRanges({1})", new Object[] { plotElement.id, resetRanges } );
         boolean oldResetRanges = this.resetRanges;
         this.resetRanges = resetRanges;
         propertyChangeSupport.firePropertyChange(PROP_RESETRANGES, oldResetRanges, resetRanges);
@@ -1697,7 +1880,7 @@ public class PlotElementController extends DomNodeController {
     }
 
     public void setResetPlotElement(boolean resetPlotElement) {
-        logger.log(Level.FINER, "{0}.setResetPlotElement({1})", new Object[] { plotElement.id, resetPlotElement } );
+        logger.log(Level.FINE, "{0}.setResetPlotElement({1})", new Object[] { plotElement.id, resetPlotElement } );
         boolean old = this.resetPlotElement;
         this.resetPlotElement = resetPlotElement;
         propertyChangeSupport.firePropertyChange(PROP_RESETPLOTELEMENT, old, resetPlotElement);
@@ -1773,6 +1956,7 @@ public class PlotElementController extends DomNodeController {
         propertyChangeSupport.firePropertyChange(PROP_SLICEAUTORANGES, oldSliceAutoranges, sliceAutoranges);
     }
 
+    private static AtomicInteger renderCount= new AtomicInteger();
 
     protected Renderer renderer = null;
 
@@ -1787,6 +1971,7 @@ public class PlotElementController extends DomNodeController {
      * @see external.PlotCommand
      */
     public void setRenderer(Renderer renderer) {
+        logger.entering("PlotElementController","setRenderer");
         Renderer oldRenderer= this.renderer;
         ApplicationController ac = this.dom.controller;
         if ( oldRenderer!=null ) {
@@ -1806,8 +1991,8 @@ public class PlotElementController extends DomNodeController {
             bindToSeriesRenderer((SeriesRenderer) renderer);
         } else if (renderer instanceof SpectrogramRenderer) {
             bindToSpectrogramRenderer((SpectrogramRenderer) renderer);
-        } else if (renderer instanceof ImageVectorDataSetRenderer) {
-            bindToImageVectorDataSetRenderer((ImageVectorDataSetRenderer) renderer);
+        } else if (renderer instanceof HugeScatterRenderer) {
+            bindToImageVectorDataSetRenderer((HugeScatterRenderer) renderer);
         } else if (renderer instanceof EventsRenderer ) {
             bindToEventsRenderer((EventsRenderer)renderer);
         } else if (renderer instanceof DigitalRenderer ) {
@@ -1826,11 +2011,12 @@ public class PlotElementController extends DomNodeController {
             JMenuItem mi= mip.getController().getPlotElementPropsMenuItem();
             if ( mi!=null ) mi.setIcon( renderer.getListIcon() );
         }
-        renderer.setId( "rend_"+plotElement.getId());
+        renderer.setId( "rend_"+plotElement.getId()+"_"+String.format( "%04d", PlotElementController.renderCount.incrementAndGet() ) ); // for debugging, make unique names
         ac.bind(plotElement, PlotElement.PROP_LEGENDLABEL, renderer, Renderer.PROP_LEGENDLABEL, getLabelConverter() );
         ac.bind(plotElement, PlotElement.PROP_DISPLAYLEGEND, renderer, Renderer.PROP_DRAWLEGENDLABEL);
         ac.bind(plotElement, PlotElement.PROP_RENDERCONTROL, renderer, Renderer.PROP_CONTROL );
         ac.bind(plotElement, PlotElement.PROP_ACTIVE, renderer, Renderer.PROP_ACTIVE );
+        logger.exiting("PlotElementController","setRenderer");
     }
 
     /**
@@ -1864,6 +2050,8 @@ public class PlotElementController extends DomNodeController {
                 throw new NullPointerException("unable to find plot for plotElement: "+plotElement );
             }
 
+            logger.log(Level.FINE, "renderType: {0}", plotElement.getRenderType());
+            
             PlotElement peleCopy = (PlotElement) plotElement.copy();
             peleCopy.setId("");
             peleCopy.setParent("");
@@ -1899,6 +2087,7 @@ public class PlotElementController extends DomNodeController {
                 doMetadata(peleCopy, props, fillDs );
 
                 String appliedFilters = dsc.getAppliedFiltersString();
+                if ( appliedFilters!=null ) appliedFilters= appliedFilters.trim();
                 String title = peleCopy.getPlotDefaults().getTitle();
                 if ( fillDs.property(QDataSet.CONTEXT_0)!=null && dsc.reduceDataSetString!=null ) { 
                     title += "!c%{CONTEXT}";
@@ -2009,12 +2198,14 @@ public class PlotElementController extends DomNodeController {
 
     /**
      * extract properties from the data and metadata to get axis labels, fill values, and
-     * preconditions:
-     *    fillData is set.
-     *    fillProperties is set.
-     * postconditions:
-     *    metadata is inspected to get axis labels, fill values, etc.
-     *    renderType is determined and set.
+     * preconditions:<ul>
+     * <li>fillData is set.
+     * <li>fillProperties is set.
+     * </ul>
+     * postconditions:<ul>
+     * <li>metadata is inspected to get axis labels, fill values, etc.
+     * <li>renderType is determined and set.
+     * </ul>
      * @param autorange
      * @param interpretMetadata
      */
@@ -2145,10 +2336,40 @@ public class PlotElementController extends DomNodeController {
 
     }
 
+    /**
+     * This is the old updateFillSeries and updateFillSpectrogram code.  
+     * 
+     * This calculates
+     * ranges and preferred symbol settings, and puts the values in peleCopy.plotDefaults.
+     * The dom Plot containing this plotElement should be listening for changes in plotElement.plotDefaults,
+     * and can then decide if it wants to use the autorange settings.
+     *
+     * This also sets the style node of the plotElement copy, so its values should be sync'ed as well.
+     * 
+     * This routine can be found by searching for "liver," since it is not the heart but pretty close to it.
+     * 
+     * @param peleCopy the plot element.
+     * @param props metadata provided by the data source, converted to uniform QDataSet scheme (e.g. get(DEPEND_0).get(TYPICAL_MIN) )
+     * @param fillDs the dataset
+     */
     public static void doAutoranging( PlotElement peleCopy, Map<String,Object> props, QDataSet fillDs ) {
         doAutoranging( peleCopy, props, fillDs, false );
     }
 
+    private static void copyAutorange( Plot p, QDataSet bounds ) {
+        assert Schemes.isBoundingBox(bounds);
+        p.xaxis.setRange( DataSetUtil.asDatumRange( bounds.slice(0),true ) );
+        p.xaxis.setLog( "log".equals( bounds.slice(0).property(QDataSet.SCALE_TYPE) ) );
+        p.yaxis.setRange( DataSetUtil.asDatumRange( bounds.slice(1),true ) );
+        p.yaxis.setLog( "log".equals( bounds.slice(1).property(QDataSet.SCALE_TYPE) ) );
+        if ( bounds.length()>2 ) {
+            p.zaxis.setRange( DataSetUtil.asDatumRange( bounds.slice(2),true ) );
+            p.zaxis.setLog( "log".equals( bounds.slice(2).property(QDataSet.SCALE_TYPE) ) );
+        } else {
+            p.zaxis.setAutoRange(false);
+        }
+    }
+    
     /**
      * This is the old updateFillSeries and updateFillSpectrogram code.  
      * 
@@ -2274,14 +2495,12 @@ public class PlotElementController extends DomNodeController {
 
             AutoRangeUtil.AutoRangeDescriptor ydesc = AutoplotUtil.autoRange(yds, yprops, ignoreDsProps );
             logger.log(Level.FINE, "ydesc.range={0}", ydesc.range);
-
+            
             peleCopy.getPlotDefaults().getZaxis().setRange(desc.range);
             peleCopy.getPlotDefaults().getZaxis().setLog(desc.log);
 
             logger.log(Level.FINE, "xaxis.isAutoRange={0}", peleCopy.getPlotDefaults().getXaxis().isAutoRange());
-            if ( !peleCopy.getPlotDefaults().getXaxis().isAutoRange() ) {
-                logger.fine("20121015: I was thinking autorange would always be true");
-            }
+
             peleCopy.getPlotDefaults().getXaxis().setLog(xdesc.log);
             peleCopy.getPlotDefaults().getXaxis().setRange(xdesc.range);
             peleCopy.getPlotDefaults().getYaxis().setLog(ydesc.log);
@@ -2306,72 +2525,80 @@ public class PlotElementController extends DomNodeController {
             if ( qube==null ) {
                 // nothing
             } else {
-                peleCopy.getPlotDefaults().getXaxis().setRange( DataSetUtil.asDatumRange( qube.slice(0),true ) );
+                copyAutorange( peleCopy.getPlotDefaults(), qube );
                 String label=  (String) qube.slice(0).property( QDataSet.LABEL );
                 peleCopy.getPlotDefaults().getXaxis().setLabel( label==null ? "" : label );
-                peleCopy.getPlotDefaults().getYaxis().setRange( DataSetUtil.asDatumRange( qube.slice(1),true ) );
                 label=  (String) qube.slice(1).property( QDataSet.LABEL );
                 peleCopy.getPlotDefaults().getYaxis().setLabel( label==null ? "" : label );
-                if ( qube.length()>2 ) {
-                    peleCopy.getPlotDefaults().getZaxis().setRange( DataSetUtil.asDatumRange( qube.slice(2),true ) );
-                    peleCopy.getPlotDefaults().getZaxis().setLog( "log".equals( qube.slice(2).property(QDataSet.SCALE_TYPE) ) );
-                }
             }
         } else if ( spec==RenderType.digital ) {
             QDataSet qube= DigitalRenderer.doAutorange( fillDs );
             if ( qube==null ) {
                 // nothing
             } else {
-                peleCopy.getPlotDefaults().getXaxis().setRange( DataSetUtil.asDatumRange( qube.slice(0),true ) );
-                peleCopy.getPlotDefaults().getYaxis().setRange( DataSetUtil.asDatumRange( qube.slice(1),true ) );
-                peleCopy.getPlotDefaults().getZaxis().setAutoRange(false);
+                copyAutorange( peleCopy.getPlotDefaults(), qube );
             }
         } else if ( spec==RenderType.contour ) {
             QDataSet qube= ContoursRenderer.doAutorange( fillDs );
             if ( qube==null ) {
                 // nothing
             } else {
-                peleCopy.getPlotDefaults().getXaxis().setRange( DataSetUtil.asDatumRange( qube.slice(0),true ) );
-                peleCopy.getPlotDefaults().getYaxis().setRange( DataSetUtil.asDatumRange( qube.slice(1),true ) );
-                peleCopy.getPlotDefaults().getZaxis().setAutoRange(false);
+                copyAutorange( peleCopy.getPlotDefaults(), qube );
             }
         } else if ( spec==RenderType.eventsBar ) {
             QDataSet qube= EventsRenderer.doAutorange( fillDs );
             if ( qube==null ) {
                 // nothing
             } else {
-                peleCopy.getPlotDefaults().getXaxis().setRange( DataSetUtil.asDatumRange( qube.slice(0),true ) );
-                peleCopy.getPlotDefaults().getYaxis().setRange( DataSetUtil.asDatumRange( qube.slice(1),true ) );
+                copyAutorange( peleCopy.getPlotDefaults(), qube );
                 peleCopy.getPlotDefaults().getYaxis().setAutoRange(false);
-                peleCopy.getPlotDefaults().getZaxis().setAutoRange(false);
+                peleCopy.getPlotDefaults().getYaxis().setVisible(false);
             }
         } else if ( spec==RenderType.vectorPlot ) { //TODO: this should be discoverable
             QDataSet qube= VectorPlotRenderer.doAutorange( fillDs );
             if ( qube==null ) {
                 // nothing
             } else {
-                peleCopy.getPlotDefaults().getXaxis().setRange( DataSetUtil.asDatumRange( qube.slice(0),true ) );
-                peleCopy.getPlotDefaults().getYaxis().setRange( DataSetUtil.asDatumRange( qube.slice(1),true ) );
-                peleCopy.getPlotDefaults().getZaxis().setAutoRange(false);
+                copyAutorange( peleCopy.getPlotDefaults(), qube );
             }
         } else if ( spec==RenderType.orbitPlot ) { 
             QDataSet qube= TickCurveRenderer.doAutorange( fillDs );
             if ( qube==null ) {
                 // nothing
             } else {
-                peleCopy.getPlotDefaults().getXaxis().setRange( DataSetUtil.asDatumRange( qube.slice(0),true ) );
-                peleCopy.getPlotDefaults().getYaxis().setRange( DataSetUtil.asDatumRange( qube.slice(1),true ) );
-                peleCopy.getPlotDefaults().getZaxis().setAutoRange(false);
+                copyAutorange( peleCopy.getPlotDefaults(), qube );
             }
         } else if ( spec==RenderType.image ) {
             QDataSet qube= RGBImageRenderer.doAutorange( fillDs );
             if ( qube==null ) {
                 // nothing
             } else {
-                peleCopy.getPlotDefaults().getXaxis().setRange( DataSetUtil.asDatumRange( qube.slice(0),true ) );
-                peleCopy.getPlotDefaults().getYaxis().setRange( DataSetUtil.asDatumRange( qube.slice(1),true ) );
+                copyAutorange( peleCopy.getPlotDefaults(), qube );                
+            }
+        } else if ( spec==RenderType.internal ) {
+            // nothing
+        } else if ( spec==RenderType.bounds ) {
+            QDataSet qube= BoundsRenderer.doAutorange( fillDs );
+            if ( qube==null ) {
+                // nothing
+            } else {
+                DatumRange xrange= DataSetUtil.asDatumRange( qube.slice(0),true ); // angle maybe
+                DatumRange yrange= DataSetUtil.asDatumRange( qube.slice(1),true );
+                
+                if ( props.containsKey(QDataSet.RENDER_TYPE) ) { // Let's kludge in a check for polar, whee!
+                    // The renderer has an unfortunate mistake where the controls will affect the autoranging.  This should
+                    // probably be redone.
+                    String rt= (String)props.get(QDataSet.RENDER_TYPE);
+                    if ( rt.contains("polar=T") ) {
+                        xrange= DatumRange.newRange( yrange.max().negative(), yrange.max() );
+                        yrange= xrange;
+                    }
+                }
+                peleCopy.getPlotDefaults().getXaxis().setRange( xrange );
+                peleCopy.getPlotDefaults().getYaxis().setRange( yrange );
                 peleCopy.getPlotDefaults().getZaxis().setAutoRange(false);
-            }       
+            }
+            
         } else { // spec==RenderType.SERIES and spec==RenderType.HUGE_SCATTER
 
             AutoRangeUtil.AutoRangeDescriptor ydesc; //TODO: QDataSet can model AutoRangeDescriptors, it should be used instead.
@@ -2381,14 +2608,20 @@ public class PlotElementController extends DomNodeController {
             if ( SemanticOps.isBundle(fillDs) ) {
                 depend0= SemanticOps.xtagsDataSet(fillDs);
                 if ( spec==RenderType.colorScatter ) {
-                    ydesc= AutoplotUtil.autoRange( DataSetOps.unbundle(fillDs, 1 ), props, ignoreDsProps );
+                    ydesc= AutoRangeUtil.autoRange( DataSetOps.unbundle(fillDs, 1 ), props, ignoreDsProps );
+                } else if ( spec==RenderType.scatter && fillDs.property(QDataSet.DEPEND_0)==null ) { 
+                    ydesc= AutoRangeUtil.autoRange( DataSetOps.unbundle(fillDs, 1 ), props, ignoreDsProps );
                 } else {
-                    ydesc= AutoplotUtil.autoRange( DataSetOps.unbundle(fillDs, fillDs.length(0)-1 ), props, ignoreDsProps ); 
+                    ydesc= AutoRangeUtil.autoRange( DataSetOps.unbundle(fillDs, fillDs.length(0)-1 ), props, ignoreDsProps ); 
                     Units u= ydesc.range.getUnits();
                     for ( int i=fillDs.length(0)-2; i>=0; i-- ) {
                         AutoRangeUtil.AutoRangeDescriptor ydesc1= AutoRangeUtil.autoRange( DataSetOps.unbundle(fillDs,i ), props, ignoreDsProps );
-                        if ( ydesc1.range.getUnits().isConvertibleTo(u) ) {
-                            ydesc.range= DatumRangeUtil.union( ydesc.range, ydesc1.range );
+                        if ( ydesc1.range.getUnits().isConvertibleTo(u) ) { // Bx, By, Bz
+                            if ( i==0 && fillDs.length(0)==2 ) {
+                                // special case for T->X,Y where we are plotting X,Y, as in an orbit plot.
+                            } else {
+                                ydesc.range= DatumRangeUtil.union( ydesc.range, ydesc1.range );
+                            }
                         } else {
                             Units u1;
                             u1= ydesc1.range.getUnits();
@@ -2398,7 +2631,7 @@ public class PlotElementController extends DomNodeController {
                     }
                 }
             } else {
-                ydesc = AutoplotUtil.autoRange( fillDs, props, ignoreDsProps );
+                ydesc = AutoRangeUtil.autoRange( fillDs, props, ignoreDsProps );
                 depend0 = (QDataSet) fillDs.property(QDataSet.DEPEND_0);
             }
 
@@ -2425,15 +2658,11 @@ public class PlotElementController extends DomNodeController {
                 }
             }
 
-            if ( !peleCopy.getPlotDefaults().getXaxis().isAutoRange() ) {
-                logger.fine("20121015: I was thinking autorange would always be true");
-            }
-            
             AutoRangeUtil.AutoRangeDescriptor xdesc = AutoRangeUtil.autoRange(xds, (Map) props.get(QDataSet.DEPEND_0), ignoreDsProps);
 
             peleCopy.getPlotDefaults().getXaxis().setLog(xdesc.log);
             if ( UnitsUtil.isOrdinalMeasurement( xdesc.range.getUnits() ) ) {
-                xdesc.range= DatumRangeUtil.newDimensionless( xdesc.range.min().doubleValue(xdesc.range.getUnits() ), xdesc.range.max().doubleValue(xdesc.range.getUnits()) );
+                xdesc.range= DatumRange.newRange( xdesc.range.min().doubleValue(xdesc.range.getUnits() ), xdesc.range.max().doubleValue(xdesc.range.getUnits()) );
             }
             peleCopy.getPlotDefaults().getXaxis().setRange(xdesc.range);
 
@@ -2504,16 +2733,22 @@ public class PlotElementController extends DomNodeController {
 
             QDataSet yds = (QDataSet) fillDs.property(QDataSet.DEPEND_1);
             if (yds == null) {
-                if ( fillDs.property(QDataSet.JOIN_0)!=null ) {
-                    JoinDataSet ds= new JoinDataSet(2);
-                    for ( int i=0; i<fillDs.length(); i++ ) {
-                        QDataSet yds1= (QDataSet)fillDs.property(QDataSet.DEPEND_1,i);
-                        if ( yds1==null ) {
-                            yds1= Ops.linspace( 0, fillDs.length(i,0)-1, fillDs.length(i,0) );
+                if ( fillDs.property(QDataSet.JOIN_0)!=null 
+                        && fillDs.length()>0 ) {
+                    QDataSet yds1= (QDataSet)fillDs.property(QDataSet.DEPEND_1,0);
+                    if ( yds1!=null ) {
+                        JoinDataSet ds= new JoinDataSet(yds1.rank()+1);
+                        for ( int i=0; i<fillDs.length(); i++ ) {
+                            yds1= (QDataSet)fillDs.property(QDataSet.DEPEND_1,i);
+                            if ( yds1==null ) {
+                                yds1= Ops.linspace( 0, fillDs.length(i,0)-1, fillDs.length(i,0) );
+                            }
+                            ds.join(yds1);
                         }
-                        ds.join(yds1);
+                        yds = ds;
+                    } else {
+                        yds= Ops.indgen(fillDs.slice(0).length());
                     }
-                    yds = ds;
                 } else if ( fillDs.property(QDataSet.JOIN_0)==null
                         && fillDs.length()>0
                         && fillDs.property(QDataSet.DEPEND_0,0)!=null ) {
@@ -2737,14 +2972,16 @@ public class PlotElementController extends DomNodeController {
     /**
      * see button added to the slicer.
      * @param ds 
+     * @param y reference for dataset, similar to the CONTEXT property.
+     * @param above if true, then plot above instead of below.
      */
-    private void addPlotBelow( QDataSet ds, Datum y ) {
+    private void addPlotBelow( QDataSet ds, Datum y, boolean above) {
         ApplicationController controller= dom.getController();
         DomLock lock= mutatorLock();
         lock.lock("adding slice below");
         try {
             Plot focus= controller.getPlotFor(plotElement);
-            Plot p= controller.addPlot( focus, LayoutConstants.BELOW );
+            Plot p= controller.addPlot( focus, above ? LayoutConstants.ABOVE : LayoutConstants.BELOW );
             PlotElement pe=controller.addPlotElement( p, null );
             DataSourceFilter dsfl= controller.getDataSourceFilterFor( pe );
             dsfl.getController().setDataSetInternal(ds); // setDataSet doesn't autorange, etc.
@@ -2753,7 +2990,7 @@ public class PlotElementController extends DomNodeController {
             if ( bms.size()>0 && UnitsUtil.isTimeLocation( p.getXaxis().getRange().getUnits() ) ) {
                 controller.bind( controller.getApplication(), Application.PROP_TIMERANGE, p.getXaxis(), Axis.PROP_RANGE );
             }
-            p.setTitle( focus.getTitle() + " @ " + y );
+            p.setTitle(focus.getTitle() + " @ " + y );
         } finally {
             lock.unlock();
         }
@@ -2771,6 +3008,8 @@ public class PlotElementController extends DomNodeController {
             }
         }
     };
+    
+    
     
     /**
      * create the peer that will actually do the painting.  This may be called from either the event thread or off the event thread,
@@ -2866,108 +3105,9 @@ public class PlotElementController extends DomNodeController {
                         }
                         if ( oldPlot==null || oldRenderer!=newRenderer ) {
                             synchronized ( dom ) {
-                                if ( newRenderer instanceof SpectrogramRenderer ) {
+                                if ( false && newRenderer instanceof SpectrogramRenderer ) { // https://sourceforge.net/p/autoplot/bugs/2013/
                                     plot.addRenderer(0,newRenderer);
-                                    MouseModule mm= plot.getDasMouseInputAdapter().getModuleByLabel("Horizontal Slice");
-                                    final HorizontalSlicerMouseModule hmm= ((HorizontalSlicerMouseModule)mm);
-                                    if ( hmm!=null ) { // for example in headless mode
-                                        hmm.getSlicer().addAction( new AbstractAction("Plot Below") {
-                                            @Override
-                                            public void actionPerformed(ActionEvent e) {
-                                                org.das2.util.LoggerManager.logGuiEvent(e);
-                                                final QDataSet ds= hmm.getSlicer().getDataSet();
-                                                final Datum y= hmm.getSlicer().getSliceY();
-                                                RequestProcessor.invokeLater( new Runnable() {
-                                                    @Override
-                                                    public void run() {
-                                                        addPlotBelow(ds,y);
-                                                    }
-                                                });
-                                            }
-                                        });
-                                        hmm.getSlicer().addAction( new AbstractAction("Export Data...") {
-                                            @Override
-                                            public void actionPerformed(ActionEvent e) {
-                                                org.das2.util.LoggerManager.logGuiEvent(e);
-                                                final QDataSet ds= hmm.getSlicer().getDataSet();
-                                                ExportDataPanel p= new ExportDataPanel();
-                                                p.setDataSet(ds);
-                                                if ( AutoplotUtil.showConfirmDialog2( parent, p, "Export Data", JOptionPane.OK_CANCEL_OPTION )==JOptionPane.OK_OPTION ) {
-                                                    final String f= p.getFilename();
-                                                    String ext= p.getExtension();
-                                                    final DataSourceFormat format = DataSourceRegistry.getInstance().getFormatByExt(ext); //OKAY
-                                                    if (format == null) {
-                                                        JOptionPane.showMessageDialog(parent, "No formatter for extension: " + ext);
-                                                        return;
-                                                    }
-                                                    try {
-                                                        format.formatData( f, ds, DasProgressPanel.createFramed("export slice data") );
-                                                        JPanel panel= new JPanel();
-                                                        panel.setLayout( new BoxLayout( panel, BoxLayout.Y_AXIS ) );
-                                                        panel.add( new JLabel( "<html>Data formatted to<br>" + f ) );
-                                                        panel.add( new JButton( new AbstractAction("Copy filename to clipboard") {
-                                                            @Override
-                                                            public void actionPerformed(ActionEvent e) {
-                                                                StringSelection stringSelection = new StringSelection( f );
-                                                                Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
-                                                                clipboard.setContents(stringSelection, new ClipboardOwner() {
-                                                                    @Override
-                                                                    public void lostOwnership(Clipboard clipboard, Transferable contents) {
-                                                                    }
-                                                                } );
-                                                            }
-                                                        } ) );
-                                                        JOptionPane.showMessageDialog(parent, panel );
-                                                    } catch (Exception ex) {
-                                                        JOptionPane.showMessageDialog(parent, "Exception while formatting: " + ex.getMessage() );
-                                                    }
-                                                }
-                                            }
-                                        });                                    
-                                    }
-                                    mm= plot.getDasMouseInputAdapter().getModuleByLabel("Vertical Slice");
-                                    final VerticalSlicerMouseModule vmm= ((VerticalSlicerMouseModule)mm);
-                                    if ( vmm!=null ) { // for example in headless mode
-                                        vmm.getSlicer().addAction( new AbstractAction("Export Data...") {
-                                            @Override
-                                            public void actionPerformed(ActionEvent e) {
-                                                org.das2.util.LoggerManager.logGuiEvent(e);
-                                                final QDataSet ds= vmm.getSlicer().getDataSet();
-                                                ExportDataPanel p= new ExportDataPanel();
-                                                p.setDataSet(ds);
-                                                if ( AutoplotUtil.showConfirmDialog2( parent, p, "Export Data", JOptionPane.OK_CANCEL_OPTION )==JOptionPane.OK_OPTION ) {
-                                                    final String f= p.getFilename();
-                                                    String ext= p.getExtension();
-                                                    final DataSourceFormat format = DataSourceRegistry.getInstance().getFormatByExt(ext); //OKAY
-                                                    if (format == null) {
-                                                        JOptionPane.showMessageDialog(parent, "No formatter for extension: " + ext);
-                                                        return;
-                                                    }
-                                                    try {
-                                                        format.formatData( f, ds, DasProgressPanel.createFramed("export slice data") );
-                                                        JPanel panel= new JPanel();
-                                                        panel.setLayout( new BoxLayout( panel, BoxLayout.Y_AXIS ) );
-                                                        panel.add( new JLabel( "<html>Data formatted to<br>" + f ) );
-                                                        panel.add( new JButton( new AbstractAction("Copy filename to clipboard") {
-                                                            @Override
-                                                            public void actionPerformed(ActionEvent e) {
-                                                                StringSelection stringSelection = new StringSelection( f );
-                                                                Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
-                                                                clipboard.setContents(stringSelection, new ClipboardOwner() {
-                                                                    @Override
-                                                                    public void lostOwnership(Clipboard clipboard, Transferable contents) {
-                                                                    }
-                                                                } );
-                                                            }
-                                                        } ) );
-                                                        JOptionPane.showMessageDialog(parent, panel );
-                                                    } catch (Exception ex) {
-                                                        JOptionPane.showMessageDialog(parent, "Exception while formatting: " + ex.getMessage() );
-                                                    }
-                                                }
-                                            }
-                                        });                                
-                                    }
+                                    setUpSpectrogramActions(plot);
                                 } else {
                                     Renderer[] rends= plot.getRenderers();
                                     int best=-1;
@@ -2983,7 +3123,8 @@ public class PlotElementController extends DomNodeController {
                                     for ( i=0; i<myPos; i++ ) {
                                         if ( i>best && i<myPos
                                                 && dom.getPlotElements(i).getPlotId().equals(plotElement.getPlotId())
-                                                && arends.contains( dom.getPlotElements(i).getController().getRenderer() ) ) lastRend= dom.getPlotElements(i).getController().getRenderer();
+                                                && arends.contains( dom.getPlotElements(i).getController().getRenderer() ) )
+                                            lastRend= dom.getPlotElements(i).getController().getRenderer();
                                     }
 
                                     // find the index of the renderer that is just underneath this one.
@@ -2994,6 +3135,9 @@ public class PlotElementController extends DomNodeController {
 
                                     plot.addRenderer(indexUnder+1,newRenderer);
                                 }
+                                if ( newRenderer instanceof SpectrogramRenderer ) {
+                                    setUpSpectrogramActions(plot);
+                                }
                             }
 
                         }
@@ -3002,6 +3146,60 @@ public class PlotElementController extends DomNodeController {
                         changesSupport.changePerformed( PlotElementController.this, PENDING_CREATE_DAS_PEER );
                     }
                     
+                }
+
+                private void setUpSpectrogramActions(DasPlot plot) {
+                    MouseModule mm= plot.getDasMouseInputAdapter().getModuleByLabel("Horizontal Slice");
+                    final HorizontalSlicerMouseModule hmm= ((HorizontalSlicerMouseModule)mm);
+                    if ( hmm!=null ) { // for example in headless mode
+                        hmm.getSlicer().addAction(new AbstractAction("Plot Below") {
+                            @Override
+                            public void actionPerformed(ActionEvent e) {
+                                org.das2.util.LoggerManager.logGuiEvent(e);
+                                final boolean above= ( e.getModifiers() & KeyEvent.SHIFT_MASK ) == KeyEvent.SHIFT_MASK;
+                                final QDataSet ds= hmm.getSlicer().getDataSet();
+                                final Datum y= hmm.getSlicer().getSliceY();
+                                RequestProcessor.invokeLater( () -> {
+                                    addPlotBelow(ds,y,above);
+                                });
+                            }
+                        });
+                        DataSource dss= new AnonymousDataSource() {
+                            @Override
+                            public QDataSet getDataSet(ProgressMonitor mon) throws Exception {
+                                return hmm.getSlicer().getDataSet();
+                            }
+                        };
+                        hmm.getSlicer().addAction( ExportDataPanel.createExportDataAction( parent, dss ) );
+                    }
+                    mm= plot.getDasMouseInputAdapter().getModuleByLabel("Vertical Slice");
+                    final VerticalSlicerMouseModule vmm= ((VerticalSlicerMouseModule)mm);
+                    if ( vmm!=null ) { // for example in headless mode
+                        DataSource dss= new AnonymousDataSource() {
+                            @Override
+                            public QDataSet getDataSet(ProgressMonitor mon) throws Exception {
+                                return vmm.getSlicer().getDataSet();
+                            }
+                        };
+                        vmm.getSlicer().addAction( ExportDataPanel.createExportDataAction( parent, dss ) );
+                    }
+                    mm= plot.getDasMouseInputAdapter().getModuleByLabel("Interval Average");
+                    final HorizontalDragRangeSelectorMouseModule vsa= ((HorizontalDragRangeSelectorMouseModule)mm);
+                    if ( vsa!=null ) { // for example in headless mode
+                        if ( vsa.getDataRangeSelectionListenerCount()>0 ) {
+                            DataRangeSelectionListener ddr= vsa.getDataRangeSelectionListener(0);
+                            if ( ddr instanceof VerticalSpectrogramAverager ) {
+                                DataSource dss= new AnonymousDataSource() {
+                                    @Override
+                                    public QDataSet getDataSet(ProgressMonitor mon) throws Exception {
+                                        return ((VerticalSpectrogramAverager)ddr).getDataSet();
+                                    }
+                                };
+                                ((VerticalSpectrogramAverager)ddr).addAction( ExportDataPanel.createExportDataAction( parent, dss ) );  //TODO
+                            }
+                        }
+
+                    }
                 }
             };
             if ( SwingUtilities.isEventDispatchThread() ) {
@@ -3081,30 +3279,36 @@ public class PlotElementController extends DomNodeController {
 
     public void bindToSeriesRenderer(SeriesRenderer seriesRenderer) {
         ApplicationController ac = this.dom.controller;
-        ac.bind(plotElement.style, "lineWidth", seriesRenderer, "lineWidth");
-        ac.bind(plotElement.style, "color", seriesRenderer, "color");
-        ac.bind(plotElement.style, "symbolSize", seriesRenderer, "symSize");
-        ac.bind(plotElement.style, "symbolConnector", seriesRenderer, "psymConnector");
-        ac.bind(plotElement.style, "plotSymbol", seriesRenderer, "psym");
-        ac.bind(plotElement.style, "fillColor", seriesRenderer, "fillColor");
+        ac.bind(plotElement.style, PlotElementStyle.PROP_LINE_WIDTH, seriesRenderer, "lineWidth");
+        ac.bind(plotElement.style, PlotElementStyle.PROP_COLOR, seriesRenderer, Renderer.CONTROL_KEY_COLOR );
+        ac.bind(plotElement.style, PlotElementStyle.PROP_SYMBOL_SIZE, seriesRenderer, "symSize");
+        ac.bind(plotElement.style, PlotElementStyle.PROP_SYMBOL_CONNECTOR, seriesRenderer, "psymConnector");
+        ac.bind(plotElement.style, PlotElementStyle.PROP_PLOT_SYMBOL, seriesRenderer, "psym");
+        ac.bind(plotElement.style, PlotElementStyle.PROP_FILLCOLOR, seriesRenderer, Renderer.CONTROL_KEY_FILL_COLOR );
         ac.bind(plotElement.style, PlotElementStyle.PROP_FILL_TO_REFERENCE, seriesRenderer, "fillToReference");
-        ac.bind(plotElement.style, "reference", seriesRenderer, "reference");
-        ac.bind(plotElement.style, "antiAliased", seriesRenderer, "antiAliased");
+        ac.bind(plotElement.style, PlotElementStyle.PROP_REFERENCE, seriesRenderer, "reference");
+        ac.bind(plotElement.style, PlotElementStyle.PROP_FILL_DIRECTION, seriesRenderer, Renderer.CONTROL_KEY_FILL_DIRECTION );
+        ac.bind(plotElement.style, PlotElementStyle.PROP_SHOWLIMITS, seriesRenderer, SeriesRenderer.PROP_SHOWLIMITS );
+        ac.bind(plotElement.style, PlotElementStyle.PROP_DRAWERROR, seriesRenderer, Renderer.CONTROL_KEY_DRAW_ERROR );
+        ac.bind(plotElement.style, PlotElementStyle.PROP_ERRORBARTYPE, seriesRenderer, SeriesRenderer.PROP_ERRORBARTYPE );
+        ac.bind(plotElement.style, PlotElementStyle.PROP_ANTIALIASED, seriesRenderer, "antiAliased");
         ac.bind(plotElement, PlotElement.PROP_CADENCECHECK, seriesRenderer, "cadenceCheck");
         if ( seriesRenderer.getColorBar()!=null )
-            ac.bind(plotElement.style, "colortable", seriesRenderer.getColorBar(), "type");
+            ac.bind(plotElement.style, PlotElementStyle.PROP_COLORTABLE, seriesRenderer.getColorBar(), "type");
     }
 
     public void bindToSpectrogramRenderer(SpectrogramRenderer spectrogramRenderer) {
         ApplicationController ac = this.dom.controller;
 
         ac.bind(plotElement.style, "rebinMethod", spectrogramRenderer, "rebinner");
-        if ( spectrogramRenderer.getColorBar()!=null )
+        ac.bind(plotElement, PlotElement.PROP_CADENCECHECK, spectrogramRenderer, "cadenceCheck");
+        
+        if ( spectrogramRenderer.getColorBar()!=null ) {
             ac.bind(plotElement.style, "colortable", spectrogramRenderer.getColorBar(), "type");
-
+        }
     }
 
-    public void bindToImageVectorDataSetRenderer(ImageVectorDataSetRenderer renderer) {
+    public void bindToImageVectorDataSetRenderer(HugeScatterRenderer renderer) {
         ApplicationController ac = this.dom.controller;
         ac.bind(plotElement.style, "color", renderer, "color");
     }

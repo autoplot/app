@@ -58,21 +58,29 @@ public class Test_052_FocusSwitching implements Scenario {
             
             JFrameOperator mainFrame = new JFrameOperator(app);
 
-            JMenuBarOperator menuBar = new JMenuBarOperator( mainFrame );
-            menuBar.pushMenu("Options|Enable Feature|Data Panel", "|");
+            Application dom = getDocumentModel();
+            
+            while ( dom.getOptions().isDataVisible()==false ) {
+                System.err.println("making it visible");
+                JMenuBarOperator menuBar = new JMenuBarOperator( mainFrame );
+                menuBar.pushMenu("Options|Enable Feature|Data Panel", "|");
+                Thread.sleep(1000);
+            }
             
             ScriptContext.waitUntilIdle();            
-            new JTextFieldOperator( app.getDataSetSelector().getEditor() ).setText("vap+cdf:http://cdaweb.gsfc.nasa.gov/istp_public/data/polar/hydra/hyd_h0/$Y/po_h0_hyd_$Y$m$d_v01.cdf?ELECTRON_DIFFERENTIAL_ENERGY_FLUX&timerange=2000-01-09");
+            
+            
+            new JTextFieldOperator( app.getDataSetSelector().getEditor() ).setText("vap+cdf:https://cdaweb.gsfc.nasa.gov/istp_public/data/polar/hydra/hyd_h0/$Y/po_h0_hyd_$Y$m$d_v01.cdf?ELECTRON_DIFFERENTIAL_ENERGY_FLUX&timerange=2000-01-09");
             new JButtonOperator(app.getDataSetSelector().getGoButton()).clickMouse();
             
             Thread.sleep(1000);
             ScriptContext.waitUntilIdle(); // clickMouse doesn't block, never has...
             
+            dom.getOptions().setDataVisible(true);
+            
             Component data= new JTabbedPaneOperator( app.getTabs() ).selectPage("data");
             //Ask Kenzie how to add filter via buttons.
-            
-            Application dom = getDocumentModel();
-            
+                        
             // why must I do this?  I would think that waitUntilIdle would catch this.
             while ( dom.getPlotElements(0).getController().getDataSet()==null ) {
                 Thread.sleep(100);
@@ -83,7 +91,7 @@ public class Test_052_FocusSwitching implements Scenario {
             
             ScriptContext.waitUntilIdle(); 
             
-            new JButtonOperator( mainFrame, new NameComponentChooser("browse") ).clickMouse();
+            new JButtonOperator( mainFrame, new NameComponentChooser("inspect") ).clickMouse();
 
             DialogOperator diaFrame = new DialogOperator( new RegexComponentChooser( "Editing .*") );
 
@@ -104,8 +112,8 @@ public class Test_052_FocusSwitching implements Scenario {
             
             BufferedImage image= ScreenshotsTool.getScreenShotNoPointer();
             //BufferedImage image= ScreenshotsTool.getScreenShot();
-            image.getGraphics().clearRect( 150, image.getHeight()-1021, 100, 20 );
-            image.getGraphics().clearRect( 15, image.getHeight()-963, 620, 22 );
+            image.getGraphics().clearRect( 150, image.getHeight()-1041, 316, 24 ); // the GUI title bar
+            image.getGraphics().clearRect( 18, image.getHeight()-970, 620, 22 );   // the address bar
             
             ImageIO.write( image, "png", new File( "Test_052_FocusSwitching_Screen.png" ) );
             

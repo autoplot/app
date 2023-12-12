@@ -15,10 +15,19 @@ import org.das2.qds.DataSetUtil;
 import org.das2.qds.QDataSet;
 import org.autoplot.datasource.capability.Streaming;
 import org.autoplot.datasource.capability.TimeSeriesBrowse;
+import org.das2.datum.Datum;
+import org.das2.datum.TimeUtil;
+import org.das2.qds.MutablePropertyDataSet;
 import org.das2.qds.ops.Ops;
+import org.das2.qds.util.DataSetBuilder;
 
 /**
- * Introduce class to hold code for iterating through any dataset.
+ * Introduce class to hold code for iterating through any dataset.  
+ * This will detect the time series browse capability and streaming.
+ * So if the data source is already streaming, then this is trivial.  If
+ * not, then it will request chunks of data from the time series browse
+ * and handle them one chunk at a time.  And additional trim can be used,
+ * see constrainDepend0.
  * @author jbf
  */
 public class RecordIterator implements Iterator<QDataSet>  {
@@ -113,10 +122,14 @@ public class RecordIterator implements Iterator<QDataSet>  {
             throw new IllegalArgumentException("no data source factory found for URI: "+ uri );
         }
         
+        DatumRange timeRangeExt= new DatumRange( 
+            TimeUtil.prev( TimeUtil.MINUTE, timeRange.min() ),
+            TimeUtil.next( TimeUtil.MINUTE, timeRange.max() ) );
+        
         TimeSeriesBrowse tsb= factory.getCapability(TimeSeriesBrowse.class);   // see if we can allow for URIs without timeranges.
         if ( tsb!=null ) {
             tsb.setURI(suri);
-            tsb.setTimeRange( timeRange ); 
+            tsb.setTimeRange( timeRangeExt ); 
             uri= new URI( tsb.getURI() );
         }
         
@@ -131,7 +144,7 @@ public class RecordIterator implements Iterator<QDataSet>  {
             
             QDataSet ds;
             try {
-                ds= getDataSet( uri.toString(), timeRange, new NullProgressMonitor() );
+                ds= getDataSet( uri.toString(), timeRangeExt, new NullProgressMonitor() );
             } catch ( Exception ex ) {
                 throw ex; // breakpoint here
             }
@@ -157,10 +170,20 @@ public class RecordIterator implements Iterator<QDataSet>  {
                     }                    
                 } else if ( ds.rank()>2 ) { // flatten the rank>2 to rank=2.
                     int[] qube= DataSetUtil.qubeDims(ds.slice(0));
-                    ds= Ops.reform( ds, ds.length(), new int[] { DataSetUtil.product(qube) } );
+                    QDataSet dep2= (QDataSet) ds.property(QDataSet.DEPEND_2);
+                    if ( dep2!=null && dep2.rank()==3 ) {
+                        dep2= Ops.reform( dep2, dep2.length(), new int[] { DataSetUtil.product(qube) } );                                                
+                    } 
+                    ds= Ops.reform( ds, ds.length(), new int[] { DataSetUtil.product(qube) } );                    
                     this.src= Ops.bundle( dep0, Ops.slice1(ds,0) );
                     for ( int i=1; i<ds.length(0); i++ ) {
                         this.src= Ops.bundle( this.src, Ops.slice1(ds,i) );
+                    }
+                    if ( dep2!=null && dep2.rank()>1 ) {
+                        this.src= Ops.bundle( this.src, Ops.slice1(dep2,0) );
+                        for ( int i=1; i<dep2.length(0); i++ ) {
+                            this.src= Ops.bundle( this.src, Ops.slice1(dep2,i) );
+                        }
                     }
                 }
             } else {
@@ -179,23 +202,31 @@ public class RecordIterator implements Iterator<QDataSet>  {
     public final void constrainDepend0( DatumRange dr ) {
         if ( this.src==null ) {      
             this.depend0Constraint= dr;
-            if ( streamingIterator!=null && streamingIterator.hasNext() ) {
-                nextRecord= streamingIterator.next();
-                nextRecord= normalize(nextRecord);
-                QDataSet dep0= nextRecord.slice(0);
-                while ( DataSetUtil.asDatum(dep0).lt( dr.min() ) && streamingIterator.hasNext() ) {
+            if ( streamingIterator!=null ) {
+                if ( streamingIterator.hasNext() ) {
+                    logger.finer("advancing streamingIterator to first record");
                     nextRecord= streamingIterator.next();
                     nextRecord= normalize(nextRecord);
-                    dep0= nextRecord.slice(0);
+                    QDataSet dep0= nextRecord.slice(0);
+                    while ( DataSetUtil.asDatum(dep0).lt( dr.min() ) && streamingIterator.hasNext() ) {
+                        nextRecord= streamingIterator.next();
+                        nextRecord= normalize(nextRecord);
+                        dep0= nextRecord.slice(0);
+                    }
+                    if ( depend0Constraint==null || DataSetUtil.asDatum(dep0).ge( depend0Constraint.max() ) ) {
+                        nextRecord= null;
+                    }
+                    index= -1;
+                } else {
+                    logger.finer("have streamingIterator, but hasNext()=false");
                 }
-                if ( depend0Constraint==null || DataSetUtil.asDatum(dep0).ge( depend0Constraint.max() ) ) {
-                    nextRecord= null;
-                }
-                index= -1;
             } else {
+                logger.finer("not streaming, src=null");
                 nextRecord= null;
             }
             return;
+        } else {
+            logger.finer("src does not equal null");
         }
         if ( this.src.length()==0 ) {
             return;
@@ -203,14 +234,28 @@ public class RecordIterator implements Iterator<QDataSet>  {
         index= 0;
         lastIndex= src.length();
         QDataSet dep0= Ops.slice1( this.src, 0 );
-        if ( DataSetUtil.isMonotonic(dep0) ) {
-            QDataSet findeces= Ops.findex( dep0, dr );
-            this.index= (int)Math.ceil( findeces.value(0) );
-            this.lastIndex= (int)Math.ceil( findeces.value(1) );
-            this.index= Math.max(0,this.index);
-            this.lastIndex= Math.min(src.length(),this.lastIndex);
+        if ( dep0.length()==1 ) {
+            Datum d= Ops.datum(dep0.slice(0));
+            if ( d.ge(dr.min()) && d.lt(dr.max() ) ) {
+                this.index=0;
+                this.lastIndex=1;
+            } else if ( d.lt(dr.min() ) ) {
+                this.index=0;
+                this.lastIndex= 0;
+            } else if ( d.ge(dr.max() ) ) {
+                this.index= 1;
+                this.lastIndex= 1;
+            }
         } else {
-            throw new IllegalArgumentException("data dep0 is not monotonic");
+            if ( DataSetUtil.isMonotonic(dep0) ) {
+                QDataSet findeces= Ops.findex( dep0, dr );
+                this.index= (int)Math.ceil( findeces.value(0) );
+                this.lastIndex= (int)Math.ceil( findeces.value(1) );
+                this.index= Math.max(0,this.index);
+                this.lastIndex= Math.min(src.length(),this.lastIndex);
+            } else {
+                throw new IllegalArgumentException("data dep0 is not monotonic");
+            }
         }
     }
     
@@ -289,5 +334,46 @@ public class RecordIterator implements Iterator<QDataSet>  {
     @Override
     public void remove() {  //JAVA7: this can be removed when Java 8 is required.
         // do nothing.
+    }
+    
+    /**
+     * do the opposite function, collect all the records and return a dataset.
+     * @param qds
+     * @return 
+     */
+    public static QDataSet collect( Iterator<QDataSet> qds ) {
+        QDataSet rec= qds.next();
+        DataSetBuilder b;
+        DataSetBuilder dep0b= new DataSetBuilder(1,100);
+        switch ( rec.rank() ) {
+            case 0:
+                b= new DataSetBuilder(1,100);
+                break;
+            case 1:
+                b= new DataSetBuilder(2,100,rec.length());
+                break;                
+            case 2:
+                b= new DataSetBuilder(2,100,rec.length(),rec.length(0));
+                break;                
+            case 3:
+                b= new DataSetBuilder(2,100,rec.length(),rec.length(0),rec.length(1));
+                break; 
+            default:
+                throw new IllegalArgumentException("bad rank");
+        }
+        b.nextRecord(rec);
+        QDataSet dep0= (QDataSet)rec.property(QDataSet.CONTEXT_0);
+        if ( dep0!=null ) dep0b.nextRecord();
+        while ( qds.hasNext() ) {
+            rec= qds.next();
+            b.nextRecord(rec);
+            dep0= (QDataSet)rec.property(QDataSet.CONTEXT_0);
+            if ( dep0!=null ) dep0b.nextRecord();
+        }
+        MutablePropertyDataSet result= b.getDataSet();
+        if ( dep0b.getLength()>0 ) {
+            result.putProperty( QDataSet.DEPEND_0, dep0b.getDataSet());
+        }
+        return result;
     }
 }

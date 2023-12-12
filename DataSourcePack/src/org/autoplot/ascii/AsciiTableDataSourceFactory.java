@@ -1,11 +1,4 @@
-/*
- * AsciiTableDataSourceFactory.java
- *
- * Created on November 7, 2007, 11:41 AM
- *
- * To change this template, choose Tools | Template Manager
- * and open the template in the editor.
- */
+
 package org.autoplot.ascii;
 
 import java.io.File;
@@ -18,6 +11,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import org.autoplot.datasource.AbstractDataSourceFactory;
 import org.das2.datum.EnumerationUnits;
 import org.das2.datum.UnitsUtil;
 import org.das2.util.monitor.ProgressMonitor;
@@ -31,10 +25,10 @@ import org.das2.qds.util.AsciiParser;
 import org.das2.qds.util.AsciiParser.DelimParser;
 
 /**
- * Factory for AsciiTableDataSource readers for the ascii table reader.
+ * Factory for AsciiTableDataSource readers for the ASCII table reader.
  * @author jbf
  */
-public class AsciiTableDataSourceFactory implements DataSourceFactory {
+public class AsciiTableDataSourceFactory extends AbstractDataSourceFactory implements DataSourceFactory {
 
     /** Creates a new instance of AsciiTableDataSourceFactory */
     public AsciiTableDataSourceFactory() {
@@ -59,10 +53,12 @@ public class AsciiTableDataSourceFactory implements DataSourceFactory {
             List<CompletionContext> result = new ArrayList<>();
             result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "skipLines=", "the number of lines to skip before attempting to parse"));
             result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "recCount=", "the number of records to read in"));
+            result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "recStart=", "skip this number of records"));
             result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "column=", "the column to read in"));
             result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "units=", "units of the data"));
             result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "ordinal=fpe,fuh", "set of ordinals that appear in this column"));
             result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "fixedColumns=", "use the fixed columns parser"));
+            result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "columnCount=", "only use records with this many columns") );
             result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "rank2=", "read in more than one column to create a rank 2 dataset."));
             result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "bundle=", "read in more than one column to create a rank 2 bundle dataset."));
             result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "depend1Labels=", "label each of the columns, bundling different data together in rank 2 dataset"));
@@ -79,6 +75,10 @@ public class AsciiTableDataSourceFactory implements DataSourceFactory {
                     "comment line prefix, default is hash (#)"));
             result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "headerDelim=",
                     "string indicating the end of the header (a regular expression)"));
+            result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "format=",
+                    "C style format specifier."));
+            result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "pattern=",
+                    "regular expression for each record, and data from matching groups are plotted."));
             result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "validMin=",
                     "values less than this value are treated as fill."));
             result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "validMax=",
@@ -95,7 +95,12 @@ public class AsciiTableDataSourceFactory implements DataSourceFactory {
                     "title for the dataset"));
             result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "label=",
                     "label for the dataset"));
-
+            result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "X=",
+                    "values typically displayed in horizontal dimension"));
+            result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "Y=",
+                    "values typically displayed in vertical dimension"));
+            result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "Z=",
+                    "values typically color coded"));
             return result;
         } else if (cc.context == CompletionContext.CONTEXT_PARAMETER_VALUE) {
             String paramName = CompletionContext.get(CompletionContext.CONTEXT_PARAMETER_NAME, cc);
@@ -103,18 +108,27 @@ public class AsciiTableDataSourceFactory implements DataSourceFactory {
                 case "skip":
                 case "skipLines":
                     return Collections.singletonList(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "<int>", "the number of lines to skip before attempting to parse."));
-                case "headerDelim":
-                {
+                case "headerDelim": {
                     List<CompletionContext> result = new ArrayList<>();
                     result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "<string>" ) );
                     result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "#####" ));
                     result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "DATA_UNTIL", "Cluster CEF uses these"));
                     return result;
                 }
+                case "pattern": {
+                    List<CompletionContext> result = new ArrayList<>();
+                    result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, ".+:(\\d+).*", "load the one or more integers" ) );
+                    result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, ".+:(?<vv>[0-9e\\.\\-]+).*", "name the float field vv" ) );
+                    return result;
+                }
                 case "recCount":
-                    return Collections.singletonList(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "<int>", "limit number of records to parse."));
-                case "rank2":
-                {
+                    return Collections.singletonList(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "<int>", "limit number of records to parse"));
+                case "recStart":
+                    return Collections.singletonList(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "<int>", "skip this number of records"));
+                case "columnCount":
+                    return Collections.singletonList(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "<int>", "number of columns to expect"));
+                    
+                case "rank2": {
                     List<CompletionContext> result = new ArrayList<>();
                     result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "<int>", "number of columns to expect"));
                     result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "1:", "all but first column"));
@@ -123,8 +137,7 @@ public class AsciiTableDataSourceFactory implements DataSourceFactory {
                     result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, ":", "all columns"));
                     return result;
                 }
-                case "bundle":
-                {
+                case "bundle": {
                     List<CompletionContext> result = new ArrayList<>();
                     result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "<int>", "number of columns to expect"));
                     result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "Bx-Bz", "three named columns"));
@@ -133,60 +146,57 @@ public class AsciiTableDataSourceFactory implements DataSourceFactory {
                     result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "-5:", "last five columns"));
                     return result;
                 }
-                case "depend1Labels":
-                {
+                case "depend1Labels": {
                     List<CompletionContext> result = new ArrayList<>();
                     result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "<int>:<int>", "labels for each column"));
                     return result;
                 }
-                case "depend1Values":
-                {
+                case "depend1Values": {
                     List<CompletionContext> result = new ArrayList<>();
                     result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "<int>:<int>", "values for each column"));
                     return result;
                 }
-                case "column":
-                {
+                case "column": {
                     List<CompletionContext> result = getFieldNames(cc, mon);
                     return result;
                 }
-                case "units":
-                {
+                case "units":  {
                     List<CompletionContext> result = new ArrayList<>();
-                    result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "nT", "units for the data"));
+                    result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "nT", "example units for the data"));
+                    result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "enum", "the data is nominal data, not numeric"));
                     return result;
                 }
                 case "fixedColumns":
                     return Collections.singletonList(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "<int>", "Hint at the number of columns to expect, then use fast parser that assumes fixed columns."));
-                case "time":
-                {
+                case "time": {
                     List<CompletionContext> result = getFieldNames(cc, mon);
                     return result;
                 }
-                case "intervalTag":
-                {
+                case "intervalTag": {
                     List<CompletionContext> result = new ArrayList<>();
                     result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "start","tag values indicate the start of measurement interval"));
                     result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "center", "tag values indicate the start of measurement interval."));
                     return result;
                 }
-                case "depend0":
-                {
+                case "depend0": {
                     List<CompletionContext> result = getFieldNames(cc, mon);
                     return result;
                 }
-                case "depend0Units":
-                {
+                case "depend0Units": {
                     List<CompletionContext> result = new ArrayList<>();
                     result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "ms", "units for the x tags"));
                     result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "hours+since+2015-01-01T00:00", "units for the x tags"));
                     return result;
                 }
-                case "timeFormat":
-                {
+                case "timeFormat": {
                     List<CompletionContext> result = new ArrayList<>();
                     result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "$Y+$j+$H+$M","times can span multiple fields"));
                     result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "ISO8601", "parse ISO8601 times in one field."));
+                    return result;
+                }
+                case "format": {
+                    List<CompletionContext> result = new ArrayList<>();
+                    result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "%5d%5d%9f%s","int,int,double,string"));
                     return result;
                 }
                 case "fill":
@@ -197,20 +207,30 @@ public class AsciiTableDataSourceFactory implements DataSourceFactory {
                     return Collections.singletonList(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "<double>"));
                 case "tail":
                     return Collections.singletonList(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "<int>"));
-                case "eventListColumn":
-                {
+                case "eventListColumn": {
                     List<CompletionContext> result = getFieldNames(cc, mon);
                     if ( result.size()>2 ) result= result.subList( 2, result.size() );
                     return result;
                 }
-                case "where":
-                { // TODO: a fun project would be to make completions for this that look in the file...
+                case "where": { // TODO: a fun project would be to make completions for this that look in the file...
                     List<CompletionContext> result = new ArrayList<>();
                     result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "field17.gt(1)","where the double value in field17 is greater than 17 "));
                     result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "field5.eq(off)", "where the nominal data in field5 is equal to \"off\""));
                     result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "field0.le(2000-01-01T00:00)", "where the nominal data in field5 is equal to \"off\""));
                     return result;
                 }
+                case "X": {
+                    List<CompletionContext> result = getFieldNames(cc, mon);
+                    return result;
+                }
+                case "Y": {
+                    List<CompletionContext> result = getFieldNames(cc, mon);
+                    return result;
+                }
+                case "Z": {
+                    List<CompletionContext> result = getFieldNames(cc, mon);
+                    return result;
+                }                
                 default:
                     return Collections.emptyList();
             }
@@ -230,8 +250,9 @@ public class AsciiTableDataSourceFactory implements DataSourceFactory {
             if ( params.get("bundle")!=null ) return false;
             if ( params.get("group")!=null ) return false;
             if ( params.get("eventListColumn")!=null ) return false;
-            if ( params.get("Z")!=null ) return false;
-
+            if ( params.get("Z")!=null && params.get("Z").length()>0 ) return false;
+            if ( params.get("Y")!=null && params.get("Y").length()>0  ) return false;
+            
             String arg_0= params.get("arg_0");
             if ( arg_0!=null ) {
                 if ( arg_0.equals("rank2") || arg_0.equals("bundle") ) return false;
@@ -244,7 +265,7 @@ public class AsciiTableDataSourceFactory implements DataSourceFactory {
             File file = DataSetURI.getFile(split.resourceUri, mon);
             if ( !file.isFile() ) return true;
             
-            List<CompletionContext> cc= getFieldNames( file, params, mon );
+            List<CompletionContext> cc= getFieldNames(file, params);
 
             if ( cc.size()<=2 ) {
                 return false;
@@ -274,7 +295,26 @@ public class AsciiTableDataSourceFactory implements DataSourceFactory {
         }
     }
 
-    private List<CompletionContext> getFieldNames( File file, Map<String,String> params, ProgressMonitor mon ) throws IOException {
+    /**
+     * return the list of fields names found in the ASCII file.
+     * @param uri the URI, containing modifiers like skip.
+     * @param mon progress monitor for the download
+     * @return the list of field names
+     * @throws IOException 
+     */
+    public static List<String> getFieldNames( String uri, ProgressMonitor mon ) throws IOException {
+        URISplit split= URISplit.parse(uri);
+        Map<String,String> params = URISplit.parseParams(split.params);
+        File file = DataSetURI.getFile( split.resourceUri, mon);
+        List<CompletionContext> cc= getFieldNames(file, params);
+        List<String> result= new ArrayList<>(cc.size());
+        for ( CompletionContext c: cc ) {
+            result.add( c.label );
+        }
+        return result;
+    }
+    
+    private static List<CompletionContext> getFieldNames( File file, Map<String,String> params) throws IOException {
 
         AsciiParser parser = AsciiParser.newParser(5);
         if (params.containsKey("skip")) {
@@ -289,8 +329,9 @@ public class AsciiTableDataSourceFactory implements DataSourceFactory {
         if (params.containsKey("headerDelim") ) {
             parser.setHeaderDelimiter(params.get("headerDelim"));
         }
-        DelimParser dp= parser.guessSkipAndDelimParser(file.toString());
 
+        parser.guessSkipAndDelimParser(file.toString());
+        
         if ( params.containsKey("eventListColumn") ) {
             int i= parser.getFieldIndex(params.get("eventListColumn"));
             if ( i!=-1 ) parser.setUnits( i, new EnumerationUnits("events") );
@@ -299,6 +340,12 @@ public class AsciiTableDataSourceFactory implements DataSourceFactory {
         if ( line==null ) {
             //dp= parser.guessSkipAndDelimParser(file.toString());
             throw new IllegalArgumentException("unable to find parseable record");
+        }
+        
+        DelimParser dp= parser.guessSkipAndDelimParser(file.toString());
+        
+        if ( dp==null ) {
+            throw new IllegalArgumentException("unable to find delimited columns");
         }
         
         String[] fields= new String[ dp.fieldCount() ];
@@ -343,17 +390,13 @@ public class AsciiTableDataSourceFactory implements DataSourceFactory {
         Map<String,String> params = URISplit.parseParams(cc.params);
         File file = DataSetURI.getFile(cc.resourceURI, mon);
 
-        return getFieldNames( file, params, mon );
+        return getFieldNames(file, params);
 
     }
 
     @Override
-    public <T> T getCapability(Class<T> clazz) {
-        return null;
+    public String getDescription() {
+        return "ASCII Tables";
     }
 
-    @Override
-    public boolean supportsDiscovery() {
-        return false;
-    }
 }

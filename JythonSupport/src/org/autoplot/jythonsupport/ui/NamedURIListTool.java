@@ -19,6 +19,7 @@ import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -44,6 +45,7 @@ import org.autoplot.datasource.DataSetSelector;
 import org.autoplot.datasource.DataSetURI;
 import org.autoplot.datasource.DataSourceEditorPanel;
 import org.autoplot.datasource.DataSourceEditorPanelUtil;
+import org.autoplot.datasource.DataSourceUtil;
 import org.autoplot.datasource.URISplit;
 import org.autoplot.datasource.WindowManager;
 import org.das2.qds.filters.FiltersChainPanel;
@@ -54,7 +56,7 @@ import org.das2.qds.filters.FiltersChainPanel;
  */
 public class NamedURIListTool extends JPanel {
     
-    private static final Logger logger= LoggerManager.getLogger("jython.dashup");
+    private static final Logger logger= LoggerManager.getLogger("jython.mashup");
     private static final String CLASS_NAME = NamedURIListTool.class.getName();    
     
     protected static final String PROP_URIS= "uris";
@@ -75,6 +77,8 @@ public class NamedURIListTool extends JPanel {
      * list of Java identifiers, one for each URI.
      */
     List<String> ids=null;
+    
+    List<Boolean> isAuto= null;
 
     DataMashUp dataMashUp;
     
@@ -83,6 +87,7 @@ public class NamedURIListTool extends JPanel {
         
         ids= Collections.emptyList();
         uris= Collections.emptyList();
+        isAuto= Collections.emptyList();
         
         setLayout(new javax.swing.BoxLayout(this, javax.swing.BoxLayout.LINE_AXIS));
         add(scrollPane);
@@ -217,6 +222,7 @@ public class NamedURIListTool extends JPanel {
     private JPanel onePanel( final int fi ) {
         logger.entering( CLASS_NAME, "onePanel", fi );
         final JPanel sub= new JPanel( new BorderLayout() );
+        sub.setName("sub"+fi);
         
         Dimension limit= new Dimension(100,24);
         if ( !showIds ) {
@@ -235,15 +241,14 @@ public class NamedURIListTool extends JPanel {
                     public void actionPerformed(ActionEvent e) {
                         org.das2.util.LoggerManager.logGuiEvent(e);                    
                         String oldName= ids.get(fi);
-                        rename(fi);
+                        renameAndEdit(fi);
                         String newName= ids.get(fi);
                         firePropertyChange( PROP_ID + "Name_"+fi, oldName, newName );
                     }
                 } );
                 sub.add( name, BorderLayout.WEST );
             } else {
-                JButton subAdd= new JButton("");
-                subAdd.setIcon( new ImageIcon( FiltersChainPanel.class.getResource("/resources/add.png") ) );
+                JButton subAdd= new JButton( new ImageIcon( FiltersChainPanel.class.getResource("/resources/add.png") ) );
                 subAdd.setMaximumSize( limit );
                 subAdd.setPreferredSize( limit );            
                 subAdd.setToolTipText( "add new URI" );        
@@ -266,8 +271,7 @@ public class NamedURIListTool extends JPanel {
             }
         } else {
         
-           JButton subAdd= new JButton("");
-           subAdd.setIcon( new ImageIcon( FiltersChainPanel.class.getResource("/resources/add.png") ) );
+           JButton subAdd= new JButton( new ImageIcon( FiltersChainPanel.class.getResource("/resources/add.png") ) );
            subAdd.setMaximumSize( limit );
            subAdd.setPreferredSize( limit );            
            subAdd.setToolTipText( "add new URI" );        
@@ -277,11 +281,14 @@ public class NamedURIListTool extends JPanel {
                     org.das2.util.LoggerManager.logGuiEvent(e);
                     List<String> ids= new ArrayList<>(NamedURIListTool.this.ids);
                     List<String> uris= new ArrayList<>(NamedURIListTool.this.uris);
+                    List<Boolean> isAuto= new ArrayList<>(NamedURIListTool.this.isAuto);
                     String newName= makeupName( ids );
                     ids.add(newName);
                     uris.add("");
+                    isAuto.add(true);
                     setIds(ids);
                     setUris(uris);
+                    setIsAuto(isAuto);
                 }
             } );
            
@@ -289,8 +296,7 @@ public class NamedURIListTool extends JPanel {
         }
 
         if ( fi>=0 ) {
-            JButton subDelete= new JButton("");
-            subDelete.setIcon( new ImageIcon( FiltersChainPanel.class.getResource("/resources/subtract.png") ) );
+            JButton subDelete= new JButton( new ImageIcon( FiltersChainPanel.class.getResource("/resources/subtract.png") ) );
             subDelete.setMaximumSize( limit );
             subDelete.setPreferredSize( dim );
             
@@ -305,6 +311,7 @@ public class NamedURIListTool extends JPanel {
                     parent.validate();
                     uris.remove(ffi);
                     ids.remove(ffi);
+                    isAuto.remove(ffi);
                     refresh();
                 }
             } );
@@ -318,6 +325,7 @@ public class NamedURIListTool extends JPanel {
         if ( fi>=0 ) {
             final DataSetSelector dss= new DataSetSelector();
             dss.setPlotItButtonVisible(false);
+            dss.setPlayButton(false);
             dss.setValue( uris.get(fi) );
             bindTimeRange(dss);
             
@@ -325,22 +333,54 @@ public class NamedURIListTool extends JPanel {
                 List<String> recent= DataSetSelector.getDefaultRecent();
                 List<String> recentSansInline= new ArrayList<>();
                 for ( String s: recent ) {
-                    if ( !s.startsWith("vap+inline:") ) { // don't include mash-ups in the list of things to mash-up.
-                        URISplit split= URISplit.parse(s);
-                        if ( !".vap".equals(split.ext) ) {
-                            recentSansInline.add(s);
+                    if ( s.startsWith("vap+inline:") ) {
+                        if ( s.contains("getDataSet") ) {
+                            logger.log(Level.FINEST, "skipping {0}", s);
+                            continue;  // don't include mash-ups in the list of things to mash-up.
                         }
                     }
+                    URISplit split= URISplit.parse(s);
+                    if ( ".jy".equals(split.ext) ) {
+                        logger.log(Level.FINEST, "skipping {0}", s);
+                        continue;
+                    }
+                    if ( !".vap".equals(split.ext) ) {
+                        recentSansInline.add(s);
+                    }
                 }
-                dss.setRecent( recentSansInline );
+                recentSansInline.addAll( uris );
+                LinkedHashSet<String> nuris= new LinkedHashSet<>();
+                nuris.addAll( recentSansInline );
+                
+                dss.setRecent( new ArrayList<String>(nuris) ); //TODO: This was breaking mashup tool, clearing all entries.
             } catch ( IllegalArgumentException ex ) {
                 
             }
             dss.addActionListener(new ActionListener() {
                 @Override
                 public void actionPerformed(ActionEvent e) {
-                    uris.set( fi,dss.getValue());
+                    String newName= null;
+                    String currentName= null;
+                    if ( isAuto.get(fi) || uris.get(fi).trim().length()==0 ) {
+                        List<String> nids= new ArrayList<>(ids);
+                        List<String> nuris= new ArrayList<>(uris);
+                        nids.remove(fi);
+                        nuris.remove(fi);
+                        newName= DataSourceUtil.guessNameFor( dss.getValue(), nuris, nids );
+                        if ( isValidIdentifier(newName) ) { 
+                            currentName= ids.get( fi );
+                        }
+                    }
+                    String uri= dss.getValue();
+                    String uri2= DataSetURI.blurTsbUri(uri);
+                    uris.set( fi,uri2 );
+                    if ( !uri.equals(uri2) ) {
+                        dss.setValue(uri2);
+                    }
                     if (dataMashUp!=null ) dataMashUp.refresh();
+                    if ( currentName!=null && newName!=null ) {
+                        doVariableRename( fi, currentName, newName );
+                    }
                 }
             });
             dss.getEditor().addFocusListener(new FocusAdapter() {
@@ -367,7 +407,7 @@ public class NamedURIListTool extends JPanel {
     }
     
     private void doVariableRename( int fi, String oldName, String newName ) {
-        ids.set( fi, newName );     
+        ids.set( fi, newName );
         refresh();
         if ( dataMashUp!=null ) dataMashUp.rename( oldName, newName );
     }
@@ -385,20 +425,47 @@ public class NamedURIListTool extends JPanel {
         return s;
     }
     
-    private void rename( int fi ) {
+    /**
+     * bring up the editor for the URI in this position with GUI
+     * controls to manually name the parameter.
+     * @param fi 
+     */
+    private void renameAndEdit( int fi ) {
         String currentName= ids.get(fi);
+        boolean autoName= isAuto.get(fi);
+        
         JPanel p= new JPanel();
         p.setLayout( new BoxLayout( p, BoxLayout.Y_AXIS ) );
-        JLabel c= new JLabel( "Parameter name:" );
+        //JLabel c= new JLabel( "Parameter name (a name with no spaces, made of letters, numbers and underscores):" );
         
-        c.setAlignmentX( Component.LEFT_ALIGNMENT );
-        p.add(  c );
-        JTextField tf= new JTextField(currentName);
-        tf.setMaximumSize( new Dimension( 1000, c.getFont().getSize()*2 ) );
-        tf.setPreferredSize( new Dimension( 1000, c.getFont().getSize()*2 ) );
-        tf.setAlignmentX( Component.LEFT_ALIGNMENT );
-        p.add( tf );
-        p.add( Box.createVerticalStrut( p.getFont().getSize() ) );
+        //c.setAlignmentX( Component.LEFT_ALIGNMENT );
+        //p.add( c );
+
+        final JCheckBox cb= new JCheckBox("Manually set parameter name (a name with no spaces, made of letters, numbers and underscores):");
+        cb.setToolTipText("checked indicates variable name will be picked automatically");
+        cb.setSelected(!autoName);
+        p.add( cb );
+        
+        int em=  p.getFont().getSize();
+        JPanel p1= new JPanel();
+        p1.setLayout( new BoxLayout( p1, BoxLayout.X_AXIS ) );
+        final JTextField tf= new JTextField(currentName);
+        tf.setMaximumSize( new Dimension( em*50, em*2 ) );
+        tf.setPreferredSize( new Dimension( em*50, em*2 ) );
+        tf.setEnabled( cb.isSelected() );
+        cb.addActionListener( new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                tf.setEnabled( cb.isSelected() ); 
+            }
+        });
+        //p1.add( Box.createHorizontalStrut( 3*em ) );
+        p1.add( tf );
+        p1.add( Box.createGlue() );
+        p1.setAlignmentX( Component.LEFT_ALIGNMENT );
+        
+        p.add( p1 );
+        p.add( Box.createVerticalStrut( em ) );
         p.add( Box.createGlue() );
         
         DataSourceEditorPanel edit=null;
@@ -406,15 +473,27 @@ public class NamedURIListTool extends JPanel {
             String uri= uris.get(fi);
             edit = DataSourceEditorPanelUtil.getDataSourceEditorPanel( p, uri );
         } catch ( IllegalArgumentException ex ) {
-            logger.log(Level.SEVERE, "can''t get editor for #{0}", fi);
+            logger.log(Level.SEVERE, "can't get editor for #{0}", fi);
         }
         String title= edit!=null ? "Rename parameter and dataset editor" : "Rename parameter"; // this is so the position and size are remembered separately.
         while ( JOptionPane.OK_OPTION==WindowManager.showConfirmDialog( scrollPane, p, title, JOptionPane.OK_CANCEL_OPTION ) ) {
             String newName= tf.getText();
+            if ( !cb.isSelected() && edit!=null ) {
+                List<String> nids= new ArrayList(ids);
+                List<String> nuris= new ArrayList(uris);
+                nids.remove(fi);
+                nuris.remove(fi);
+                newName= DataSourceUtil.guessNameFor(edit.getURI(),nuris,nids);
+            }
             if ( isValidIdentifier(newName) ) {
-                doVariableRename( fi, currentName, newName );
+                if ( !currentName.equals(newName) ) {
+                    doVariableRename( fi, currentName, newName );
+                }
+                isAuto.set( fi, !cb.isSelected() );
                 if ( edit!=null ) {
-                    uris.set( fi, edit.getURI() );
+                    String uri= edit.getURI();
+                    uri= DataSetURI.blurTsbUri(uri);
+                    uris.set( fi, uri );
                 }
                 SwingUtilities.invokeLater(new Runnable() {
                     @Override
@@ -427,17 +506,35 @@ public class NamedURIListTool extends JPanel {
         }
     }
 
+    /**
+     * set the ids, where these should be one ID for each URI.  When there
+     * are the same number of URIs and IDs, refresh is called.
+     * @param ids 
+     */
     public void setIds( List<String> ids ) {
         this.ids= new ArrayList<>(ids);
         if ( uris.size()==ids.size() ) refresh();
     }
     
+    /**
+     * set the URIs, where there should be one for each ID.  When there
+     * are the same number of URIs and IDs, refresh is called.
+     * @param uris 
+     */
     public void setUris( List<String> uris ) {
         this.uris= new ArrayList<>(uris);
         if ( uris.size()==ids.size() ) refresh();
     }
     
-    
+    /**
+     * set the automatic renaming flag for each ID.   When there
+     * are the same number as URIs and IDs, refresh is called.
+     * @param isAuto 
+     */
+    public void setIsAuto( List<Boolean> isAuto ) {
+        this.isAuto= new ArrayList<>(isAuto);
+        if ( isAuto.size()==ids.size() ) refresh();
+    }
     
     /**
      * return the Jython code that gets these.
@@ -461,7 +558,13 @@ public class NamedURIListTool extends JPanel {
         for ( int i=0; i<this.uris.size(); i++ ) {
             String uri= this.uris.get(i);
             if ( uri.trim().length()>0 ) {
-                b.append( this.ids.get(i) ).append( "=" ).append( "getDataSet('").append( this.uris.get(i) ).append("')&");
+                String s= this.uris.get(i);
+                if ( s.contains("'") ) {
+                    logger.info("removing single quotes from URI, hope that doesn't break anything.");
+                    b.append( this.ids.get(i) ).append( "=" ).append( "getDataSet('").append( s.replaceAll("'","") ).append("\')&");
+                } else {
+                    b.append( this.ids.get(i) ).append( "=" ).append( "getDataSet('").append( s ).append("')&");
+                }
             }
         }
         return b.toString();
@@ -599,6 +702,9 @@ public class NamedURIListTool extends JPanel {
                     butts[iexpr].setSelected(true);
                 }
             }
+        } else if ( id.equals("None") ) {
+            literalTF.setText( id );
+            butts[ilit].setSelected(true);
         }
         dsSelector.add( exprTF, c );
         

@@ -13,19 +13,25 @@ import java.awt.FlowLayout;
 import java.awt.Frame;
 import java.awt.Window;
 import java.awt.event.ActionEvent;
+import java.awt.event.ActionListener;
+import java.awt.event.KeyEvent;
+import java.util.logging.Logger;
 import javax.swing.AbstractAction;
 import javax.swing.ImageIcon;
 import javax.swing.JButton;
+import javax.swing.JComponent;
 import javax.swing.JDialog;
 import javax.swing.JLabel;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
+import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import org.autoplot.dom.Application;
 import org.autoplot.dom.DataSourceFilter;
 import org.autoplot.dom.DomOps;
 import org.autoplot.datasource.DataSetSelector;
 import org.autoplot.datasource.ThreadManager;
+import org.das2.util.LoggerManager;
 
 /**
  * Dialog assisting the scientists in creating aggregations for file
@@ -40,6 +46,7 @@ public class AggregateUrisDialog extends javax.swing.JPanel {
     private final Application dom;
     private final DataSetSelector dataSetSelector;
 
+    private static final Logger logger= LoggerManager.getLogger( "autoplot.gui" );
     /** 
      * Creates new form AggregateUrisDialog
      * @param dom the application
@@ -100,6 +107,15 @@ public class AggregateUrisDialog extends javax.swing.JPanel {
         } );
         cancel.setIcon(AutoplotUtil.cancelIcon());
         
+        dialog.getRootPane().registerKeyboardAction( new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                org.das2.util.LoggerManager.logGuiEvent(e);        
+                dialog.setVisible(false);
+                dialog.dispose();
+            }
+        }, KeyStroke.getKeyStroke( KeyEvent.VK_ESCAPE, 0 ), JComponent.WHEN_IN_FOCUSED_WINDOW );       
+
         JButton help= new JButton("Help");
         help.setAction( new AbstractAction("Help") {
             @Override
@@ -284,6 +300,7 @@ public class AggregateUrisDialog extends javax.swing.JPanel {
         }
         if ( f==-1 ) throw new IllegalArgumentException("bad state ..");
         dom2.getDataSourceFilters(f).setUri(newUri);
+        dataSetSelector.setValue(newUri);
         Runnable run= new Runnable() {
             @Override
             public void run() {
@@ -291,6 +308,7 @@ public class AggregateUrisDialog extends javax.swing.JPanel {
                 DataSourceFilter[] dsfs= dom.getDataSourceFilters();
                 for ( DataSourceFilter dsf: dsfs ) {
                     dsf.getController().update();
+                    dom.getController().getApplicationModel().addRecent( dsf.getUri() );
                 }
             }
         };
@@ -315,8 +333,16 @@ public class AggregateUrisDialog extends javax.swing.JPanel {
                 dom.syncTo(dom2);
                 DataSourceFilter[] dsfs= dom.getDataSourceFilters();
                 for ( DataSourceFilter dsf: dsfs ) {
-                    dsf.getController().update();
+                    if ( dsf.getUri().equals("vap+internal:") ) {
+                        logger.fine("skipping vap+internal:");
+                    } else {
+                        dsf.getController().update();
+                        dom.getController().getApplicationModel().addRecent( dsf.getUri() );
+                    }
                 }
+                String newUri= dom.getController().getDataSourceFilter().getUri();
+                dataSetSelector.setValue(newUri);
+                
             }
         };
         

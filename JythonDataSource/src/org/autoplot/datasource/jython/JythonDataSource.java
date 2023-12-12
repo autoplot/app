@@ -8,9 +8,11 @@ import java.beans.ExceptionListener;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileReader;
+import java.io.InputStreamReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.LineNumberReader;
+import java.io.Reader;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
@@ -62,11 +64,11 @@ import org.autoplot.jythonsupport.PyQDataSet;
  * <li>  timerange  if used then TimeSeriesBrowse is added.
  * @author jbf
  */
-public class JythonDataSource extends AbstractDataSource implements Caching {
+public final class JythonDataSource extends AbstractDataSource implements Caching {
 
     ExceptionListener listener;
     private Map<String, Object> metadata;
-    protected final static String PARAM_SCRIPT= "script";
+    public final static String PARAM_SCRIPT= "script";
     protected final static String PARAM_TIMERANGE= "timerange";
     protected final static String PARAM_RESOURCE_URI= "resourceURI";
 
@@ -88,9 +90,7 @@ public class JythonDataSource extends AbstractDataSource implements Caching {
                     tsb= tsb1;
                     notCheckedTsb= false;
                 }
-            } catch (ParseException ex) {
-                logger.severe( ex.toString() );
-            } catch ( IOException ex ) {
+            } catch (ParseException | IOException ex) {
                 logger.severe( ex.toString() );
             }
         }
@@ -254,24 +254,28 @@ public class JythonDataSource extends AbstractDataSource implements Caching {
                     interp.set("monitor", mon);
                 } catch ( ConcurrentModificationException ex ) {
                     logger.warning("avoiding strange concurrent modification bug that occurs within Jython on the server...");
-                    try {
-                        Thread.sleep(100);
-                    } catch ( InterruptedException ex2 ) { }
+                    Thread.yield();
                     interp.set("monitor", mon);
                     logger.warning("done.");
                 }
 
-                interp.set("PWD",split.path);
+                interp.set("PWD", URISplit.parse( jythonScript.toURI() ).path );
                 interp.exec("import autoplot2017 as autoplot");
                 interp.exec("autoplot.params=dict()");
                 for ( Entry<String,String> e : paramsl.entrySet()) {
                     String s= e.getKey();
                     if (!s.equals("arg_0") && !s.equals("script") ) {
                         String sval= e.getValue();
-                        
-                        sval= JythonUtil.maybeQuoteString( sval );
-                        logger.log(Level.FINE, "autoplot.params[''{0}'']={1}", new Object[]{s, sval});
-                        interp.exec("autoplot.params['" + s + "']=" + sval);
+                        if ( sval.length()>0 ) {
+                            int iq= sval.indexOf('?');
+                            int ie= sval.indexOf('=');
+                            if ( iq>-1 && ie>-1 && iq<ie ) {
+                                logger.log(Level.INFO, "double question mark detected in URI: {0}", suri);
+                            }
+                            sval= JythonUtil.maybeQuoteString( sval );
+                            logger.log(Level.FINE, "autoplot.params[''{0}'']={1}", new Object[]{s, sval});
+                            interp.exec("autoplot.params['" + s + "']=" + sval);
+                        }
                     }
                 }
                 
@@ -286,35 +290,39 @@ public class JythonDataSource extends AbstractDataSource implements Caching {
                 try {
                     boolean debug = false;  //TODO: exceptions will have the wrong line number in this mode.
                     if (debug) {
-                        FileReader fr= new FileReader( jythonScript );
-                        reader = new LineNumberReader( fr );
-                        String[] nextLine= new String[1];
-
-                        String s = nextExec( reader, nextLine );
-                        long t0= System.currentTimeMillis();
-                        while (s != null) {
-                            logger.log(Level.FINEST, "{0}: {1}", new Object[]{reader.getLineNumber(), s});
-                            interp.exec(s);
-                            logger.finest( String.format( "line=%d time=%dms  %s\n", reader.getLineNumber(), (System.currentTimeMillis()-t0), s ) );
-                            if ( mon.isCancelled() ) break;
-                            mon.setProgressMessage("exec line "+reader.getLineNumber() );
-                            s = nextExec( reader, nextLine );
-                            t0= System.currentTimeMillis();
+                        try ( Reader fr = new InputStreamReader( JythonRefactory.fixImports( new FileInputStream( jythonScript ),jythonScript.getName() ) ) ) {
+                            reader = new LineNumberReader( fr );
+                            String[] nextLine= new String[1];
+                            
+                            String s = nextExec( reader, nextLine );
+                            long t0= System.currentTimeMillis();
+                            while (s != null) {
+                                logger.log(Level.FINEST, "{0}: {1}", new Object[]{reader.getLineNumber(), s});
+                                interp.exec(s);
+                                logger.finest( String.format( "line=%d time=%dms  %s\n", reader.getLineNumber(), (System.currentTimeMillis()-t0), s ) );
+                                if ( mon.isCancelled() ) break;
+                                mon.setProgressMessage("exec line "+reader.getLineNumber() );
+                                s = nextExec( reader, nextLine );
+                                t0= System.currentTimeMillis();
+                            }
                         }
-                        fr.close();
 
                     } else {
                         InputStream in = new FileInputStream( jythonScript );
                         try {
-                            in= JythonRefactory.fixImports(in);
+                            in= JythonRefactory.fixImports(in,jythonScript.getName());
+                            
+                            logger.log(Level.FINE, "executing script {0}", jythonScript.getName());
                             interp.execfile(in,jythonScript.getName());
+                            logger.log(Level.FINE, "done executing script {0}", jythonScript.getName());
+                            
                         } catch ( PyException ex ) {
                             if ( ex.toString().contains("checkForComodification") ) {
                                 in.close();
                                 in = new FileInputStream( jythonScript );
                                 logger.warning("avoiding second strange concurrent modification bug that occurs within Jython on the server.  Run the whole thing again.");
                                 Thread.sleep(200);
-                                in= JythonRefactory.fixImports(in);
+                                in= JythonRefactory.fixImports(in,jythonScript.getName());
                                 interp.execfile(in,jythonScript.getName());
                             } else {
                                 throw ex; // This exception is caught again 6 lines down
@@ -430,10 +438,15 @@ public class JythonDataSource extends AbstractDataSource implements Caching {
             } else if ( result instanceof PyFloat ) {
                 res = JythonOps.dataset((PyFloat) result);
             } else {
-                res = (QDataSet) result.__tojava__(QDataSet.class);
+                try {
+                    res = (QDataSet) result.__tojava__(QDataSet.class);
+                } catch ( ClassCastException ex ) {
+                    Object os= (Object) result.__tojava__(Object.class);
+                    throw new IllegalArgumentException("variable is not a dataset: "+expr + " ("+os.toString()+")" );
+                }
             }
 
-            if ( label!=null && res instanceof MutablePropertyDataSet ) {
+            if ( label!=null && res instanceof MutablePropertyDataSet && !((MutablePropertyDataSet)res).isImmutable() ) {
                 if ( res.property( QDataSet.LABEL )==null ) {
                    ((MutablePropertyDataSet)res).putProperty( QDataSet.LABEL, label );
                 }
@@ -590,7 +603,7 @@ public class JythonDataSource extends AbstractDataSource implements Caching {
     }
 
     private Date resourceDate(URI uri) throws IOException {
-        File src = DataSetURI.getFile( uri.toString(), true, new NullProgressMonitor()); //TODO: this is probably wrong, because it should always be the script...
+        File src = DataSetURI.getFile( DataSetURI.fromUri(uri), true, new NullProgressMonitor()); //TODO: this is probably wrong, because it should always be the script...
         return new Date(src.lastModified());
     }
     Date cacheDate = null;

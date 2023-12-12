@@ -12,11 +12,15 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
-import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.io.Reader;
+import java.io.StringReader;
 import java.text.ParseException;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -29,6 +33,11 @@ import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import org.apache.commons.io.output.TeeOutputStream;
+import org.apache.tomcat.util.http.fileupload.FileItem;
+import org.apache.tomcat.util.http.fileupload.FileUploadException;
+import org.apache.tomcat.util.http.fileupload.disk.DiskFileItemFactory;
+import org.apache.tomcat.util.http.fileupload.servlet.ServletFileUpload;
+import org.apache.tomcat.util.http.fileupload.servlet.ServletRequestContext;
 import org.das2.datum.Datum;
 import org.autoplot.datasource.RecordIterator;
 import org.das2.datum.DatumRange;
@@ -41,9 +50,11 @@ import org.json.JSONObject;
 import org.das2.qds.QDataSet;
 import org.das2.qds.ops.Ops;
 import org.das2.util.filesystem.FileSystem;
+import org.json.JSONArray;
 
 /**
- *
+ * Servlet for data responses.  
+ * @see https://github.com/hapi-server/data-specification/blob/master/hapi-2.0.0/HAPI-data-access-spec-2.0.0.md#data
  * @author jbf
  */
 @WebServlet(urlPatterns = {"/DataServlet"})
@@ -70,6 +81,32 @@ public class DataServlet extends HttpServlet {
     }
     
     /**
+     * parse RFC 822, RFC 850, and asctime format.
+     * @return the time in milliseconds since 1970-01-01T00:00Z.
+     */
+    private static long parseTime(String str) throws ParseException {
+        SimpleDateFormat dateFormat = new SimpleDateFormat( "EEE, dd MMM yyyy HH:mm:ss z");
+        Date result;
+        try {
+            result= dateFormat.parse(str);
+        } catch ( ParseException ex ) {
+            dateFormat = new SimpleDateFormat( "EEE MMM dd HH:mm:ss yyyy" );
+            try {
+                result= dateFormat.parse(str);
+            } catch ( ParseException ex2 ) {
+                dateFormat = new SimpleDateFormat( "E, dd-MMM-yyyy HH:mm:ss z" );
+                try {
+                    result= dateFormat.parse(str);
+                } catch ( ParseException ex3 ) {
+                    Datum d= Units.ms1970.parse(str);
+                    return (long)d.doubleValue(Units.ms1970);
+                }
+            }
+        }
+        return result.getTime();
+    }
+    
+    /**
      * Processes requests for both HTTP <code>GET</code> and <code>POST</code>
      * methods.
      *
@@ -86,13 +123,21 @@ public class DataServlet extends HttpServlet {
             
         Map<String,String[]> params= new HashMap<>( request.getParameterMap() );
         String id= getParam( params,"id",null,"The identifier for the resource.", null );
-        String timeMin= getParam( params, "time.min", null, "The earliest value of time to include in the response.", null );
-        String timeMax= getParam( params, "time.max", null, "The include values of time up to but not including this time in the response.", null );
-        String parameters= getParam( params, "parameters", "", "The comma separated list of parameters to include in the response ", null );
-        String include= getParam( params, "include", "", "include header at the top", Pattern.compile("(|header)") );
-        String format= getParam( params, "format", "", "The desired format for the data stream.", Pattern.compile("(|csv|binary)") );
-        String stream= getParam( params, "_stream", "true", "allow/disallow streaming.", Pattern.compile("(|true|false)") );
-        String timer= getParam( params, "_timer", "false", "service request with timing output stream", Pattern.compile("(|true|false)") );
+        String timeMin= getParam( params, "time.min", "", "The earliest value of time to include in the response.", null );
+        String timeMax= 
+            getParam( params, "time.max", "", "Include values of time up to but not including this time in the response.", null );
+        if ( timeMin.length()==0 ) { // support 3.0
+            timeMin= getParam( params, "start", null, "The earliest value of time to include in the response.", null );
+            timeMax= 
+                getParam( params, "stop", null, "Include values of time up to but not including this time in the response.", null );
+        }
+        String parameters= 
+            getParam( params, "parameters", "", "The comma separated list of parameters to include in the response ", null );
+        String include= getParam(params, "include", "", "include header at the top", PATTERN_INCLUDE);
+        String format= getParam(params, "format", "", "The desired format for the data stream.", PATTERN_FORMAT);
+        String stream= getParam(params, "_stream", "true", "allow/disallow streaming.", PATTERN_TRUE_FALSE);
+        String timer= getParam(params, "_timer", "false", "service request with timing output stream", PATTERN_TRUE_FALSE);
+        
         if ( !params.isEmpty() ) {
             throw new ServletException("unrecognized parameters: "+params);
         }
@@ -103,11 +148,13 @@ public class DataServlet extends HttpServlet {
         if ( format.equals("binary") ) {
             response.setContentType("application/binary");
             dataFormatter= new BinaryDataFormatter();
-            response.setHeader("Content-disposition", "attachment; filename="+ Ops.safeName(id) + "_"+timeMin+ "_"+timeMax + ".bin" );
+            response.setHeader("Content-disposition", "attachment; filename="
+                + Ops.safeName(id) + "_"+timeMin+ "_"+timeMax + ".bin" );
         } else {
             response.setContentType("text/csv;charset=UTF-8");  
             dataFormatter= new CsvDataFormatter();
-            response.setHeader("Content-disposition", "attachment; filename="+ Ops.safeName(id) + "_"+timeMin+ "_"+timeMax + ".csv" ); 
+            response.setHeader("Content-disposition", "attachment; filename=" 
+                + Ops.safeName(id) + "_"+timeMin+ "_"+timeMax + ".csv" ); 
         }
         
         
@@ -117,7 +164,9 @@ public class DataServlet extends HttpServlet {
         
         DatumRange dr;
         try {
-            dr = new DatumRange( Units.cdfTT2000.parse(timeMin), Units.cdfTT2000.parse(timeMax) );
+            // see https://github.com/autoplot/dev/blob/master/bugs/2020/20201018/demoBug.jy
+            //dr = DatumRangeUtil.parseISO8601Range( String.format("%s/%s",timeMin,timeMax ) );
+            dr = new DatumRange( Units.cdfTT2000.parse(timeMin), Units.cdfTT2000.parse(timeMax) ); 
         } catch (ParseException ex) {
             throw new IllegalArgumentException(ex);
         }
@@ -135,7 +184,7 @@ public class DataServlet extends HttpServlet {
         
         long t0= System.currentTimeMillis();
         
-        if ( timer.equals("true") || request.getRemoteAddr().equals("127.0.0.1")  || request.getRemoteAddr().equals("0:0:0:0:0:0:0:1")) {
+        if ( timer.equals("true") || Util.isTrustedClient(request) ) {
             out= new IdleClockOutputStream(out);
         }
                 
@@ -144,10 +193,10 @@ public class DataServlet extends HttpServlet {
         
         // Look to see if we can cover the time range using cached files.  These files
         // must: be csv, contain all data, cover all data within $Y$m$d
-        boolean allowCache= dataFormatter instanceof CsvDataFormatter;
+        boolean allowCache= false; //dataFormatter instanceof CsvDataFormatter;
         if ( allowCache ) {
             File dataFileHome= new File( Util.getHapiHome(), "cache" );
-            dataFileHome= new File( dataFileHome, id );
+            dataFileHome= new File( dataFileHome, Util.fileSystemSafeName(id) );
             if ( dataFileHome.exists() ) {
                 FileStorageModel fsm= FileStorageModel.create( FileSystem.create(dataFileHome.toURI()), "$Y/$m/$Y$m$d.csv.gz" );
                 File[] files= fsm.getFilesFor(dr); 
@@ -167,6 +216,8 @@ public class DataServlet extends HttpServlet {
             }
         }
         
+        logger.log(Level.FINE, "dataFiles(one): {0}", dataFiles);
+        
         if ( dataFiles==null ) {
             try {
                 logger.log(Level.FINER, "data files is null at {0} ms.", System.currentTimeMillis()-t0);
@@ -174,31 +225,62 @@ public class DataServlet extends HttpServlet {
                 logger.log(Level.FINER, "done checkAutoplotSource at {0} ms.", System.currentTimeMillis()-t0);
                 if ( dsiter==null ) {
                     File dataFileHome= new File( Util.getHapiHome(), "data" );
-                    File dataFile= new File( dataFileHome, id+".csv" );
+                    File dataFile= new File( dataFileHome, Util.fileSystemSafeName(id)+".csv" );
                     if ( dataFile.exists() ) {
                         dataFiles= new File[] { dataFile };
                     } else {
                         if ( id.equals("0B000800408DD710.noStream") ) {
                             logger.log(Level.FINER, "noStream demo shows without streaming" );
-                            dsiter= new RecordIterator( "file:/home/jbf/public_html/1wire/data/$Y/$m/$d/0B000800408DD710.$Y$m$d.d2s", dr, false ); // allow Autoplot to select
+                            dsiter= new RecordIterator( // allow Autoplot to select
+                                "file:/home/jbf/public_html/1wire/data/$Y/$m/$d/0B000800408DD710.$Y$m$d.d2s", dr, false ); 
                         } else {
-                            throw new IllegalArgumentException("bad id: "+id+", does not exist: "+dataFile );
+                            throw new IllegalArgumentException("bad id: "+id+", data file does not exist: "+dataFile );
                         }
                     }
+                } else {
+                    logger.log(Level.FINER, "have dsiter {0} ms.", System.currentTimeMillis()-t0);
                 }
             } catch ( Exception ex ) {
                 throw new IllegalArgumentException("Exception thrown by data read", ex);
             }
         }
         
+        logger.log(Level.FINE, "dataFiles(two): {0}", dataFiles);
+        logger.log(Level.FINE, "dsiter: {0}", dsiter);
+        
+        if ( dataFiles!=null ) {
+            // implement if-modified-since logic, where a 302 can be used instead of expensive data response.
+            String ifModifiedSince= request.getHeader("If-Modified-Since");
+            logger.log(Level.FINE, "If-Modified-Since: {0}", ifModifiedSince);
+            if ( ifModifiedSince!=null ) {
+                try {
+                    long requestIfModifiedSinceMs1970= parseTime(ifModifiedSince);
+                    boolean can304= true;
+                    for ( File f: dataFiles ) {
+                        if ( f.lastModified()-requestIfModifiedSinceMs1970 > 0 ) {
+                            logger.log(Level.FINER, "file is newer than ifModifiedSince header: {0}", f);
+                            can304= false;
+                        }
+                    }
+                    logger.log(Level.FINE, "If-Modified-Since allows 304 response: {0}", can304);
+                    if ( can304 ) {
+                        response.setStatus( HttpServletResponse.SC_NOT_MODIFIED ); //304
+                        out.close();
+                        return;
+                    }
+                } catch ( ParseException ex ) {
+                    response.setHeader("X-WARNING-IF-MODIFIED-SINCE", "date cannot be parsed.");
+                }
+
+            }
+        }
+        
+        response.setStatus( HttpServletResponse.SC_OK );
+        
         try {
             if ( dsiter!=null ) dsiter.constrainDepend0(dr);
         } catch ( IllegalArgumentException ex ) {
             response.setHeader( "X-WARNING", "data is not monotonic in time, sending everything." );
-        }
-        
-        if ( format.equals("binary") ) {
-            if ( include.equals("header") ) throw new IllegalArgumentException("header cannot be sent with binary");  //TODO: check this
         }
         
         JSONObject jo0, jo;
@@ -210,7 +292,7 @@ public class DataServlet extends HttpServlet {
             
             if ( !parameters.equals("") ) {
                 jo= Util.subsetParams( jo0, parameters );
-                indexMap= (int[])jo.get("__indexmap__");
+                indexMap= (int[])jo.get("x_indexmap");
                 if ( dsiter!=null ) {
                     dsiter.resortFields( indexMap );
                 }
@@ -221,7 +303,7 @@ public class DataServlet extends HttpServlet {
             if ( include.equals("header") ) {
                 ByteArrayOutputStream boas= new ByteArrayOutputStream(10000);
                 PrintWriter pw= new PrintWriter(boas);
-                
+                jo.put( "format", format ); // Thanks Bob's verifier for catching this.
                 pw.write( jo.toString(4) );
                 pw.close();
                 boas.close();
@@ -235,7 +317,7 @@ public class DataServlet extends HttpServlet {
             
             if ( dataFiles!=null ) {
                 for ( File dataFile : dataFiles ) {
-                    cachedDataCsv(out, dataFile, dr, parameters, indexMap );
+                    cachedDataCsv( jo, out, dataFile, dr, parameters, indexMap );
                 }
                 
                 if ( out instanceof IdleClockOutputStream ) {
@@ -260,28 +342,45 @@ public class DataServlet extends HttpServlet {
                 TimeUtil.getSecondsSinceMidnight(dr.max())==0 && 
                 dr.width().doubleValue(Units.seconds)==86400 || 
                 dr.width().doubleValue(Units.seconds)==86401 ) {
+            boolean proceed= true;
+            
             File dataFileHome= new File( Util.getHapiHome(), "cache" );
             dataFileHome= new File( dataFileHome, id );
             if ( !dataFileHome.exists() ) {
-                if ( !dataFileHome.mkdirs() ) logger.log(Level.FINE, "unable to mkdir {0}", dataFileHome);
+                if ( !dataFileHome.mkdirs() ) {
+                    logger.log(Level.FINE, "unable to mkdir {0}", dataFileHome);
+                    proceed=false;
+                }
             }
-            if ( dataFileHome.exists() ) {
+            if ( proceed && dataFileHome.exists() ) {
                 TimeParser tp= TimeParser.create( "$Y/$m/$Y$m$d.csv.gz");
                 String s= tp.format(dr);
                 File ff= new File( dataFileHome, s );
                 if ( !ff.getParentFile().exists() ) {
-                    if ( !ff.getParentFile().mkdirs() ) logger.log(Level.FINE, "unable to mkdir {0}", ff.getParentFile());
+                    if ( !ff.getParentFile().mkdirs() ) {
+                        logger.log(Level.FINE, "unable to mkdir {0}", ff.getParentFile());
+                        proceed= false;
+                    }
                 }
-                FileOutputStream fout= new FileOutputStream(ff);
-                GZIPOutputStream gzout= new GZIPOutputStream(fout);
-                org.apache.commons.io.output.TeeOutputStream tout= new TeeOutputStream( out, gzout );
-                out= tout;
+                if ( !ff.exists() && !ff.getParentFile().canWrite() ) {
+                    proceed= false;
+                }
+                if ( proceed ) {
+                    FileOutputStream fout= new FileOutputStream(ff);
+                    GZIPOutputStream gzout= new GZIPOutputStream(fout);
+                    org.apache.commons.io.output.TeeOutputStream tout= new TeeOutputStream( out, gzout );
+                    out= tout;
+                    logger.log( Level.FINE, "wrote cache file {0}", ff );
+                } else {
+                    logger.log( Level.FINE, "unable to write file {0}", ff );
+                }
             }
         }
         
         try {
             assert dsiter!=null;
             if ( dsiter.hasNext() ) {
+                logger.fine("dsiter has at least one record");
                             
                 QDataSet first= dsiter.next();
             
@@ -309,6 +408,9 @@ public class DataServlet extends HttpServlet {
             logger.log(Level.FINE, "request handled in {0} ms.", System.currentTimeMillis()-t0);
         }
     }
+    private static final Pattern PATTERN_TRUE_FALSE = Pattern.compile("(|true|false)");
+    private static final Pattern PATTERN_FORMAT = Pattern.compile("(|csv|binary)");
+    private static final Pattern PATTERN_INCLUDE = Pattern.compile("(|header)");
 
     // <editor-fold defaultstate="collapsed" desc="HttpServlet methods. Click on the + sign on the left to edit the code.">
     /**
@@ -332,7 +434,7 @@ public class DataServlet extends HttpServlet {
 
     /**
      * Handles the HTTP <code>POST</code> method.
-     *
+     * @see https://jfaden.net/git/jbfaden/workblog/blob/master/2021/hapi/20210213_upload.md
      * @param request servlet request
      * @param response servlet response
      * @throws ServletException if a servlet-specific error occurs
@@ -345,9 +447,10 @@ public class DataServlet extends HttpServlet {
         String id= getParam( params,"id",null,"The identifier for the resource.", null );
         String timeMin= getParam( params, "time.min", "", "The earliest value of time to include in the response.", null );
         String timeMax= getParam( params, "time.max", "", "The latest value of time to include in the response.", null );
-        String parameters= getParam( params, "parameters", "", "The comma separated list of parameters to include in the response ", null );
-        String include= getParam( params, "include", "", "include header at the top", Pattern.compile("(|header)") );
-        String format= getParam( params, "format", "", "The desired format for the data stream.", Pattern.compile("(|csv|binary)") );
+        String parameters= getParam( 
+            params, "parameters", "", "The comma separated list of parameters to include in the response ", null );
+        String include= getParam(params, "include", "", "include header at the top", PATTERN_INCLUDE);
+        String format= getParam(params, "format", "", "The desired format for the data stream.", PATTERN_FORMAT);
         
         String key= request.getParameter("key"); // key is authorization, not authentication
         if ( !Util.keyCanModify(id,key) ) {
@@ -362,15 +465,58 @@ public class DataServlet extends HttpServlet {
             
         File dataFileHome= new File( Util.getHapiHome(), "data" );
         File dataFile= new File( dataFileHome, id+".csv" );
+
+        int maxMemSize = 5000 * 1024;
         
-        try ( BufferedReader r = new BufferedReader( new InputStreamReader( request.getInputStream() ) );
-              BufferedWriter fout= new BufferedWriter( new FileWriter(dataFile) ) ) { //TODO: merge
-            String s;
-            while ( (s=r.readLine())!=null ) {
-                fout.write(s);
-                fout.write("\n");
+        DiskFileItemFactory factory = new DiskFileItemFactory();
+
+        factory.setSizeThreshold(maxMemSize);
+        
+        ServletFileUpload upload = new ServletFileUpload(factory);
+        try {
+            request.getContentType();
+            // wget --post-data='data=2002-02-02T00:00Z,4.56' \
+            //    'http://localhost:8084/HapiServerDemo/hapi/data?id=chickens&key=12345678'
+            if ( request.getContentType().equals( "application/x-www-form-urlencoded" ) ) {
+                String data= request.getParameter("data");
+                try ( BufferedReader r = new BufferedReader( new StringReader(data) );
+                            BufferedWriter fout= new BufferedWriter( new FileWriter(dataFile,true) ) ) { //TODO: merge
+                    String s;
+                    while ( (s=r.readLine())!=null ) {
+                        fout.write(s);
+                        fout.write("\n");
+                    }
+                }
+            } else {
+                ServletRequestContext xxx= new ServletRequestContext(request);
+                List fileItems = upload.parseRequest(xxx);
+
+                Iterator i = fileItems.iterator();
+                while ( i.hasNext() ) {
+                    FileItem fi = (FileItem) i.next();
+                    String fieldName = fi.getFieldName();
+                    if ( fieldName.equals("key") ) {
+                        String skey= new String( fi.get(), "UTF-8" );
+                        if ( !skey.equals(key) ) {
+                            logger.warning("different key used!");
+                        }
+                    } else if ( fieldName.equals("data") ) {
+                        try ( BufferedReader r = new BufferedReader( new InputStreamReader( fi.getInputStream() ) );
+                            BufferedWriter fout= new BufferedWriter( new FileWriter(dataFile,true) ) ) { //TODO: merge
+                            String s;
+                            while ( (s=r.readLine())!=null ) {
+                                fout.write(s);
+                                fout.write("\n");
+                            }
+                        }
+                    }
+
+                }
             }
+        } catch (FileUploadException ex) {
+            Logger.getLogger(DataServlet.class.getName()).log(Level.SEVERE, null, ex);
         }
+
         
     }
 
@@ -384,14 +530,15 @@ public class DataServlet extends HttpServlet {
         return "Short description";
     }// </editor-fold>
 
-    private RecordIterator checkAutoplotSource(String id, DatumRange dr, boolean allowStream) throws IOException, JSONException, Exception {
-        File configFile= new File( new File( Util.getHapiHome().toString(), "info" ), id+".json" );
+    private RecordIterator checkAutoplotSource(String id, DatumRange dr, boolean allowStream) 
+        throws IOException, JSONException, Exception {
+        File configFile= new File( new File( Util.getHapiHome().toString(), "info" ), Util.fileSystemSafeName(id)+".json" );
         if ( !configFile.exists() ) {
             return null;
         }
         JSONObject o= HapiServerSupport.readJSON(configFile);
-        if ( o.has("uri") ) {
-            String suri= o.getString("uri");
+        if ( o.has("x_uri") ) {
+            String suri= o.getString("x_uri");
             RecordIterator dsiter= new RecordIterator( suri, dr, allowStream ); 
             return dsiter;
         } else {
@@ -402,8 +549,7 @@ public class DataServlet extends HttpServlet {
 
     /**
      * we have the csv pre-calculated, so just read from it.
-     * Note the output stream is closed here!
-     * @param out the output stream accepting data
+     * @param out the output stream accepting data.  This will not be closed.
      * @param dataFile file to send, which if ends in .gz, uncompress it, 
      * @param dr the range to which the data should be trimmed.
      * @param parameters if non-empty, then return just these parameters of the cached data.
@@ -411,7 +557,8 @@ public class DataServlet extends HttpServlet {
      * @throws IOException 
      * 
      */
-    private void cachedDataCsv( OutputStream out, File dataFile, DatumRange dr, String parameters, int[] indexMap) throws FileNotFoundException, IOException {
+    private void cachedDataCsv( JSONObject info, OutputStream out, File dataFile, DatumRange dr, String parameters, int[] indexMap) 
+        throws FileNotFoundException, IOException {
 
         long t0= System.currentTimeMillis();
         
@@ -422,7 +569,7 @@ public class DataServlet extends HttpServlet {
             freader= new FileReader(dataFile);
         }
         
-        logger.fine( "reading cache csv file: "+dataFile+" "  );
+        logger.log(Level.FINE, "reading cache csv file: {0} ", dataFile);
         
         //TODO: handle parameters and format=binary, think about JSON
         int[] pmap=null;
@@ -430,21 +577,39 @@ public class DataServlet extends HttpServlet {
             pmap= indexMap;
         }
         
+        boolean quickVerify= true; // verify cache entry
+        
+        int nrec=0;
         int nf= -1;
         try {
             try ( BufferedReader reader= new BufferedReader( freader ); 
-                  BufferedWriter writer= new BufferedWriter( new OutputStreamWriter(out) ) ) {
+                  BufferedWriter writer= new BufferedWriter( new NoCloseOutputStreamWriter(out) ) ) {
                 String line= reader.readLine();
                 while ( line!=null ) {
                     int i= line.indexOf(",");
                     try {
                         Datum t= TimeUtil.create(line.substring(0,i));
                         if ( dr.contains(t) ) {
+                            nrec++;
                             if ( pmap==null ) {
                                 writer.write(line);
                             } else {
                                 String[] ss= Util.csvSplit(line,nf);
                                 if ( nf==-1 ) nf= ss.length;
+                                if ( quickVerify ) {
+                                    try {
+                                        JSONArray pps= info.getJSONArray("parameters");
+                                        JSONObject time= pps.getJSONObject(0);
+                                        int len= time.getInt("length");
+                                        if ( ss[0].length()!=len ) {
+                                            throw new IllegalArgumentException("cache field 0 length ("+ss[0].length()+") in file "
+                                                +dataFile+" is incorrect, should be "+len);
+                                        }
+                                    } catch (JSONException ex) {
+                                        throw new IllegalArgumentException(ex); // should have caught this already
+                                    }
+                                    quickVerify= false;
+                                }
                                 for ( int j=0; j<pmap.length; j++ ) {
                                     if ( j>0 ) writer.write(',');
                                     writer.write( ss[pmap[j]] );
@@ -457,17 +622,19 @@ public class DataServlet extends HttpServlet {
                     }
                     line= reader.readLine();
                 }
+                logger.log(Level.FINER, "sent {0} records from {1}", new Object[]{nrec, dataFile});
             }
         } finally {
             freader.close();
+            out.flush();
         }
         long timer= System.currentTimeMillis()-t0;
         
         if ( out instanceof IdleClockOutputStream ) {
             String s=  ((IdleClockOutputStream)out).getStatsOneLine();
-            logger.fine( "done reading cache csv file ("+timer+"ms, "+s +"): "+dataFile );
+            logger.log(Level.FINE, "done reading cache csv file ({0}ms, {1}): {2}", new Object[]{timer, s, dataFile});
         } else {
-            logger.fine( "done reading cache csv file ("+timer+"ms): "+dataFile );
+            logger.log(Level.FINE, "done reading cache csv file ({0}ms): {1}", new Object[]{timer, dataFile});
         }
     }
     

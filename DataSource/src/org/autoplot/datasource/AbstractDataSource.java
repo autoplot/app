@@ -11,7 +11,9 @@ package org.autoplot.datasource;
 import org.das2.util.monitor.ProgressMonitor;
 import org.das2.util.monitor.NullProgressMonitor;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
@@ -24,6 +26,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import static org.autoplot.datasource.DataSetURI.fromUri;
 import org.das2.qds.buffer.BufferDataSet;
 import org.das2.dataset.NoDataInIntervalException;
 import org.das2.datum.DatumRange;
@@ -66,6 +69,11 @@ public abstract class AbstractDataSource implements DataSource {
         }
         URISplit split = URISplit.parse(s);
 
+        if ( split.params!=null && split.params.contains("?") ) {
+            if ( !"vap+inline".equals(split.vapScheme) && !"vap+jyds".equals(split.vapScheme) ) {
+                logger.log(Level.WARNING, "URI contains two question marks:{0}", uri);
+            }
+        }
         params = URISplit.parseParams(split.params);
 
         String f= split.file;
@@ -87,6 +95,7 @@ public abstract class AbstractDataSource implements DataSource {
      * Note that this is not necessarily the extension associated with the DataSource.  For example,
      * ImageDataSource has a canonical extension of ".jpg", but for a png file this will return .png.
      * 
+     * @param url the URL.
      * @return lower-case extension with a period, or empty string.
      */
     protected String getExt(URL url) {
@@ -96,13 +105,7 @@ public abstract class AbstractDataSource implements DataSource {
             logger.fine("Failed to convert URL to URI.");
             return "";
         }
-        /*String s = url.getFile();
-        int i = s.lastIndexOf("."); // URI okay
-        if (i == -1) {
-        return "";
-        } else {
-        return s.substring(i).toLowerCase();
-        }*/    }
+    }
 
     protected String getExt(URI uri) {
         String s = uri.getPath();
@@ -113,6 +116,7 @@ public abstract class AbstractDataSource implements DataSource {
             return s.substring(i).toLowerCase();
         }
     }
+    
     /**
      * available to subclasses for convenience.  
      */
@@ -140,6 +144,20 @@ public abstract class AbstractDataSource implements DataSource {
     FilePollUpdating pollingUpdater;
 
     /**
+     * get an input stream from the data source.
+     * @param mon
+     * @return
+     * @throws IOException 
+     */
+    protected InputStream getInputStream( ProgressMonitor mon ) throws IOException {
+        if ( uri.getScheme().equals("jar") ) {
+            return uri.toURL().openStream(); //TODO: experiment, make this production-quality
+        } else {
+            return new FileInputStream( getFile(mon) );
+        }
+    }
+    
+    /**
      * make the remote file available.
      * @param mon
      * @return 
@@ -154,7 +172,9 @@ public abstract class AbstractDataSource implements DataSource {
 
     // Practically identical to the URL version below...
     protected File getFile(URI uri, ProgressMonitor mon) throws IOException {
-        File f = DataSetURI.getFile(uri, mon);
+        //DataSetURI.getFile(uri, mon);
+        String suri= fromUri( uri );
+        File f = DataSetURI.getFile(suri,"T".equals(params.get("allowHtml")),mon);
         if (params.containsKey("filePollUpdates")) {
             int poll= (int)(Double.parseDouble(params.get("filePollUpdates")) );
             pollingUpdater= new FilePollUpdating(uri,poll);
@@ -193,6 +213,7 @@ public abstract class AbstractDataSource implements DataSource {
      * @param mon
      * @return
      * @throws IOException
+     * @see #getFile(java.net.URI, org.das2.util.monitor.ProgressMonitor) which checks for "allowHtml=T"
      */
     protected File getHtmlFile( URL url, ProgressMonitor mon ) throws IOException {
         File f = DataSetURI.getHtmlFile( url, mon );
@@ -293,7 +314,9 @@ public abstract class AbstractDataSource implements DataSource {
      * @param d rank 0 value or rank 1 range for the "within" operator.
      * @return the dataset with the filter applied.  (Note this may or may not be the same object.)
      */
-    private MutablePropertyDataSet applyFilter( MutablePropertyDataSet result, QDataSet parm, String op, QDataSet d ) throws NoDataInIntervalException {
+    private static MutablePropertyDataSet applyFilter( 
+        MutablePropertyDataSet result, QDataSet parm, String op, QDataSet d ) 
+        throws NoDataInIntervalException {
         QDataSet r;
         if ( parm.rank()>1 && parm.rank()<result.rank() ) {
             QDataSet[] operands= new QDataSet[2];
@@ -374,14 +397,16 @@ public abstract class AbstractDataSource implements DataSource {
     /**
      * implement where constraint.  This was extracted from the CdfDataSource to support HDF5 files as well, and soon .txt files.
      * 
-     * @param w
-     * @param parm
-     * @param result
-     * @return
+     * @param w where constraint, like vol.gt(10).  Note the variable name (vol) is ignored.
+     * @param parm parameter to test
+     * @param result the result
+     * @return the result (same as result param)
      * @throws NoDataInIntervalException
      * @throws ParseException 
      */
-    protected MutablePropertyDataSet doWhereFilter( String w, QDataSet parm, MutablePropertyDataSet result) throws NoDataInIntervalException, ParseException {
+    protected static MutablePropertyDataSet doWhereFilter( 
+        String w, QDataSet parm, MutablePropertyDataSet result) 
+        throws NoDataInIntervalException, ParseException {
         Pattern p= Pattern.compile("\\.([elgn][qte])\\(");
         Matcher m= p.matcher(w);
         int ieq;
@@ -407,37 +432,38 @@ public abstract class AbstractDataSource implements DataSource {
             if ( sval.endsWith(")") ) sval= sval.substring(0,sval.length()-1);
             parm= Ops.reform(parm); // TODO: Nasty kludge why did we see it in the first place vap+cdfj:file:///home/jbf/ct/hudson/data.backup/cdf/c4_cp_fgm_spin_20030102_v01.cdf?B_vec_xyz_gse__C4_CP_FGM_SPIN&where=range__C4_CP_FGM_SPIN.eq(3)
             QDataSet d;
-            if ( parm.rank()==2 ) {
-                if ( sval.equals("mode") && ( op.equals("eq") || op.equals("ne") ) ) {
-                    QDataSet hash= Ops.hashcodes(parm);
-                    QDataSet mode= Ops.mode(hash);
-                    d= mode;
-                    parm= hash;
-                } else {
-                    Units du= SemanticOps.getUnits(parm);
-                    d= DataSetUtil.asDataSet( du.parse(sval) );
-                }
-            } else if ( parm.rank()==1 ) {
-                switch (sval) {
-                    case "mode":
-                        QDataSet mode= Ops.mode(parm);
+            switch (parm.rank()) {
+                case 2:
+                    if ( sval.equals("mode") && ( op.equals("eq") || op.equals("ne") ) ) {
+                        QDataSet hash= Ops.hashcodes(parm);
+                        QDataSet mode= Ops.mode(hash);
                         d= mode;
-                        break;
-                    case "median":
-                        QDataSet median= Ops.median(parm);
-                        d= median;
-                        break;
-                    case "mean":
-                        QDataSet mean= Ops.mean(parm);
-                        d= mean;
-                        break;
-                    default:
+                        parm= hash;
+                    } else {
                         Units du= SemanticOps.getUnits(parm);
-                        d= DataSetUtil.asDataSet(du.parse(sval));
-                        break;
-                }
-            } else {
-                throw new IllegalArgumentException("param is rank>2");
+                        d= DataSetUtil.asDataSet( du.parse(sval) );
+                    }   break;
+                case 1:
+                    switch (sval) {
+                        case "mode":
+                            QDataSet mode= Ops.mode(parm);
+                            d= mode;
+                            break;
+                        case "median":
+                            QDataSet median= Ops.median(parm);
+                            d= median;
+                            break;
+                        case "mean":
+                            QDataSet mean= Ops.mean(parm);
+                            d= mean;
+                            break;
+                        default:
+                            Units du= SemanticOps.getUnits(parm);
+                            d= DataSetUtil.asDataSet(du.parse(sval));
+                            break;
+                    }   break;
+                default:
+                    throw new IllegalArgumentException("param is rank>2");
             }
             
             result= applyFilter(result, parm, op, d );
@@ -446,9 +472,7 @@ public abstract class AbstractDataSource implements DataSource {
         return result;
     }
     
-    
-
-    private HashMap<Class, Object> capabilities = new HashMap<Class, Object>();
+    private HashMap<Class, Object> capabilities = new HashMap<>();
 
     /**
      * attempt to get a capability.  null will be returned if the 

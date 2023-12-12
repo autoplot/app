@@ -52,6 +52,8 @@ import org.autoplot.datasource.URISplit;
 import org.autoplot.datasource.capability.Caching;
 import org.autoplot.datasource.capability.TimeSeriesBrowse;
 import org.autoplot.datasource.capability.Updating;
+import org.das2.components.DasProgressPanel;
+import org.das2.qds.DataSetAnnotations;
 import org.das2.qds.ops.Ops;
 import org.das2.qds.util.AutoHistogram;
 
@@ -129,10 +131,12 @@ public class DataSourceController extends DomNodeController {
                     logger.log(Level.WARNING, " !! {0}", evt.getOldValue());
                     return;
                 }
+                //System.err.println("*** register "+resetMePropertyChangeListener);
                 DataSourceController.this.changesSupport.registerPendingChange(resetMePropertyChangeListener, PENDING_RESOLVE_DATA_SOURCE);
                 setUriNeedsResolution(true);
                 if (!dom.controller.isValueAdjusting()) {
                     try {
+                        //System.err.println("*** unregister "+resetMePropertyChangeListener);
                         DataSourceController.this.changesSupport.performingChange(resetMePropertyChangeListener, PENDING_RESOLVE_DATA_SOURCE);
                         dsf.setFilters(""); // reset filters
                         resolveDataSource(false, getMonitor("resetting data source", "resetting data source"));
@@ -140,9 +144,11 @@ public class DataSourceController extends DomNodeController {
                         DataSourceController.this.changesSupport.changePerformed(resetMePropertyChangeListener, PENDING_RESOLVE_DATA_SOURCE);
                     }
                 } else {
+                    //System.err.println("*** runlater "+resetMePropertyChangeListener);
                     new RunLaterListener(ChangesSupport.PROP_VALUEADJUSTING, dom.controller, true) {
                         @Override
                         public void run() {
+                            //System.err.println("*** unregister "+resetMePropertyChangeListener);
                             try {
                                 DataSourceController.this.changesSupport.performingChange(resetMePropertyChangeListener, PENDING_RESOLVE_DATA_SOURCE);
                                 if (uriNeedsResolution) {
@@ -226,6 +232,7 @@ public class DataSourceController extends DomNodeController {
      *
      * @param i the dimension to slice
      * @return the number of slice indeces.
+     * @deprecated this is leftover from an ancient version of the code.
      */
     public int getMaxSliceIndex(int i) {
         if (getDataSet() == null) {
@@ -366,7 +373,7 @@ public class DataSourceController extends DomNodeController {
             } else {
                 changesSupport.performingChange(this, PENDING_SET_DATA_SOURCE);
                 setCaching(dataSource.getCapability(Caching.class));
-                PlotElement pe = getPlotElement();
+                PlotElement pe = getPlotElement(false);
                 if (pe != null && this.doesPlotElementSupportTsb(pe)) {  //TODO: less flakey
                     setTsb(dataSource.getCapability(TimeSeriesBrowse.class));
                 } else {
@@ -431,6 +438,17 @@ public class DataSourceController extends DomNodeController {
                             }
                         } else {
                             timeSeriesBrowseController.setup(valueWasAdjusting);
+                            logger.fine("connect to timerange (bug2136)");
+                            int bindingCount= dom.controller.findBindings( dom, Application.PROP_TIMERANGE ).size();
+                            if ( !valueWasAdjusting && ( bindingCount<2 || dom.timeRange.intersects( p.xaxis.getRange() ) ) ) {
+                                if ( UnitsUtil.isTimeLocation( dom.timeRange.getUnits()) && UnitsUtil.isTimeLocation(p.xaxis.range.getUnits()) ) {
+                                    if ( !dom.timeRange.intersects( p.xaxis.getRange() ) ) {
+                                        dom.setTimeRange( p.xaxis.getRange() );
+                                    }
+                                    dom.controller.bind( dom, Application.PROP_TIMERANGE, p.xaxis, Axis.PROP_RANGE );
+                                    dom.controller.unbind(  dom, Application.PROP_TIMERANGE, p, Plot.PROP_CONTEXT );
+                                }
+                            }
                         }
                     }
                 } else if (getTsb() != null && ps.isEmpty()) {
@@ -495,6 +513,10 @@ public class DataSourceController extends DomNodeController {
         }
     }
 
+    /**
+     * set the dataset for the DataSourceFilter.
+     * @param ds the dataset
+     */
     public void setDataSetInternal(QDataSet ds) {
         setDataSetInternal(ds, null, this.dom.controller.isValueAdjusting());
     }
@@ -619,32 +641,72 @@ public class DataSourceController extends DomNodeController {
 
             doDimensionNames();
 
-            if ( ds.rank()<=QDataSet.MAX_RANK && DataSetUtil.totalLength(ds) < 200000 && UnitsUtil.isIntervalOrRatioMeasurement(SemanticOps.getUnits(ds)) ) {
+            long datasetSize= DataSetUtil.totalLengthAsLong(ds);
+            if ( ds.rank()<=QDataSet.MAX_RANK && datasetSize < LIMIT_STATS_COUNT && UnitsUtil.isIntervalOrRatioMeasurement(SemanticOps.getUnits(ds)) ) {
                 setStatus("busy: do statistics on the data...");
                 try {
-                    setHistogram(new AutoHistogram().doit(ds, null));
-                } catch ( IllegalArgumentException ex ) {
+                    if ( datasetSize>0 && datasetSize<QDataSet.LIMIT_HUGE_DATASET ) {
+                        logger.fine("do statistics on the data");
+                        long t0= System.currentTimeMillis();
+                        setHistogram(new AutoHistogram().doit(ds, null));
+                        logger.log(Level.FINE, "done with statistics on the data ({0}ms)", System.currentTimeMillis()-t0);
+                    }
+                } catch ( RuntimeException ex ) {
                     logger.warning("runtime error during histogram usually means invalid data in data set.");
                     setHistogram(null);
                 }
             } else {
-                setHistogram(null);
+                if ( datasetSize < ( LIMIT_STATS_COUNT * 4 ) ) {
+                    Runnable run= new Runnable() {
+                        public void run() {
+                            long t0= System.currentTimeMillis();
+                            setStatus("do statistics on the data in the background");
+                            setHistogram(new AutoHistogram().doit(ds, null));
+                            logger.log(Level.FINE, "done with statistics on the data ({0}ms)", System.currentTimeMillis()-t0);                            
+                        }
+                    };
+                    setHistogram(null);
+                    logger.fine("do statistics on the data in the background");
+                    new Thread(run).start();
+                } else {
+                    logger.fine("skipping stats because there is too much data");
+                    setHistogram(null);
+                }
             }
 
             setStatus("busy: apply fill");
 
             //doFillValidRange();  the QDataSet returned
-            updateFill();
+            if ( datasetSize<QDataSet.LIMIT_HUGE_DATASET ) {
+                updateFill();
+            } else {
+                logger.warning("dataset is too big to perform stats.  See QDataSet.LIMIT_HUGE_DATASET.");
+                setFillDataSet(ds);
+            }
 
             setStatus("done, apply fill");
 
             List<PlotElement> pele = dom.controller.getPlotElementsFor(dsf);
             if (pele.isEmpty()) {
-                setStatus("warning: done loading data but no plot elements are listening");
+                boolean parentUses= false;
+                for ( DataSourceFilter dsf1: dom.dataSourceFilters ) {
+                    if ( Arrays.asList( dsf1.getController().getParentSources() ).contains(dsf) ) {
+                        parentUses= true;
+                        break;
+                    }
+                }
+                if ( !parentUses ) {
+                    setStatus("warning: done loading data but no plot elements are listening");
+                }
             }
 
         }
     }
+    
+    /**
+     * this is the maximum number of points which we will perform stats on.
+     */
+    protected static final int LIMIT_STATS_COUNT = 150_000_000;
 
     DataSourceFilter[] parentSources;
     
@@ -665,6 +727,21 @@ public class DataSourceController extends DomNodeController {
             }
             return parentSources1;
         }
+    }
+    
+    /**
+     * return a DSF for which this is a parent.
+     * @return null or a child source.
+     */
+    protected DataSourceFilter getChildSource() {
+        for ( DataSourceFilter dsf1: dom.getDataSourceFilters() ) {
+            for ( DataSourceFilter dsf2: dsf1.controller.getParentSources() ) {
+                if ( dsf2==this.dsf ) {
+                    return dsf1;
+                }
+            }
+        }
+        return null;
     }
 
     /**
@@ -1027,7 +1104,9 @@ public class DataSourceController extends DomNodeController {
             LoggerManager.logPropertyChangeEvent(evt);  
             String prob = checkParents();
             if (prob != null) {
-                setStatus("warning: " + prob);
+                if ( !dom.controller.isPendingChanges() ) {
+                    setStatus("warning: " + prob);
+                }
                 setDataSetInternal(null, null, dom.controller.isValueAdjusting());
             }
             if (DataSourceController.this.haveCheckedInternalTsb == false) {
@@ -1071,7 +1150,9 @@ public class DataSourceController extends DomNodeController {
             resolveParents();
             String prob = checkParents();
             if (prob != null) {
-                setStatus("warning: " + prob);
+                if ( !dom.controller.isPendingChanges() ) {
+                    setStatus("warning: " + prob);
+                }
                 return false;
             }
             dom.addPropertyChangeListener(Application.PROP_DATASOURCEFILTERS, dsfListener);
@@ -1202,13 +1283,17 @@ public class DataSourceController extends DomNodeController {
         if (xds.length() < 2) {
             return;
         }
-
         RankZeroDataSet cadence = DataSetUtil.guessCadenceNew(xds, fillDs);
-        if (cadence != null && "log".equals(cadence.property(QDataSet.SCALE_TYPE))) {
-            xds.putProperty(QDataSet.SCALE_TYPE, "log");
-        }
-        if (cadence != null) {
-            xds.putProperty(QDataSet.CADENCE, cadence);
+        if ( xds.isImmutable() ) {
+            logger.fine("MutablePropertyDataSet has been made immutable, adding cadence annotation instead.");
+            DataSetAnnotations.getInstance().putAnnotation( xds, DataSetAnnotations.ANNOTATION_CADENCE, cadence );
+        } else {
+            if (cadence != null && "log".equals(cadence.property(QDataSet.SCALE_TYPE))) {
+                xds.putProperty(QDataSet.SCALE_TYPE, "log");
+            }
+            if (cadence != null) {
+                xds.putProperty(QDataSet.CADENCE, cadence);
+            }
         }
     }
 
@@ -1288,20 +1373,28 @@ public class DataSourceController extends DomNodeController {
 
             }
 
-            // add the cadence property to each dimension of the dataset, so that
-            // the plot element doesn't have to worry about it.  TODO: review this
-            for (int i = 0; i < fillDs.rank(); i++) {
-                QDataSet dep = (QDataSet) fillDs.property("DEPEND_" + i);
-                if (dep != null) {
-                    dep = DataSetOps.makePropertiesMutable(dep);
-                    if (i == 0 && dep.rank() == 1) {
-                        guessCadence((MutablePropertyDataSet) dep, fillDs);
-                    } else {
-                        if (dep.rank() == 1) {
-                            guessCadence((MutablePropertyDataSet) dep, null);
+            if ( true ) { // don't rely on code which assumes fillDs is mutable.
+                // add the cadence property to each dimension of the dataset, so that
+                // the plot element doesn't have to worry about it.  TODO: review this
+                for (int i = 0; i < fillDs.rank(); i++) {
+                    QDataSet dep = (QDataSet) fillDs.property("DEPEND_" + i);
+                    if (dep != null) {
+                        dep = DataSetOps.makePropertiesMutable(dep);
+                        if (i == 0 && dep.rank() == 1) {
+                            guessCadence((MutablePropertyDataSet) dep, fillDs);
+                        } else {
+                            if (dep.rank() == 1) {
+                                guessCadence((MutablePropertyDataSet) dep, null);
+                            }
+                        }
+                        try {
+                            fillDs= Ops.putProperty( fillDs, "DEPEND_" + i, dep);
+                        } catch ( IllegalArgumentException ex ) {
+                            logger.info("dataset become immutable.  Making mutable copy.");
+                            fillDs= Ops.copy(fillDs); //TODO: fix this, there should be no need to copy.
+                            fillDs= Ops.putProperty( fillDs, "DEPEND_" + i, dep);
                         }
                     }
-                    fillDs= Ops.putProperty( fillDs, "DEPEND_" + i, dep);
                 }
             }
 
@@ -1595,7 +1688,7 @@ public class DataSourceController extends DomNodeController {
     /**
      * see setDataSetInternal, which does autoranging, etc. TODO: fix this and
      * the fillDataSet stuff...
-     *
+     * @see #setDataSetInternal(org.das2.qds.QDataSet) 
      * @param dataSet
      */
     public void setDataSet(QDataSet dataSet) {
@@ -1640,12 +1733,23 @@ public class DataSourceController extends DomNodeController {
         propertyChangeSupport.firePropertyChange(PROP_EXCEPTION, oldException, exception);
     }
     protected QDataSet histogram = null;
+    
+    /**
+     * @deprecated this function will be removed and put into the metadata tab.
+     */
     public static final String PROP_HISTOGRAM = "histogram";
 
+    /**
+     * @deprecated this function will be removed and put into the metadata tab.
+     */
     public QDataSet getHistogram() {
         return histogram;
     }
 
+    /**
+     * @deprecated this function will be removed and put into the metadata tab.
+     * @param histogram 
+     */
     public void setHistogram(QDataSet histogram) {
         QDataSet oldHistogram = this.histogram;
         this.histogram = histogram;
@@ -1749,11 +1853,11 @@ public class DataSourceController extends DomNodeController {
                 // Call the data source to get the data set.
                 logger.log(Level.FINE, "load {0}", dss);
                 result = dss.getDataSet(mymon);
-
-                if (dsf.getUri().length() > 0) {
-                    this.model.addRecent(dsf.getUri());
-                }
-                logger.log(Level.FINE, "{0} read dataset: {1}", new Object[]{dss, result});
+                
+                //if (dsf.getUri().length() > 0) {
+                //    this.model.addRecent(dsf.getUri());
+                //}
+                logger.log(Level.FINE, "read dataset: {1} from {0}", new Object[]{dss, result});
                 Map<String, Object> props = dss.getMetadata(new AlertNullProgressMonitor("getMetadata"));
 
                 TimeSeriesBrowse ltsb= getTsb();
@@ -1765,11 +1869,21 @@ public class DataSourceController extends DomNodeController {
                         logger.warning("unexpected timeSeriesBrowseController.domPlot==null");
                     } else {
                         if ( UnitsUtil.isTimeLocation( p.getXaxis().getRange().getUnits() ) ) {
-                            p.getXaxis().setAutoRange(true);
+                            List<PlotElement> pes= dom.getController().getPlotElementsFor(p);
+                            if ( pes.size()>1 ) {
+                                logger.log(Level.INFO,"not resetting because others use this axis");
+                            } else {
+                                logger.log(Level.INFO, "resetting autorange=T because dataset is not time series: {0}", result);
+                                p.getXaxis().setAutoRange(true);
+                            }
                         }
                     }
                     //https://sourceforge.net/p/autoplot/bugs/1559/ Let's trim it...
+                    int count= result.length();
                     result= DataSourceUtil.trimScatterToTimeRange( result, ltsb.getTimeRange() );
+                    if ( result.length()==0 && count>0 ) {
+                        logger.warning("trimScatterToTimeRange removes all points!");
+                    }
                 }
 
                 setDataSetInternal(result, props, dom.controller.isValueAdjusting());
@@ -1777,7 +1891,7 @@ public class DataSourceController extends DomNodeController {
                 // look again to see if it has timeSeriesBrowse now--JythonDataSource
                 if ( ltsb== null && dss.getCapability(TimeSeriesBrowse.class) != null) {
                     TimeSeriesBrowse tsb1 = dss.getCapability(TimeSeriesBrowse.class);
-                    PlotElement pe = getPlotElement();
+                    PlotElement pe = getPlotElement(false);
                     if (pe != null && this.doesPlotElementSupportTsb(pe)) {  //TODO: less flakey
                         setTsb(tsb1);
                         ltsbc= new TimeSeriesBrowseController(this, pe);
@@ -1790,6 +1904,13 @@ public class DataSourceController extends DomNodeController {
                 setException(ex);
                 setDataSet(null); //TODO: maybe we should allow the old dataset to stay, in case TSB....
                 setStatus("interrupted");
+                if (dsf.getUri().length() > 0) {
+                    this.model.addException(dsf.getUri(), ex);
+                }
+            } catch ( org.das2.client.AccessDeniedException ex ) {
+                setException(ex);
+                setDataSet(null); //TODO: maybe we should allow the old dataset to stay, in case TSB....
+                setStatus("access denied");
                 if (dsf.getUri().length() > 0) {
                     this.model.addException(dsf.getUri(), ex);
                 }
@@ -1862,8 +1983,9 @@ public class DataSourceController extends DomNodeController {
                     setDataSet(null);
                     setStatus("warning: " + message);
                     String title = (ex.getMessage().contains("No such file") || ex instanceof FileNotFoundException) ? "File not found" : ex.getMessage();
-                    if (title.contains("\n")) {
-                        title = title.substring(0, title.indexOf("\n"));
+                    int i= title.indexOf('\n');
+                    if (i>-1) {
+                        title = title.substring(0,i);
                     }
                     if (message.contains(org.autoplot.aggregator.AggregatingDataSource.MSG_NO_FILES_FOUND)) {
                         // this implies that there are files in other intervals, so don't have popup
@@ -1881,11 +2003,13 @@ public class DataSourceController extends DomNodeController {
                     logger.log(Level.WARNING, ex.getMessage(), ex);
                     setDataSet(null);
                     setStatus("error: " + ex.getClass());
+                    ex.printStackTrace();
                     handleException(ex);
                 } else {
                     setException(ex);
                     setDataSet(null);
                     setStatus("error: " + ex.getMessage());
+                    ex.printStackTrace();
                     handleException(ex);
                 }
                 if (dsf.getUri().length() > 0) {
@@ -2137,19 +2261,31 @@ public class DataSourceController extends DomNodeController {
      *
      * @return null or a plot element.
      */
-    private PlotElement getPlotElement() {
+    private PlotElement getPlotElement(boolean checkChildren) {
         List<PlotElement> pele = dom.controller.getPlotElementsFor(dsf);
         if (pele.isEmpty()) {
-            return null;
+            if ( checkChildren ) {
+                DataSourceFilter dsf2= getChildSource();
+                if ( dsf2==null ) {
+                    return null;
+                } else {
+                    return dsf2.controller.getPlotElement(false);
+                }
+            } else {
+                return null;
+            }
         } else {
             return pele.get(0);
         }
-
     }
 
     private ProgressMonitor getMonitor(String label, String description) {
 
-        PlotElement pele = getPlotElement();
+        PlotElement pele = getPlotElement(true);
+        if ( pele==null ) {
+            pele = getPlotElement(true);
+        }
+        
         DasPlot p = null;
         if (pele != null) {
             Plot plot = dom.controller.getPlotFor(pele);
@@ -2163,12 +2299,16 @@ public class DataSourceController extends DomNodeController {
             }
         }
 
+        ProgressMonitor result;
         if (p != null) {
-            return dom.controller.getMonitorFactory().getMonitor(p, label, description);
+            result= dom.controller.getMonitorFactory().getMonitor(p, label, description);
         } else {
-            return dom.controller.getMonitorFactory().getMonitor(label, description);
+            result= dom.controller.getMonitorFactory().getMonitor(label, description);
         }
-
+        
+        DasProgressPanel.maybeCenter( result, p );
+        
+        return result;
     }
 
     private void setStatus(String string) {

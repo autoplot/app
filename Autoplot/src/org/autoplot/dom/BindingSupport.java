@@ -1,7 +1,4 @@
-/*
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
- */
+
 package org.autoplot.dom;
 
 import java.awt.Component;
@@ -11,6 +8,7 @@ import java.beans.PropertyChangeListener;
 import java.beans.PropertyDescriptor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
@@ -64,14 +62,50 @@ public class BindingSupport {
         }
     }
 
+    /**
+     * converter for objects which have a toString/parse pair.  This works for:
+     * <ul>
+     * <li>DatumRange
+     * <li>Datum
+     * <li>Color
+     * </ul>
+     * The convertForward method captures the class of the object.
+     */
     public static final Converter toStringConverter= new Converter() {
+        
+        Class c= null;
+        Object instance;
+        
         @Override
         public Object convertForward(Object value) {
-            return value.toString();
+            instance= value;
+            if ( c==null ) {
+                c= instance.getClass();
+            }
+            if ( c==java.awt.Color.class ) {
+                return org.das2.util.ColorUtil.nameForColor((java.awt.Color)value);
+            } else {
+                return value.toString();
+            }
         }
 
         @Override
         public Object convertReverse(Object value) {
+            if ( c.isAssignableFrom( org.das2.datum.Datum.class ) ) {
+                try {
+                    return org.das2.datum.DatumUtil.parse((String)value);
+                } catch (ParseException ex) {
+                    return instance;
+                }
+            } else if ( c.isAssignableFrom( org.das2.datum.DatumRange.class ) ) {
+                try {
+                    return org.das2.datum.DatumRangeUtil.parseTimeRange((String)value);
+                } catch (ParseException ex) {
+                    return instance;
+                }
+            } else if ( c.isAssignableFrom( java.awt.Color.class ) ) {
+                return org.das2.util.ColorUtil.decodeColor((String)value);
+            }
             return value.toString();
         }
     };
@@ -86,7 +120,8 @@ public class BindingSupport {
         final String srcProp;
         final String pprop;
 
-        private MyPropChangeListener( final Object p, final Method setter, final Method getter, final Converter c, final boolean forward, final String srcProp, final String pprop ) {
+        private MyPropChangeListener( final Object p, final Method setter, final Method getter, final Converter c, 
+                final boolean forward, final String srcProp, final String pprop ) {
             this.p= p;
             this.setter= setter;
             this.getter= getter;
@@ -124,11 +159,7 @@ public class BindingSupport {
                             setter.invoke(p, c.convertReverse(evt.getNewValue()));
                         }
                     }
-                } catch (IllegalAccessException e) {
-                    throw new RuntimeException(e);
-                } catch (IllegalArgumentException e) {
-                    throw new RuntimeException(e);
-                } catch (InvocationTargetException e) {
+                } catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException e) {
                     throw new RuntimeException(e);
                 }
         }
@@ -217,18 +248,12 @@ public class BindingSupport {
             try {
                 bi.dstSetter.invoke(dst, val);
             } catch ( IllegalArgumentException ex ) {
-                System.err.println("here");
+                logger.info("IllegalArgumentException in bind");
             }
         } catch (IllegalArgumentException ex) {
             String msg= String.format( "failed to bind %s.%s to %s.%s", src, srcProp, dst, dstProp );
             throw new RuntimeException(msg,ex);
-        } catch (InvocationTargetException ex) {
-            String msg= String.format( "failed to bind %s.%s to %s.%s", src, srcProp, dst, dstProp );
-            throw new RuntimeException(msg,ex);
-        } catch (IllegalAccessException ex) {
-            String msg= String.format( "failed to bind %s.%s to %s.%s", src, srcProp, dst, dstProp );
-            throw new RuntimeException(msg,ex);
-        } catch (RuntimeException ex) {
+        } catch (InvocationTargetException | IllegalAccessException | RuntimeException ex) {
             String msg= String.format( "failed to bind %s.%s to %s.%s", src, srcProp, dst, dstProp );
             throw new RuntimeException(msg,ex);
         }
@@ -244,15 +269,7 @@ public class BindingSupport {
         try {
             Method apcl = dst.getClass().getMethod("addPropertyChangeListener", String.class, PropertyChangeListener.class);
             apcl.invoke(dst, dstProp, dstListener);
-        } catch (IllegalAccessException ex) {
-            logger.log(Level.SEVERE, ex.getMessage(), ex);
-        } catch (IllegalArgumentException ex) {
-            logger.log(Level.SEVERE, ex.getMessage(), ex);
-        } catch (InvocationTargetException ex) {
-            logger.log(Level.SEVERE, ex.getMessage(), ex);
-        } catch (NoSuchMethodException ex) {
-            logger.log(Level.SEVERE, ex.getMessage(), ex);
-        } catch (SecurityException ex) {
+        } catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException | NoSuchMethodException | SecurityException ex) {
             logger.log(Level.SEVERE, ex.getMessage(), ex);
         }
 
@@ -307,15 +324,7 @@ public class BindingSupport {
                 try {
                     Method apcl = bi.dst.getClass().getMethod("removePropertyChangeListener", String.class, PropertyChangeListener.class);
                     apcl.invoke(bi.dst, bi.dstProp, bi.dstListener);
-                } catch (IllegalAccessException ex) {
-                    logger.log(Level.SEVERE, ex.getMessage(), ex);
-                } catch (IllegalArgumentException ex) {
-                    logger.log(Level.SEVERE, ex.getMessage(), ex);
-                } catch (InvocationTargetException ex) {
-                    logger.log(Level.SEVERE, ex.getMessage(), ex);
-                } catch (NoSuchMethodException ex) {
-                    logger.log(Level.SEVERE, ex.getMessage(), ex);
-                } catch (SecurityException ex) {
+                } catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException | NoSuchMethodException | SecurityException ex) {
                     logger.log(Level.SEVERE, ex.getMessage(), ex);
                 }
                 bi.src.removePropertyChangeListener(bi.srcProp, bi.srcListener);
@@ -339,15 +348,7 @@ public class BindingSupport {
                     try {
                         Method apcl = bi.dst.getClass().getMethod("removePropertyChangeListener", String.class, PropertyChangeListener.class);
                         apcl.invoke(bi.dst, bi.dstProp, bi.dstListener);
-                    } catch (IllegalAccessException ex) {
-                        logger.log(Level.SEVERE, ex.getMessage(), ex);
-                    } catch (IllegalArgumentException ex) {
-                        logger.log(Level.SEVERE, ex.getMessage(), ex);
-                    } catch (InvocationTargetException ex) {
-                        logger.log(Level.SEVERE, ex.getMessage(), ex);
-                    } catch (NoSuchMethodException ex) {
-                        logger.log(Level.SEVERE, ex.getMessage(), ex);
-                    } catch (SecurityException ex) {
+                    } catch (IllegalAccessException | IllegalArgumentException | InvocationTargetException | NoSuchMethodException | SecurityException ex) {
                         logger.log(Level.SEVERE, ex.getMessage(), ex);
                     }
                     bi.src.removePropertyChangeListener(bi.srcProp, bi.srcListener);

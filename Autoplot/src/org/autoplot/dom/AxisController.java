@@ -1,7 +1,4 @@
-/*
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
- */
+
 package org.autoplot.dom;
 
 import java.beans.PropertyChangeEvent;
@@ -14,6 +11,8 @@ import org.das2.datum.DatumRangeUtil;
 import org.das2.datum.Units;
 import org.das2.graph.DasAxis;
 import org.das2.graph.DasAxis.Lock;
+import org.das2.graph.DasColumn;
+import org.das2.graph.DasRow;
 import org.das2.util.LoggerManager;
 import org.jdesktop.beansbinding.Converter;
 
@@ -23,9 +22,12 @@ import org.jdesktop.beansbinding.Converter;
 public class AxisController extends DomNodeController {
 
     DasAxis dasAxis;
+    private DasColumn column;
+    private DasRow row;
+    
     private Application dom;
     Plot plot;
-    Axis axis;
+    final Axis axis;
     private final static Object PENDING_RANGE_TWEAK="pendingRangeTweak";
     private boolean defaultOppositeRight= false;
 
@@ -39,7 +41,7 @@ public class AxisController extends DomNodeController {
         if ( plot.zaxis==axis ) {
             defaultOppositeRight= true;
         }
-        bindTo(dasAxis);
+        bindTo();
         axis.addPropertyChangeListener(rangeChangeListener);
     }
 
@@ -198,11 +200,10 @@ public class AxisController extends DomNodeController {
      * @param log true if the axis should be log.
      */
     public void setRangeAutomatically( DatumRange range, boolean log ) {
-        axis.range= range; // don't fire off property change events.
-        axis.log= log;
+        boolean oldAutoRange= axis.autoRange;
         axis.setRange(range);
         axis.setLog(log);
-        axis.setAutoRange(true);
+        axis.autoRange=oldAutoRange;
     }
 
     /**
@@ -218,14 +219,25 @@ public class AxisController extends DomNodeController {
     }
     
     /**
-     * reset the axis units to a new unit which is convertable.
+     * reset the axis units to a new unit which is convertible.
      * @param nu 
      */
     public void resetAxisUnits( Units nu ) {
         DatumRange oldRange=dasAxis.getDatumRange();
         DatumRange newRange= DatumRange.newDatumRange( oldRange.min().doubleValue(nu), oldRange.max().doubleValue(nu), nu );
         dasAxis.resetRange(newRange);
+        axis.setRange(newRange);
     }
+    
+    /**
+     * reset the axis range, without the units check.
+     * @param newRange
+     */
+    public void resetAxisRange( DatumRange newRange ) {
+        dasAxis.resetRange(newRange);
+        axis.setRange(newRange);
+    }
+    
 
     private Converter getOppositeConverter( Axis axis, final DasAxis dasAxis ) {
         return new Converter() {
@@ -263,32 +275,68 @@ public class AxisController extends DomNodeController {
     
     protected LabelConverter labelConverter;
     
-    public final synchronized void bindTo(DasAxis p) {
+    public final synchronized void bindTo() {
         ApplicationController ac = dom.controller;
-        ac.bind(axis, "range", p, "datumRange");
-        ac.bind(axis, "log", p, "log");
+        ac.bind(axis, Axis.PROP_RANGE, dasAxis, DasAxis.PROPERTY_DATUMRANGE);
+        ac.bind(axis, Axis.PROP_LOG, dasAxis, DasAxis.PROP_LOG);
         labelConverter= new LabelConverter( dom, plot, axis, null, null );
-        ac.bind(axis, Axis.PROP_LABEL, p, DasAxis.PROP_LABEL, labelConverter );
-        ///ac.bind(axis, "label", p, "label", plot.getController().labelContextConverter(axis) );
-        ac.bind(axis, "fontSize", p, "fontSize" );
-        ac.bind(axis, "drawTickLabels", p, "tickLabelsVisible");
-        ac.bind(axis, "flipped", p, "flipped");
-        ac.bind(axis, "visible", p, "visible" );
-        ac.bind(axis, "opposite", p, "orientation", getOppositeConverter(axis,dasAxis) );
-        if ( p.isHorizontal() ) {
-            p.getColumn().addPropertyChangeListener(scaleListener);
+        ac.bind(axis, Axis.PROP_LABEL, dasAxis, DasAxis.PROP_LABEL, labelConverter );
+        ac.bind(axis, Axis.PROP_FONTSIZE, dasAxis, DasAxis.PROP_FONTSIZE );
+        ac.bind(axis, Axis.PROP_DRAWTICKLABELS, dasAxis, "tickLabelsVisible");
+        ac.bind(axis, Axis.PROP_FLIPPED, dasAxis, DasAxis.PROP_FLIPPED );
+        ac.bind(axis, Axis.PROP_VISIBLE, dasAxis, "visible" );
+        ac.bind(axis, Axis.PROP_OPPOSITE, dasAxis, "orientation", getOppositeConverter(axis,dasAxis) );
+        ac.bind(axis, Axis.PROP_TICKVALUES, dasAxis, DasAxis.PROP_TICKVALUES );
+        ac.bind(axis, Axis.PROP_REFERENCE, dasAxis, DasAxis.PROP_REFERENCE );
+        column= dasAxis.getColumn();
+        row= dasAxis.getRow();
+        if ( dasAxis.isHorizontal() ) {
+            column.addPropertyChangeListener(scaleListener);
         } else {
-            p.getRow().addPropertyChangeListener(scaleListener);
+            row.addPropertyChangeListener(scaleListener);
         }
         axis.addPropertyChangeListener( Axis.PROP_RANGE, scaleListener );
         axis.addPropertyChangeListener( Axis.PROP_LOG, scaleListener );
     }
 
+    public final synchronized void removeBindings() {
+        //System.err.println("removeBindings for "+axis + " " +scaleListener );//bug2053
+        axis.removePropertyChangeListener( Axis.PROP_RANGE, scaleListener );
+        axis.removePropertyChangeListener( Axis.PROP_LOG, scaleListener );
+        labelConverter= null;
+        if ( dasAxis.isHorizontal() ) {
+            //if ( this.axis.getId().equals("xaxis_2") ) {
+            //    System.err.println("here2 rm xaxis_2="+this.axis+ "@"+ this.axis.hashCode() + "dasColumn=@"+dasAxis.getColumn().hashCode()+" dasAxis="+ dasAxis.getDasName() + "@" + dasAxis.hashCode());
+            //    System.err.println();
+            //}
+            column.removePropertyChangeListener(scaleListener);
+        } else {
+            row.removePropertyChangeListener(scaleListener);
+        }
+        dom.controller.unbind(axis);
+        axis.removePropertyChangeListener( rangeChangeListener );
+    }
+    
+    /**
+     * remove any references this object has before as it is deleted.
+     */
+    public final synchronized void removeReferences() {
+        labelConverter= null;
+        //this.dom= null;
+        //this.axis= null;
+        //System.err.println("* removeReferences for "+scaleListener + " " + this.axis);
+        //this.dasAxis= null;
+        //this.plot= null;
+    }
     
     private final PropertyChangeListener scaleListener= new PropertyChangeListener() {
         @Override
         public void propertyChange(PropertyChangeEvent evt) {
+            logger.finer("scaleListener");
             int npixels;
+            if ( dasAxis==null ) {
+                return;
+            }
             npixels= dasAxis.isHorizontal() ? dasAxis.getColumn().getWidth() : dasAxis.getRow().getHeight();                
             Datum w;
             Units u= dasAxis.getUnits();
@@ -299,9 +347,29 @@ public class AxisController extends DomNodeController {
             } else {
                 w= axis.getRange().width();
             }
+            boolean rangeWasChanged= evt.getPropertyName().equals(Axis.PROP_RANGE);
+            
             Datum scale= w.divide(npixels);
-            axis.setScale( scale );
+            if ( !axis.getScale().equals(scale) ) {
+                // when scale is bound, change the range.  When it is not bound, go ahead and just reset the scale
+                List<BindingModel> bms= dom.getController().findBindings( axis, Axis.PROP_SCALE );
+                if ( !rangeWasChanged && bms.size()>0 ) {
+                    logger.log(Level.FINEST, "{0}: the scale is bound, so adjust the range instead", axis.id);
+                    DatumRange dr= axis.getRange();
+                    Datum newW= axis.getScale().multiply(npixels);
+                    DatumRange newRange= DatumRangeUtil.createCentered( dr.middle(), newW );
+                    axis.setRange(newRange);
+                } else {
+                    axis.setScale( scale );
+                }
+            }
         }
+
+        @Override
+        public String toString() {//bug2053
+            return "scaleListener " + hashCode() + " for "+axis;
+        }
+        
     };
             
     public DasAxis getDasAxis() {
@@ -320,12 +388,15 @@ public class AxisController extends DomNodeController {
         if ( !exclude.contains( Axis.PROP_FLIPPED ) ) axis.setFlipped(that.isFlipped());
         if ( !exclude.contains( Axis.PROP_OPPOSITE ) ) axis.setOpposite(that.isOpposite());
         if ( !exclude.contains( Axis.PROP_RANGE ) ) axis.setRange(that.getRange());
+        if ( !exclude.contains( Axis.PROP_SCALE ) ) axis.setScale(that.getScale());
         if ( !exclude.contains( Axis.PROP_LABEL ) ) axis.setLabel(that.getLabel());
         if ( !exclude.contains( Axis.PROP_FONTSIZE ) ) axis.setFontSize( that.getFontSize() );
         if ( !exclude.contains( Axis.PROP_AUTORANGE ) ) axis.setAutoRange(that.isAutoRange());
         if ( !exclude.contains( Axis.PROP_AUTOLABEL ) ) axis.setAutoLabel(that.isAutoLabel());
         if ( !exclude.contains( Axis.PROP_AUTORANGEHINTS ) ) axis.setAutoRangeHints(that.getAutoRangeHints());
         if ( !exclude.contains( Axis.PROP_DRAWTICKLABELS ) ) axis.setDrawTickLabels( that.isDrawTickLabels() );
+        if ( !exclude.contains( Axis.PROP_TICKVALUES ) ) axis.setTickValues( that.getTickValues() );
+        if ( !exclude.contains( Axis.PROP_REFERENCE ) ) axis.setReference( that.getReference() );
         if ( !exclude.contains( Axis.PROP_VISIBLE ) ) axis.setVisible( that.isVisible() );
         if ( lock!=null ) lock.unlock();
     }

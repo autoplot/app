@@ -1,7 +1,4 @@
-/*
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
- */
+
 package org.autoplot.servlet;
 
 import org.autoplot.RenderType;
@@ -9,12 +6,17 @@ import org.autoplot.ApplicationModel;
 import java.awt.Color;
 import java.awt.Font;
 import java.awt.Graphics2D;
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.util.logging.Logger;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.nio.file.Files;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
@@ -36,6 +38,7 @@ import javax.servlet.ServletException;
 import javax.servlet.http.HttpServlet;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import org.apache.commons.io.output.TeeOutputStream;
 import org.das2.datum.DatumRange;
 import org.das2.datum.DatumRangeUtil;
 import org.das2.datum.TimeUtil;
@@ -61,21 +64,23 @@ import org.autoplot.datasource.DataSetSelectorSupport;
 import org.autoplot.datasource.DataSetURI;
 import org.autoplot.datasource.DataSource;
 import org.autoplot.datasource.DataSourceFactory;
-import org.autoplot.datasource.DataSourceRegistry;
 import org.autoplot.datasource.FileSystemUtil;
 import org.autoplot.datasource.URISplit;
 import org.autoplot.datasource.capability.TimeSeriesBrowse;
 import org.autoplot.datasource.jython.JythonDataSourceFactory;
 import org.das2.qds.ops.Ops;
+import org.das2.util.TimingConsoleFormatter;
 
 /**
  * SimpleServlet produces PNG,PDF, and SVG products for
  * .vap files and Autoplot URIs.  A simple set of controls is provided
  * to tweak layout when automatic settings are not satisfactory.
  * 
+ * If the URI is not whitelisted, then it will be logged.  If the 
+ * URI or VAP is blacklisted, then it will throw an exception.
+ * 
  * Some known instances:<ul>
- * <li>http://autoplot.org/plot/
- * <li>http://jfaden.net:8180/AutoplotServlet/
+ * <li>http://jfaden.net/AutoplotServlet/
  * </ul>
  * 
  * @author jbf
@@ -83,13 +88,12 @@ import org.das2.qds.ops.Ops;
 public class SimpleServlet extends HttpServlet {
 
     private static final Logger logger= Logger.getLogger("autoplot.servlet" );
-    public static final String version= "v20170930.1132";
 
     static FileHandler handler;
 
     private static void addHandlers(long requestId) {
         try {
-            FileHandler h = new FileHandler("/tmp/testservlet/log" + requestId + ".txt");
+            FileHandler h = new FileHandler("/tmp/apservlet/log" + requestId + ".txt");
             TimerConsoleFormatter form = new TimerConsoleFormatter();
             form.setResetMessage("getImage");
             h.setFormatter(form);
@@ -145,6 +149,14 @@ public class SimpleServlet extends HttpServlet {
         
     }
     
+    private static void copyStream( InputStream source, OutputStream target ) throws IOException {
+        byte[] buf = new byte[8192];
+        int length;
+        while ((length = source.read(buf)) > 0) {
+            target.write(buf, 0, length);
+        } 
+    }
+    
     /** 
      * Processes requests for both HTTP <code>GET</code> and <code>POST</code> methods.
      * @param request servlet request
@@ -155,9 +167,83 @@ public class SimpleServlet extends HttpServlet {
     protected void processRequest(HttpServletRequest request, HttpServletResponse response)
             throws ServletException, IOException {
 
+        File cacheFile= null;
+        File metaCacheFile= null;
+        File logFile= null; // logging information from when file was created.
+        
+        FileInputStream fin= null;
+        
+        String qs= request.getQueryString();
+        String cacheControl= request.getHeader("Cache-Control");
+        
+        String usecache= request.getParameter("usecache");
+
+        synchronized ( this ) { // if a cached response is available, then use it.
+            if ( ServletInfo.isCaching() && qs!=null ) {
+                String format = ServletUtil.getStringParameter(request, "format", "image/png");
+                String hash= request.getQueryString();
+                hash= String.format( "%04d", Math.abs( hash.hashCode() % 10000 ) );
+                File s= ServletInfo.getCacheDirectory();
+                logFile= new File( s, hash+".log" );
+                
+                if ( format.equals("image/png") ) {
+                    if ( !s.exists() ) {
+                        if ( !s.mkdirs() ) {
+                            throw new RuntimeException("Unable to make cache: "+s);
+                        }
+                    }
+                    cacheFile= new File( s, hash + ".png" );
+                    metaCacheFile= new File( s, hash + ".txt" );
+
+                    if ( cacheFile.exists() && !( "no-cache".equals(cacheControl) || "false".equals(usecache) ) ) {
+                        byte[] bb= Files.readAllBytes(metaCacheFile.toPath());
+                        String qs0= new String( bb );
+                        if ( qs0.equals(qs) ) {
+                            cacheFile.setLastModified( new Date().getTime() );
+                            String host= java.net.InetAddress.getLocalHost().getCanonicalHostName();
+                            response.setHeader( "X-Served-By", host );
+                            response.setHeader( "X-Server-Version", ServletInfo.version );
+                            response.setHeader( "X-Autoplot-cache", "yep" );
+                            response.setHeader( "X-Autoplot-cache-filename", cacheFile.getName() );
+
+                            fin= new FileInputStream( cacheFile );
+
+                        } else {
+                            logger.finer( "cache slot occupied by another image, overwriting.");
+                        }
+
+                    }
+                }
+            }
+        }
+        
+        if ( fin!=null ) {
+            try ( OutputStream outs= response.getOutputStream() ) {
+                copyStream( fin, outs );
+            }
+            fin.close();
+            return;
+        }
+        
+        if ( logFile==null ) {
+            throw new NullPointerException("logfile should be set");
+        }
+        
+        
+        Handler h;
+        try {
+            h= new FileHandler(String.valueOf(logFile));
+        } catch ( Exception ex ) {
+            throw new RuntimeException(ex);
+        }
+        h.setFormatter( new TimingConsoleFormatter() );
+        logger.addHandler(h);
+        logger.setLevel( Level.ALL );
+        h.setLevel( Level.ALL );
+        
         //logger.setLevel(Level.FINE);
         
-        logger.finer( version );
+        logger.finer(ServletInfo.version);
 
         logger.fine("=======================");
 
@@ -233,7 +319,7 @@ public class SimpleServlet extends HttpServlet {
             if ( id!=null ) logger.log(Level.FINE, "id={0}", id);
             
             // allow URI=vapfile
-            if ( vap==null && suri!=null ) {
+            if ( vap==null && suri!=null ) { 
                 if ( suri.contains(".vap") || suri.contains(".vap?") ) {
                     vap= suri;
                     suri= null;
@@ -243,7 +329,7 @@ public class SimpleServlet extends HttpServlet {
             // To support load balancing, insert the actual host that resolved the request
             String host= java.net.InetAddress.getLocalHost().getCanonicalHostName();
             response.setHeader( "X-Served-By", host );
-            response.setHeader( "X-Server-Version", version );
+            response.setHeader("X-Server-Version", ServletInfo.version);
             if ( suri!=null ) {
                 response.setHeader( "X-Autoplot-URI", suri );
             }
@@ -285,6 +371,9 @@ public class SimpleServlet extends HttpServlet {
                 if ( !whiteListed ) {
                     logger.log(Level.FINE, "uri is not whitelisted: {0}", suri);                    
                     ServletUtil.dumpWhitelistToLogger(Level.FINE);
+                    if ( ServletUtil.isBlacklisted(suri) ) {
+                        throw new IllegalArgumentException("uri is blacklisted: {0}"+ vap);
+                    }
                 }
             }
             if ( vap!=null ) {
@@ -292,6 +381,9 @@ public class SimpleServlet extends HttpServlet {
                 if ( !whiteListed ) {
                     logger.log(Level.FINE, "vap is not whitelisted: {0}", vap);
                     ServletUtil.dumpWhitelistToLogger(Level.FINE);
+                    if ( ServletUtil.isBlacklisted(vap) ) {
+                        throw new IllegalArgumentException("vap is blacklisted: {0}"+ vap);
+                    }
                 }
                 //TODO: there may be a request that the URIs within the vap are 
                 //verified to be whitelisted.  This is not done.
@@ -325,7 +417,12 @@ public class SimpleServlet extends HttpServlet {
                     response.setContentType("text/html");
                     String s = AboutUtil.getAboutHtml();
                     s = s.substring(0, s.length() - 7);
-                    s = s + "<br><br>servlet version="+version+"<br></html>";
+                    s = s + "<br>";
+                    s = s + "hapiServerCache="+ System.getProperty( "hapiServerCache" ) + "<br>";
+                    s = s + "cdawebHttps=" + System.getProperty( "cdawebHttps" ) + "<br>";
+                    s = s + "enableReferenceCache=" + System.getProperty( "enableReferenceCache" ) + "<br>";
+                    s = s + "<br><br>servlet version="+ServletInfo.version+"<br>";
+                    s = s + "</html>";
                     out.write(s.getBytes());
                 }
                 return;
@@ -393,7 +490,7 @@ public class SimpleServlet extends HttpServlet {
                 logger.log(Level.FINER, "vap isLocalVap={0}", isLocalVap);
                 File openable = DataSetURI.getFile(vap,new NullProgressMonitor());
                 if ( !isLocalVap ) {
-                    if ( vapHasLocalReferences( openable ) ) {
+                    if ( vapHasLocalReferences( openable ) && !ServletUtil.isWhitelisted( vap ) ) {
                         throw new IllegalArgumentException("remote .vap file has local references");
                     }
                 }
@@ -483,12 +580,13 @@ public class SimpleServlet extends HttpServlet {
                         timeRange = DatumRangeUtil.parseTimeRangeValid(stimeRange);
                         TimeSeriesBrowse tsb = dsource.getCapability(TimeSeriesBrowse.class);
                         if (tsb != null) {
+                            tsb.setURI(suri);
                             tsb.setTimeRange(timeRange);
                             logit("timeSeriesBrowse got data source", t0, uniq, debug);
+                            suri= tsb.getURI();
                         }
-                        suri= tsb.getURI();
                     }
-                    
+                    response.setHeader( "X-Autoplot-TSB-URI", suri );
                     DataSourceFactory dsf= DataSetURI.getDataSourceFactory( DataSetURI.getURI(suri),new NullProgressMonitor());
                     List<String> problems= new ArrayList<>(1);
                     if ( dsf.reject(suri, problems, new NullProgressMonitor() )) {
@@ -659,12 +757,12 @@ public class SimpleServlet extends HttpServlet {
                 final String fstamp= stamp;
                 final Font ffont= Font.decode("sans-4-italic");
                 final String fhost= host;
-                dom.getController().getCanvas().getController().getDasCanvas().addTopDecorator( new Painter() {
+                dom.getController().getCanvas().getController().getDasCanvas().addTopDecorator(new Painter() {
                     @Override
                     public void paint(Graphics2D g) {
                         g.setFont( ffont );
                         g.setColor( Color.BLUE );
-                        g.drawString( ""+fstamp+" "+ fhost + " " + TimeUtil.now().toString() + " version: "+version, 0, 10 );
+                        g.drawString(""+fstamp+" "+ fhost + " " + TimeUtil.now().toString() + " version: "+ServletInfo.version, 0, 10 );
                     }
                 });
             }
@@ -695,7 +793,17 @@ public class SimpleServlet extends HttpServlet {
             
             response.setHeader( "X-Autoplot-vaptimer-ms",  String.valueOf( System.currentTimeMillis()-t0 ) );
             
-            try (OutputStream out = response.getOutputStream()) {
+            OutputStream out = response.getOutputStream();
+            
+            ByteArrayOutputStream baos= null;
+            
+            try {
+                
+                if ( cacheFile!=null ) {
+                    baos= new ByteArrayOutputStream( 100000 );
+                    out= new TeeOutputStream( out, baos );
+                }
+                
                 switch (format) {
                     case "image/png":
                         logger.log(Level.FINE, "time to create image: {0} ms", ( System.currentTimeMillis()-t0 ));
@@ -738,6 +846,25 @@ public class SimpleServlet extends HttpServlet {
                         
                     default:
                         throw new ServletException("format must be image/png, application/pdf, or image/svg+xml");
+                }
+            } finally { 
+                if ( out!=null ) {
+                    out.close();
+                    
+                    synchronized ( this ) {
+                        if ( baos!=null && cacheFile!=null ) {
+                            byte[] buf= baos.toByteArray();
+                            try ( ByteArrayInputStream bais= new ByteArrayInputStream(buf) ) {
+                                Files.copy( bais, cacheFile.toPath() );
+                            }
+                            byte[] metaBytes= qs.getBytes();
+                            assert metaCacheFile!=null;
+                            Files.write( metaCacheFile.toPath(), metaBytes );
+                            logger.removeHandler(h);
+                            h.flush();
+                            h.close();
+                        }
+                    }
                 }
             }
             logit("done with request", t0, uniq, debug);

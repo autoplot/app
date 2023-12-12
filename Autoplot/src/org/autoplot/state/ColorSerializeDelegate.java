@@ -1,7 +1,3 @@
-/*
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
- */
 
 package org.autoplot.state;
 
@@ -12,7 +8,7 @@ import org.das2.qstream.SerializeDelegate;
 
 /**
  * Format the color as RGB or ARGB, like so: #000000.
- * This can be parsed using ColorUtil.decodeColor, do names like "burntSienna" 
+ * This can be parsed using ColorUtil.decodeColor, names like "burntSienna" 
  * can be used in vaps as well.
  * @author jbf
  */
@@ -21,20 +17,28 @@ public class ColorSerializeDelegate implements SerializeDelegate {
     public ColorSerializeDelegate() {
     }
 
+    @Override
     public String format(Object o) {
         Color color= (Color)o;
-        if ( color.getAlpha()<255 ) {
-            return "#" + Integer.toHexString(color.getRGB());
+        String s= ColorUtil.nameForColor((Color)o);
+        if ( s.startsWith("#") ) {
+            return s;
         } else {
-            return "#" + Integer.toHexString(color.getRGB() & 0xFFFFFF);
+            if ( color.getAlpha()==255 ) {
+                s= "#" + String.format( "%06x", color.getRGB() & 0xFFFFFF) + " ("+s+")";
+            } else {
+                s= "#" + String.format( "%02x%06x", color.getAlpha(), color.getRGB() & 0xFFFFFF )  + " ("+s+")";
+            }
+            return s;
         }
-        //return ColorUtil.encodeColor((Color)o);
     }
 
+    @Override
     public Object parse(String typeId, String s) throws ParseException {
         return ColorUtil.decodeColor(s);
     }
 
+    @Override
     public String typeId(Class clas) {
         return "color";
     }

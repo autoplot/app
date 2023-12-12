@@ -32,18 +32,6 @@ public class Test_022_ContextOverview implements Scenario {
 
     private static final Logger logger= LoggerManager.getLogger("vatesting");
     
-    private void waitUntilBusy() {
-        logger.fine("waiting for some pending changes");
-        Application dom= getDocumentModel();
-        while ( !dom.getController().isPendingChanges() ) {
-            try {
-                Thread.sleep(100);
-            } catch (InterruptedException ex) {
-                Logger.getLogger(Test_022_ContextOverview.class.getName()).log(Level.SEVERE, null, ex);
-            }
-        }
-    }
-    
     @Override
     public int runIt(Object o) {
 
@@ -55,18 +43,23 @@ public class Test_022_ContextOverview implements Scenario {
             Application dom= getDocumentModel();
             
             dom.getOptions().setAutolayout(false);
+            waitUntilIdle();
+            sleep(1000);
             
             AutoplotUI app = (AutoplotUI) getViewWindow();
             JFrameOperator mainFrame = new JFrameOperator(app);
+            sleep(3000); // remote bookmarks can take a little while to load
             waitUntilIdle();
-            
+            System.err.println("here line 52");
             JMenuBarOperator menuop= new JMenuBarOperator(mainFrame);
-
+            System.err.println("here line 54");
             JMenuItem check= menuop.pushMenu( 
                     new ComponentChooser[] { new RegexComponentChooser("Bookmarks"),
                     new RegexComponentChooser("Demos"), new RegexComponentChooser("Demo 5: .*") } );
-
-            waitUntilBusy();
+            
+            System.err.println("here line 59");
+            Util.waitUntilBusy(2000,app.getDom());
+            System.err.println("here line 61");
             waitUntilIdle();
 
             DatumRange range0= dom.getPlots(0).getXaxis().getRange();

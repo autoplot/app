@@ -15,6 +15,7 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import javax.swing.BoxLayout;
 import javax.swing.JCheckBox;
 import javax.swing.JOptionPane;
 import org.das2.components.DasProgressPanel;
@@ -37,6 +38,7 @@ public class ImportVapDialog extends javax.swing.JPanel {
     /** Creates new form ImportVapDialog */
     public ImportVapDialog() {
         initComponents();
+        dataSetsPanel.setLayout( new BoxLayout(dataSetsPanel, BoxLayout.Y_AXIS) );
     }
 
     /**
@@ -45,7 +47,7 @@ public class ImportVapDialog extends javax.swing.JPanel {
      * @return
      */
     public int showDialog( Component parent ) {
-        return AutoplotUtil.showConfirmDialog( parent, sels.toArray(), "Import URIs", JOptionPane.OK_CANCEL_OPTION );
+        return AutoplotUtil.showConfirmDialog( parent, dataSetsPanel, "Import URIs", JOptionPane.OK_CANCEL_OPTION );
     }
 
     public void setVap( String vap ) throws IOException {
@@ -69,6 +71,7 @@ public class ImportVapDialog extends javax.swing.JPanel {
                 }
                 sels.add( mi );
                 dataSets.add(s);
+                dataSetsPanel.add( mi );
             }
         }
     }
@@ -96,6 +99,8 @@ public class ImportVapDialog extends javax.swing.JPanel {
         dataSetsPanel = new javax.swing.JPanel();
 
         jLabel1.setText("Import Datasets:");
+
+        dataSetsPanel.setMinimumSize(new java.awt.Dimension(400, 400));
 
         org.jdesktop.layout.GroupLayout layout = new org.jdesktop.layout.GroupLayout(this);
         this.setLayout(layout);

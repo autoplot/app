@@ -2,6 +2,7 @@
 package external;
 
 import java.util.Arrays;
+import java.util.List;
 import java.util.logging.Logger;
 import org.python.core.Py;
 import org.python.core.PyInteger;
@@ -11,12 +12,15 @@ import org.autoplot.ScriptContext;
 import org.autoplot.dom.Annotation;
 import org.autoplot.dom.Application;
 import org.autoplot.dom.DomNode;
+import org.autoplot.dom.DomUtil;
+import org.autoplot.dom.Plot;
 import org.autoplot.jythonsupport.JythonOps;
 import org.das2.graph.AnchorPosition;
 import org.das2.graph.AnchorType;
 import org.das2.graph.BorderType;
 import org.das2.qds.ops.Ops;
 import org.python.core.PyJavaInstance;
+import org.python.core.PyList;
 
 /**
  * new implementation of the plot command allows for keywords in the
@@ -38,7 +42,7 @@ public class AnnotationCommand extends PyObject {
     public static final PyString __doc__ =
         new PyString("<html><H2>annotation([index],[named parameters])</H2>"
             + "annotation puts an annotation on the canvas.\n"
-            + "See http://autoplot.org/help.annotationCommand<br>\n"
+            + "See <a href='http://autoplot.org/help.annotationCommand'>http://autoplot.org/help.annotationCommand</a><br>\n"
             + "<br><b>named parameters:</b>\n"
             + "<table>"
             + "<tr><td>text</td><td>The message, allowing Granny codes</td></tr>"
@@ -46,15 +50,21 @@ public class AnnotationCommand extends PyObject {
             + " <tr><td> background     </td><td> background color\n</td></tr>"
             + " <tr><td> foreground     </td><td> foreground color\n</td></tr>"
             + " <tr><td> fontSize     </td><td> size relative to parent (1.2em) or in pts (8pt)\n</td></tr>"
-            + " <tr><td> borderType     </td><td> draw a border around the annotation text<br>none,rectangle,roundedRectangle<br>.</td></tr>"
+            + " <tr><td> borderType     </td><td> draw a border around the annotation text<br>none,rectangle,rounded_rectangle<br>.</td></tr>"
             + " <tr><td> anchorBorderType </td><td> draw a border around the anchor box.</td></tr>"
             + " <tr><td> anchorPosition </td><td>One of NE,NW,SE,SW,<br>N,E,W,S,<br>outsideN,outsideNNW</td></tr>"
+            + " <tr><td> anchorOffset </td><td>position relative to the anchor, like '1em,1em'</td></tr>"
             + " <tr><td> anchorType </td><td>PLOT means relative to the plot.<br>DATA means relative to xrange and yrange</td></tr>"
-            + " <tr><td> xrange, yrange </td><td> anchor box when data coordinates</td></tr>"
+            + " <tr><td> xrange, yrange </td><td> anchor box when using data anchor</td></tr>"
+            + " <tr><td> plotId </td><td> ID of the plot containing axes.  This will set the anchorType to CANVAS, unless xrange or yrange is set.</td></tr>"    
             + " <tr><td> pointAt </td><td>comma separated X and Y to point the annotation arrow at.</td></tr>"
-            + " <tr><td> rowId </td><td>ID of the row containing for positioning this annotation<br>(See dom.plots[0].rowId)</td></tr>"
-            + " <tr><td> columnId </td><td>ID of the column containing for positioning this annotation</td></tr>"
-            + "</table></html>");
+            + " <tr><td> pointAtX </td><td>X value to point the arrow at or to anchor the annotation.</td></tr>"
+            + " <tr><td> pointAtX </td><td>Y value to point the arrow at or to anchor the annotation.</td></tr>"
+            + " <tr><td> rowId </td><td>ID of the row containing for positioning this annotation, sets anchorType=CANVAS<br>(See dom.plots[0].rowId)</td></tr>"
+            + " <tr><td> columnId </td><td>ID of the column containing for positioning this annotation, sets anchorType=CANVAS</td></tr>"
+            + "</table>" 
+            + "See <a href='https://github.com/autoplot/documentation/blob/master/docs/annotations.md'>https://github.com/autoplot/documentation/blob/master/docs/annotations.md</a>"
+            + "</html>");
 
     private static AnchorPosition anchorPosition( PyObject val ) {
         AnchorPosition c=null;
@@ -62,11 +72,19 @@ public class AnnotationCommand extends PyObject {
             c = (AnchorPosition) val.__tojava__(AnchorPosition.class);
         } else if (val instanceof PyString) {
             String sval = (String) val.__str__().__tojava__(String.class);
-            c = AnchorPosition.valueOf(sval);
+            c = (AnchorPosition) lookupEnum( AnchorPosition.values(), sval );
         } else {
             throw new IllegalArgumentException("anchorPosition must be a string or AnchorPosition");
         }
         return c;
+    }
+    
+    private static Object lookupEnum( Object[] vs, String s ) {
+        s= s.toLowerCase();
+        for ( Object v: vs ) {
+            if ( v.toString().toLowerCase().equals(s) ) return v;
+        }
+        throw new IllegalArgumentException("unable to find enumerated value for "+s);
     }
     
     private static AnchorType anchorType( PyObject val ) {
@@ -75,7 +93,7 @@ public class AnnotationCommand extends PyObject {
             c = (AnchorType) val.__tojava__(AnchorType.class);
         } else if (val instanceof PyString) {
             String sval = (String) val.__str__().__tojava__(String.class);
-            c = AnchorType.valueOf(sval);
+            c = (AnchorType) lookupEnum( AnchorType.values(), sval );
         } else {
             throw new IllegalArgumentException("anchorType must be a string or AnchorType");
         }
@@ -84,11 +102,13 @@ public class AnnotationCommand extends PyObject {
 
     private static BorderType borderType( PyObject val ) {
         BorderType c=null;
-        if (val.__tojava__(BorderType.class) != Py.NoConversion) {
+        if ( val==Py.None ) {
+            return BorderType.NONE;
+        } else if (val.__tojava__(BorderType.class) != Py.NoConversion) {
             c = (BorderType) val.__tojava__(BorderType.class);
         } else if (val instanceof PyString) {
             String sval = (String) val.__str__().__tojava__(String.class);
-            c = BorderType.valueOf(sval);
+            c = (BorderType) lookupEnum( BorderType.values(), sval );
         } else {
             throw new IllegalArgumentException("borderType must be a string or BorderType");
         }
@@ -118,16 +138,16 @@ public class AnnotationCommand extends PyObject {
                 "text", "textColor", "background", "foreground",
                 "anchorPosition", "anchorOffset", "anchorType", "borderType", "anchorBorderType",
                 "fontSize",
-                "pointAtX", "pointAtY", "pointAt", 
-                "xrange", "yrange",
+                "pointAtX", "pointAtY", "pointAt", "pointAtOffset",
+                "xrange", "yrange", "plotId",
                 "rowId", "columnId"
         },
         new PyObject[] { new PyInteger(0), 
             Py.None, Py.None, Py.None, Py.None,
             Py.None, Py.None, Py.None, Py.None, Py.None,
             Py.None,
+            Py.None, Py.None, Py.None, Py.None, 
             Py.None, Py.None, Py.None,
-            Py.None, Py.None,
             Py.None, Py.None,
         } );
         
@@ -172,7 +192,8 @@ public class AnnotationCommand extends PyObject {
         annotation.syncTo( new Annotation(), Arrays.asList( DomNode.PROP_ID, Annotation.PROP_PLOTID, Annotation.PROP_ROWID, Annotation.PROP_COLUMNID ) );
                 
         try {
-
+            List<String> keywordsList= Arrays.asList(keywords);
+            
             for ( int i=nparm; i<args.length; i++ ) { //HERE nargs
                 String kw= keywords[i-nparm];
                 PyObject val= args[i];
@@ -221,18 +242,40 @@ public class AnnotationCommand extends PyObject {
                         annotation.setShowArrow(true);
                         break;
                     case "pointAt":
-                        String[] ss= sval.split(",",-2);
-                        annotation.setPointAtX(Ops.datum(ss[0]));
-                        annotation.setPointAtY(Ops.datum(ss[1]));
-                        annotation.setShowArrow(true);
+                        if ( val instanceof PyList ) {
+                            annotation.setPointAtX(Ops.datum(((PyList)val).get(0)));
+                            annotation.setPointAtY(Ops.datum(((PyList)val).get(1)));
+                            annotation.setShowArrow(true);
+                        } else {
+                            String[] ss= sval.split(",",-2);
+                            annotation.setPointAtX(Ops.datum(ss[0]));
+                            annotation.setPointAtY(Ops.datum(ss[1]));
+                            annotation.setShowArrow(true);
+                        }
+                        break;
+                    case "pointAtOffset":
+                        annotation.setPointAtOffset(sval);
+                        break;
+                    case "plotId":
+                        annotation.setPlotId(sval);
+                        if ( keywordsList.contains("xrange") || keywordsList.contains("yrange" ) ) { // check other keywords so that order doesn't matter
+                            annotation.setAnchorType( AnchorType.DATA );
+                        } else {
+                            annotation.setAnchorType( AnchorType.CANVAS ); //TODO: review AnchorType.PLOT
+                        }
+                        DomNode p= DomUtil.getElementById(dom,sval);
+                        if ( p instanceof Plot ) {
+                            annotation.setRowId(((Plot)p).getRowId());
+                            annotation.setColumnId(((Plot)p).getColumnId());
+                        }
                         break;
                     case "xrange":
-                        annotation.setXrange(Ops.datumRange(val));
+                        annotation.setXrange(JythonOps.datumRange(val));
                         annotation.setAnchorOffset("");
                         annotation.setAnchorType( AnchorType.DATA );                        
                         break;
                     case "yrange":
-                        annotation.setYrange(Ops.datumRange(val));
+                        annotation.setYrange(JythonOps.datumRange(val));
                         annotation.setAnchorOffset("");
                         annotation.setAnchorType( AnchorType.DATA );                        
                         break;

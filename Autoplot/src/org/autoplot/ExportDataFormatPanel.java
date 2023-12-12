@@ -63,7 +63,7 @@ public class ExportDataFormatPanel extends javax.swing.JPanel {
         
         for ( String s: exts ) {
             DataSourceFormat dsf= DataSourceRegistry.getInstance().getFormatByExt(s);
-            if ( dsf.canFormat(dataset) ) {
+            if ( dataset==null || dsf.canFormat(dataset) ) {
                 newExts.add(s);
             }
         }
@@ -239,8 +239,7 @@ public class ExportDataFormatPanel extends javax.swing.JPanel {
 
                 @Override
                 public boolean accept(File f) {
-                    if ( f.toString()==null ) return false; // Findbugs OK: There was a Windows bug where file.toString could return null.
-                    return f.toString().endsWith(ex) || f.isDirectory();
+                    return f.getName().endsWith(ex) || f.isDirectory();
                 }
 
                 @Override

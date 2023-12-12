@@ -11,6 +11,8 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import static org.autoplot.pngwalk.WalkUtil.splitIndex;
@@ -20,6 +22,10 @@ import org.das2.datum.Units;
 import org.das2.util.filesystem.FileSystem;
 import org.autoplot.dom.DebugPropertyChangeSupport;
 import org.autoplot.datasource.DataSetURI;
+import org.das2.datum.TimeParser;
+import org.das2.fsm.FileStorageModel;
+import org.das2.qds.QDataSet;
+import org.das2.qds.ops.Ops;
 import org.das2.util.filesystem.FileSystemUtil;
 
 /**
@@ -62,6 +68,11 @@ public class WalkImageSequence implements PropertyChangeListener  {
      * template used to create list.  This may be null.
      */
     private final String template;
+    
+    /**
+     * the location of the base of the pngwalk.
+     */
+    private URI baseURI;
 
     private final PropertyChangeSupport pcs = new DebugPropertyChangeSupport(this);
 
@@ -89,6 +100,15 @@ public class WalkImageSequence implements PropertyChangeListener  {
      */
     public WalkImageSequence( String template ) {
         this.template= template;
+        int i= WalkUtil.splitIndex(template);
+        if ( i==-1 ) {
+            throw new IllegalArgumentException("template does not contain /.  Hrmph.");
+        }
+        try {
+            this.baseURI= new URI(template.substring(0,i));
+        } catch (URISyntaxException ex) {
+            throw new IllegalArgumentException(ex);
+        }
         //call initialLoad before any other methods.
     }
 
@@ -118,6 +138,17 @@ public class WalkImageSequence implements PropertyChangeListener  {
         pcs.firePropertyChange(PROP_TIMERANGE, oldTimerange, timerange);
     }
 
+    /**
+     * return true if the files contain both start and end.
+     * TODO: this is a quick and dirty implementation that needs to be
+     * done thoroughly.  
+     * @return 
+     */
+    private boolean templateHasExplicitEnd( ) {
+        if ( template.contains("$(Y;end)") ) return true;
+        return false;
+    }
+    
     /**
      * do the initial listing of the remote filesystem.  This should not
      * be done on the event thread, and should be done before the
@@ -176,19 +207,35 @@ public class WalkImageSequence implements PropertyChangeListener  {
         }
 
         //if ( uris.size()>20 ) {uris= uris.subList(0,30); }
-
+        FileStorageModel fsm=null;
+        {
+            String sansArgs= template;
+            int i = splitIndex(sansArgs);
+            URI surls= DataSetURI.getResourceURI(sansArgs.substring(0, i+1));
+            FileSystem fs = FileSystem.create( surls );
+            String spec= sansArgs.substring(i+1);
+            if ( TimeParser.isSpec(spec) ) fsm= FileStorageModel.create( fs, spec );        
+        }
+        
         existingImages = new ArrayList<>();
         for (int i=0; i < uris.size(); i++) {
             existingImages.add(new WalkImage(uris.get(i),haveThumbs400));
             //System.err.println(i + ": " + datumRanges.get(i));
 
             String captionString;
-            int splitIndex=-1;
+            int splitIndex= WalkUtil.splitIndex( template );
             if (datumRanges.get(i) != null) {
                 captionString = datumRanges.get(i).toString();//TODO: consider not formatting these until visible.
+                if ( ( template.contains("*") || template.contains("$x") ) && fsm!=null ) {
+                    String cs= uris.get(i).toString();
+                    if ( template.startsWith("file:///") && cs.length()>6 && cs.charAt(6)!='/' ) {
+                        splitIndex= splitIndex-2;
+                    }            
+                    String x1= fsm.getField( "x", cs.substring(splitIndex+1) );
+                    captionString = captionString + " " + x1;   
+                }
             } else {
                 captionString = FileSystemUtil.uriDecode(uris.get(i).toString());
-                if ( splitIndex==-1 ) splitIndex= WalkUtil.splitIndex( template );
                 if ( template.startsWith("file:///") && captionString.length()>6 && captionString.charAt(6)!='/' ) {
                     splitIndex= splitIndex-2;
                 }
@@ -207,13 +254,24 @@ public class WalkImageSequence implements PropertyChangeListener  {
         }
 
         if (timeSpan != null) {
-            if ( timeSpan.width().divide(datumRanges.get(0).width() ).doubleValue(Units.dimensionless) > 100000 ) {
+            
+            if ( templateHasExplicitEnd() || 
+                    timeSpan.width().divide(datumRanges.get(0).width() ).doubleValue(Units.dimensionless) > 100000 ) {
                 logger.warning("too many spans to indicate gaps.");
                 possibleRanges = datumRanges;
             } else {
                 possibleRanges = DatumRangeUtil.generateList(timeSpan, datumRanges.get(0));
             }
         }
+        
+        // There's a funny bug where things aren't regularly spaced, because we
+        // realign at year boundaries.  Just use the original ranges in this 
+        // case.
+        if ( possibleRanges!=null && datumRanges.size()>possibleRanges.size() ) {
+            logger.info("jumps in cadence, just use original ranges");
+            possibleRanges= datumRanges;
+        }
+        
 
         for (WalkImage i : existingImages) {
             i.addPropertyChangeListener(this);
@@ -259,7 +317,7 @@ public class WalkImageSequence implements PropertyChangeListener  {
         int idx= -1;
         
         if ( datumRanges.isEmpty() || datumRanges.get(0)==null ) {
-            logger.info("ranges are not available");
+            logger.log(Level.INFO, "pngwalk does not have time ranges for each image ({0})", template);
             return;
         }
 
@@ -292,100 +350,120 @@ public class WalkImageSequence implements PropertyChangeListener  {
         }
     }
 
+    private final Lock lock = new ReentrantLock();
+   
     /** Rebuilds the image sequence.  Should be called on initial load and if
      * list content options (showMissing, subrange) are changed.
      */
-    private synchronized void rebuildSequence( ) {
-        // remember current image so we can update the index appropriately
-        WalkImage currentImage = null;
-        if(displayImages.size() >  0) currentImage = currentImage();
+    private void rebuildSequence( ) {
+        
+        lock.lock();
+        
+        try {
+            // remember current image so we can update the index appropriately
+            WalkImage currentImage = null;
+            if(displayImages.size() >  0) currentImage = currentImage();
 
-        if ( timeSpan != null || qcFilter.length()>0 ) {
-            List<DatumRange> displayRange;
-            if (isUseSubRange() && subRange.size() > 0) {
-                displayRange = subRange;
-            } else {
-                displayRange = possibleRanges;
-            }
-            
-            limitWarning = possibleRanges!=null && possibleRanges.size()==20000;
-            
-            List<QualityControlRecord.Status> statuses=null;
-            if ( qualitySeq!=null ) {
-                statuses = new ArrayList<>(this.datumRanges.size());
-                for ( int i=0; i<datumRanges.size(); i++ ) {
-                    statuses.add(i,qualitySeq.getQualityControlRecordNoSubRange(i).getStatus() );
+            if ( timeSpan != null || qcFilter.length()>0 ) {
+                List<DatumRange> displayRange;
+                if (isUseSubRange() && subRange.size() > 0) {
+                    displayRange = subRange;
+                } else {
+                    displayRange = possibleRanges;
                 }
-            }
-                    
-            HashSet<QualityControlRecord.Status> allowedStatuses= new HashSet<>();
-            if ( qcFilter.length()>0 ) {
-                for ( int i=0; i<qcFilter.length(); i++ ) {
-                    char ch= qcFilter.charAt(i);
-                    switch (ch) {
-                        case 'o':
-                            allowedStatuses.add( QualityControlRecord.Status.OK );
-                            break;
-                        case 'p':
-                            allowedStatuses.add( QualityControlRecord.Status.PROBLEM );
-                            break;
-                        case 'i':
-                            allowedStatuses.add( QualityControlRecord.Status.IGNORE );
-                            break;
-                        case 'u':
-                            allowedStatuses.add( QualityControlRecord.Status.UNKNOWN );
-                            break;
-                        default:
-                            break;
+
+                limitWarning = possibleRanges!=null && possibleRanges.size()==20000;
+
+                List<QualityControlRecord.Status> statuses=null;
+                if ( qualitySeq!=null ) {
+                    statuses = new ArrayList<>(this.datumRanges.size());
+                    for ( int i=0; i<datumRanges.size(); i++ ) {
+                        statuses.add(i,qualitySeq.getQualityControlRecordNoSubRange(i).getStatus() );
                     }
                 }
-            }
-            
-            if ( displayRange!=null ) {
-                displayImages.clear();
 
-                for (DatumRange dr : displayRange) {
-                    int ind= datumRanges.indexOf(dr);
-                    if ( ind>-1 ) {
+                HashSet<QualityControlRecord.Status> allowedStatuses= new HashSet<>();
+                if ( qcFilter.length()>0 ) {
+                    for ( int i=0; i<qcFilter.length(); i++ ) {
+                        char ch= qcFilter.charAt(i);
+                        switch (ch) {
+                            case 'o':
+                                allowedStatuses.add( QualityControlRecord.Status.OK );
+                                break;
+                            case 'p':
+                                allowedStatuses.add( QualityControlRecord.Status.PROBLEM );
+                                break;
+                            case 'i':
+                                allowedStatuses.add( QualityControlRecord.Status.IGNORE );
+                                break;
+                            case 'u':
+                                allowedStatuses.add( QualityControlRecord.Status.UNKNOWN );
+                                break;
+                            default:
+                                break;
+                        }
+                    }
+                }
+
+                if ( displayRange!=null ) {
+                    displayImages.clear();
+
+                    boolean hasX= this.template.contains("$x") || this.template.contains("*") || this.template.contains("$(x;") || this.template.contains("$(x,");
+                    boolean hasXLogic= this.template!=null && hasX 
+                                && datumRanges.size()==existingImages.size();
+                    int i=0;
+                    
+                    for (DatumRange dr : displayRange) {
+                        
+                        int ind= datumRanges.indexOf(dr);
+                        if ( ind>-1 ) {
+                            if ( qualitySeq!=null && qcFilter.length()>0 ) {
+                                assert statuses!=null;
+                                if ( !allowedStatuses.contains( statuses.get(ind) ) ) {
+                                    continue;
+                                }
+                            }
+                            if ( hasXLogic ) {
+                                displayImages.add(existingImages.get(i));
+                                i++;
+                            } else {
+                                displayImages.add(existingImages.get(ind));//TODO: suspect this is very inefficient.
+                            }
+                        } else if (showMissing && timeSpan != null) {
+                            if ( qualitySeq!=null && qcFilter.length()>0 ) {
+                                continue;
+                            }
+                            // add missing image placeholder
+                            WalkImage ph = new WalkImage(null,haveThumbs400);
+                            ph.setCaption(dr.toString());
+                            displayImages.add(ph);
+                        } else {
+                            logger.fine("I don't think we should get here (but we do, harmless).");
+                        }
+                    }
+                } else {
+                    displayImages.clear();
+                    for ( int ind=0; ind<existingImages.size(); ind++ ) {
                         if ( qualitySeq!=null && qcFilter.length()>0 ) {
                             assert statuses!=null;
                             if ( !allowedStatuses.contains( statuses.get(ind) ) ) {
                                 continue;
                             }
                         }
-                        displayImages.add(existingImages.get(ind));//TODO: suspect this is very inefficient.
-                    } else if (showMissing && timeSpan != null) {
-                        if ( qualitySeq!=null && qcFilter.length()>0 ) {
-                            continue;
-                        }
-                        // add missing image placeholder
-                        WalkImage ph = new WalkImage(null,haveThumbs400);
-                        ph.setCaption(dr.toString());
-                        displayImages.add(ph);
-                    } else {
-                        logger.fine("I don't think we should get here (but we do, harmless).");
+                        displayImages.add(existingImages.get(ind));
                     }
                 }
             } else {
                 displayImages.clear();
-                for ( int ind=0; ind<existingImages.size(); ind++ ) {
-                    if ( qualitySeq!=null && qcFilter.length()>0 ) {
-                        assert statuses!=null;
-                        if ( !allowedStatuses.contains( statuses.get(ind) ) ) {
-                            continue;
-                        }
-                    }
-                    displayImages.add(existingImages.get(ind));
-                }
+                displayImages = new ArrayList<>( existingImages );
             }
-        } else {
-            displayImages.clear();
-            displayImages = new ArrayList<>( existingImages );
-        }
-        if (displayImages.contains(currentImage)) {
-            index = displayImages.indexOf(currentImage);
-        } else {
-            index = 0;
+            if (displayImages.contains(currentImage)) {
+                index = displayImages.indexOf(currentImage);
+            } else {
+                index = 0;
+            }
+        } finally {
+            lock.unlock();
         }
         
         //Bogus property has no meaningful value, only event is important
@@ -400,7 +478,7 @@ public class WalkImageSequence implements PropertyChangeListener  {
      * initialize the quality control sequence.
      * @param qcFolder URI with the password resolved.
      */
-    protected synchronized void initQualitySequence( URI qcFolder ) {
+    protected void initQualitySequence( URI qcFolder ) {
         try {
             this.qcFolder= qcFolder;
             qualitySeq = new QualityControlSequence(WalkImageSequence.this, qcFolder);
@@ -470,6 +548,14 @@ public class WalkImageSequence implements PropertyChangeListener  {
         }
     }
     
+    /**
+     * return the location of the PNGWalk, which should contain the image files.
+     * @return 
+     */
+    public URI getBaseUri() {
+        return baseURI;
+    }
+    
     public URI getQCFolder() {
         return qcFolder;
     }
@@ -483,7 +569,7 @@ public class WalkImageSequence implements PropertyChangeListener  {
      * hasn't logged in yet.
      * @return
      */
-    public synchronized QualityControlSequence getQualityControlSequence() {
+    public QualityControlSequence getQualityControlSequence() {
         return this.qualitySeq;
     }
     
@@ -546,13 +632,27 @@ public class WalkImageSequence implements PropertyChangeListener  {
      * </ul>
      * @param s 
      */
-    public synchronized void setQCFilter( String s ) {
+    public void setQCFilter( String s ) {
         if ( s==null ) throw new NullPointerException("qcfilter cannot be null, set to empty string to clear");
         String oldQcFilter= this.qcFilter;
         this.qcFilter= s;
         if ( !qcFilter.equals(oldQcFilter ) ) {
             rebuildSequence();
         }
+    }
+    
+    /**
+     * returns the current QC filter, where "" means no filter, otherwise 
+     * the characters indicate:
+     * <ul>
+     * <li>o okay are shown
+     * <li>p problem are shown
+     * <li>i ignore are shown
+     * </ul>
+     * @return the filter, for example "" or "op" for okay and problem.
+     */
+    public String getQCFilter() {
+        return this.qcFilter;
     }
 
     /**
@@ -702,11 +802,11 @@ public class WalkImageSequence implements PropertyChangeListener  {
         pcs.removePropertyChangeListener(l);
     }
 
-    public synchronized void removePropertyChangeListener(String propertyName, PropertyChangeListener listener) {
+    public void removePropertyChangeListener(String propertyName, PropertyChangeListener listener) {
         pcs.removePropertyChangeListener(propertyName, listener);
     }
 
-    public synchronized void addPropertyChangeListener(String propertyName, PropertyChangeListener listener) {
+    public void addPropertyChangeListener(String propertyName, PropertyChangeListener listener) {
         pcs.addPropertyChangeListener(propertyName, listener);
     }
 
@@ -854,6 +954,11 @@ public class WalkImageSequence implements PropertyChangeListener  {
      */
     void fireBadgeChanged() {
         pcs.firePropertyChange(PROP_BADGE_CHANGE,  -1, getIndex() );
+    }
+    
+    @Override
+    public String toString() {
+        return this.template + " ("+this.size()+")";
     }
 
 }

@@ -8,12 +8,29 @@ import java.io.FileOutputStream;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.io.OutputStreamWriter;
+import java.net.URLEncoder;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
+import java.nio.channels.WritableByteChannel;
+import java.nio.charset.Charset;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import javax.swing.JOptionPane;
+import org.apache.commons.httpclient.HttpClient;
+import org.apache.commons.httpclient.methods.PostMethod;
+import org.apache.commons.httpclient.methods.multipart.ByteArrayPartSource;
+import org.apache.commons.httpclient.methods.multipart.FilePart;
+import org.apache.commons.httpclient.methods.multipart.MultipartRequestEntity;
+import org.apache.commons.httpclient.methods.multipart.Part;
+import org.apache.commons.httpclient.methods.multipart.StringPart;
 import org.das2.datum.DatumRange;
 import org.das2.datum.TimeUtil;
 import org.das2.datum.Units;
@@ -30,6 +47,8 @@ import org.das2.qds.QubeDataSetIterator;
 import org.das2.qds.SemanticOps;
 import org.autoplot.datasource.DataSourceFormat;
 import org.autoplot.datasource.URISplit;
+import org.das2.datum.LoggerManager;
+import org.das2.datum.format.TimeDatumFormatter;
 import org.das2.qds.FloatReadAccess;
 import org.das2.qds.ops.Ops;
 import org.das2.qstream.AsciiTimeTransferType;
@@ -43,16 +62,71 @@ import org.das2.qstream.TransferType;
  */
 public class HapiDataSourceFormat implements DataSourceFormat {
     
+    private static final Logger logger= LoggerManager.getLogger("apdss.hapi");
+    
+    private void upload( String uri, QDataSet data, ProgressMonitor mon ) throws Exception { 
+        URISplit split= URISplit.parse(uri);
+        Map<String,String> params= URISplit.parseParams(split.params);
+        
+        String key= params.get("key");
+        if ( key==null ) {
+            throw new IllegalArgumentException("missing key");
+        }
+        if ( data.rank()!=2 ) {
+            throw new IllegalArgumentException("data must be rank 2 bundle");
+        }
+        
+        StringBuilder dataBuilder= new StringBuilder();
+        for ( int i=0; i<data.length(); i++ ) {
+            QDataSet slice=data.slice(i);
+            for ( int j=0; j<data.length(i); j++ ) {
+                if ( j>0 ) dataBuilder.append(',');
+                dataBuilder.append( slice.slice(j).svalue() );
+            }
+            dataBuilder.append("\n");  //TODO: what should this be?
+        }
+        
+        HttpClient client = new HttpClient();
+        client.getHttpConnectionManager().getParams().setConnectionTimeout(3000);
+        PostMethod postMethod = new PostMethod(split.file + "?" + URISplit.formatParams(params) );
+        
+        Charset ch= Charset.forName("UTF-8");                
+        byte[] dataBytes= dataBuilder.toString().getBytes(ch);
+        
+        Part[] parts= {
+            new StringPart( "key", key ),
+            new FilePart( "data", new ByteArrayPartSource( "data", dataBytes ), "text/csv", ch.name() ),
+        };
+
+        postMethod.setRequestEntity(
+            new MultipartRequestEntity( parts, postMethod.getParams() ) );
+        
+        try {
+            int statusCode1 = client.executeMethod(postMethod);
+            if ( statusCode1==200 ) {
+                postMethod.releaseConnection();
+            } else {
+                postMethod.releaseConnection();
+                throw new IllegalAccessException( postMethod.getStatusLine().toString() );
+            }
+        } catch ( IOException | IllegalAccessException ex ) {
+            throw ex;
+        }
+    }
+            
     @Override
     public void formatData(String uri, QDataSet data, ProgressMonitor mon) throws Exception {
         // file:///home/jbf/hapi?id=mydata
+        logger.log(Level.FINE, "formatData {0} {1}", new Object[]{uri, data});
+        
         URISplit split= URISplit.parse(uri);
         Map<String,String> params= URISplit.parseParams(split.params);
         String s= split.file;
         if ( s.startsWith("file://") ) {
             s= s.substring(7);
         } else {
-            throw new IllegalArgumentException("uri must start with file://");
+            upload( uri, data, mon );
+            return;
         }
         int ix= s.lastIndexOf(".hapi");
         if ( ix==-1 ) {
@@ -60,6 +134,14 @@ public class HapiDataSourceFormat implements DataSourceFormat {
         }
         
         File hapiDir= new File( s.substring(0,ix) );
+        hapiDir= new File( hapiDir, "hapi" );
+        
+        if ( !hapiDir.exists() ) {
+            logger.log(Level.FINE, "mkdir {0}", hapiDir);
+            if ( !hapiDir.mkdirs() ) {
+                throw new IOException("failed to mkdirs: "+hapiDir);
+            }
+        }
         
         String id= params.get("id");
         if ( id==null || id.length()==0 ) id="data";
@@ -70,13 +152,15 @@ public class HapiDataSourceFormat implements DataSourceFormat {
         File infoFile= new File( new File( hapiDir, "info" ), id+".json" );
         
         JSONObject jo= new JSONObject();
-        jo.put("HAPI","1.1");
-        jo.put("createdAt",TimeUtil.now().toString());
+        jo.put("HAPI","2.0");
+        //jo.put("createdAt",TimeUtil.now().toString());
+        jo.put("modificationDate", TimeUtil.now().toString());
+        jo.put( "status", getHapiStatusObject() );
+        
         JSONArray parameters= new JSONArray();
         
         List<QDataSet> dss= new ArrayList<>();
         List<FloatReadAccess> ffds= new ArrayList<>();
-        //TODO: similar ought to be done for CDF TT2000 LongReadAccess.
 
         String groupTitle;
         
@@ -126,14 +210,17 @@ public class HapiDataSourceFormat implements DataSourceFormat {
                 time.put("length", 24 );
                 time.put("name", "Time" );
                 time.put("type", "isotime" );
-                time.put("fill", "NaN" );
+                time.put("fill", JSONObject.NULL );
+                time.put("units", "UTC" );
                 parameters.put(i,time);
             } else {
                 JSONObject j1= new JSONObject();
                 j1.put("name", Ops.guessName(ds,"data"+i) );
                 j1.put("description", ds.property( QDataSet.TITLE ) );
-                if ( u!=null && u!=Units.dimensionless ) {
-                    j1.put("units", SemanticOps.getUnits(ds) );
+                if ( u==Units.dimensionless ) {
+                    j1.put("units", JSONObject.NULL );
+                } else {
+                    j1.put("units", u.toString() );
                 }
                 j1.put("type", "double" );
                 if ( ds.rank()>1 ) {
@@ -141,9 +228,9 @@ public class HapiDataSourceFormat implements DataSourceFormat {
                 }
                 Number f= (Number)ds.property(QDataSet.FILL_VALUE);
                 if ( f!=null ) {
-                    j1.put("fill",f); //TODO: check that this is properly handled as Object.
+                    j1.put("fill",f.toString()); //TODO: check that this is properly handled as Object.
                 } else {
-                    j1.put("fill","NaN"); 
+                    j1.put("fill",JSONObject.NULL ); 
                 }
                 if ( ds.rank()>=2 ) {
                     j1.put("bins", getBinsFor(ds) );
@@ -154,6 +241,16 @@ public class HapiDataSourceFormat implements DataSourceFormat {
         }
         
         DatumRange dr= DataSetUtil.asDatumRange( Ops.extent(dep0) );
+        
+        if ( dep0.property(QDataSet.VALID_MIN)!=null && dep0.property(QDataSet.VALID_MAX)!=null ) {
+            Units tu= SemanticOps.getUnits(dep0);
+            double vmin= (Double)dep0.property(QDataSet.VALID_MIN);
+            double vmax= (Double)dep0.property(QDataSet.VALID_MAX);
+            DatumRange drvalid= DatumRange.newRange( vmin, vmax, tu );
+            if ( drvalid.min().gt( tu.parse("1900-01-01") ) && drvalid.max().lt( tu.parse("2200-01-01") ) ) { // sanity check
+                dr= drvalid;
+            }
+        }
         jo.put( "startDate", dr.min().toString() );
         jo.put( "stopDate", dr.max().toString() );
         jo.put( "sampleStartDate", dr.min().toString() );
@@ -176,11 +273,13 @@ public class HapiDataSourceFormat implements DataSourceFormat {
         
         File capabilitiesFile= new File( hapiDir, "capabilities.json" );
         JSONObject c= new JSONObject();
-        c.put("HAPI","1.1");
+        c.put("HAPI","2.0");
         JSONArray f= new JSONArray();
         f.put( 0, "csv" );
         f.put( 1, "binary" );
         c.put( "outputFormats", f );
+        
+        c.put( "status", getHapiStatusObject() );
         try ( FileWriter fw = new FileWriter(capabilitiesFile) ) {
             c.write( fw );
             fw.write( c.toString(4) );
@@ -189,7 +288,9 @@ public class HapiDataSourceFormat implements DataSourceFormat {
         String ext= format.equals("binary") ? ".binary" : ".csv";
         File dataFile= new File( new File( hapiDir, "data" ), id+ ext );
         if ( !dataFile.getParentFile().exists() ) {
-            dataFile.getParentFile().mkdirs();
+            if ( !dataFile.getParentFile().mkdirs() ) {
+                throw new IOException("unable to mkdir: "+dataFile.getParentFile() );
+            }
         }
 
         if ( format.equals("binary") ) {
@@ -246,7 +347,8 @@ public class HapiDataSourceFormat implements DataSourceFormat {
                 QDataSet ds= dss.get(ids);
                 Units u= SemanticOps.getUnits(ds);
                 if ( UnitsUtil.isTimeLocation(u) ) {
-                    dfs[ids]= DataSetUtil.bestFormatter(ds);
+                    //dfs[ids]= DataSetUtil.bestFormatter(ds);
+                    dfs[ids]= new TimeDatumFormatter("yyyy-MM-dd'T'HH:mm:ss.SSS'Z')");
                 } else if ( UnitsUtil.isNominalMeasurement(u) ) {
                     dfs[ids]= DataSetUtil.bestFormatter(ds);
                 } else {
@@ -307,13 +409,21 @@ public class HapiDataSourceFormat implements DataSourceFormat {
         }
     }
 
+    private JSONObject getHapiStatusObject() throws JSONException {
+        JSONObject jo1= new JSONObject();
+        jo1.put("code", 1200 );
+        jo1.put("message", "OK request successful");
+        return jo1;
+    }
+
     private void updateCatalog(File hapiDir, String id, String groupTitle) throws JSONException, IOException {
         File catalogFile= new File( hapiDir, "catalog.json" );
         JSONObject catalog;
         JSONArray catalogArray;
         if ( catalogFile.exists() ) {
             StringBuilder builder= new StringBuilder();
-            try ( BufferedReader in= new BufferedReader( new InputStreamReader( new FileInputStream(catalogFile) ) ) ) {
+            try ( BufferedReader in= new BufferedReader( 
+                    new InputStreamReader( new FileInputStream(catalogFile), HapiServer.UTF8 ) ) ) {
                 String line= in.readLine();
                 while ( line!=null ) {                
                     builder.append(line);
@@ -324,7 +434,7 @@ public class HapiDataSourceFormat implements DataSourceFormat {
             catalogArray= catalog.getJSONArray("catalog");
         } else {
             catalog= new JSONObject();
-            catalog.put( "HAPI", "1.1" );
+            catalog.put( "HAPI", "2.0" );
             catalogArray= new JSONArray();
             catalog.put( "catalog", catalogArray );
         }
@@ -336,6 +446,8 @@ public class HapiDataSourceFormat implements DataSourceFormat {
                 itemIndex= j;
             }
         }
+        
+        catalog.put( "status", getHapiStatusObject() );
         
         if ( itemIndex==-1 ) {
             item= new JSONObject();
@@ -354,10 +466,7 @@ public class HapiDataSourceFormat implements DataSourceFormat {
 
     @Override
     public boolean canFormat(QDataSet ds) {
-        if ( SemanticOps.isJoin(ds) ) { 
-            return false;
-        }   
-        return true;
+        return !SemanticOps.isJoin(ds);
     }
 
     @Override
@@ -374,13 +483,19 @@ public class HapiDataSourceFormat implements DataSourceFormat {
             for ( int i=1; i<ds.rank(); i++ ) {
                 QDataSet dep= (QDataSet) ds.property("DEPEND_"+i);
                 if ( dep==null ) dep= Ops.findgen(qube[i]);
+                String desc= (String)dep.property(QDataSet.TITLE);
+                if ( desc==null ) desc= (String)dep.property(QDataSet.LABEL);
                 if ( dep.rank()==2 ) {
                     if ( SemanticOps.isBins( dep ) ) {
                         String n= Ops.guessName(dep,"dep"+i);
                         Units u= SemanticOps.getUnits(dep);
                         JSONObject jo= new JSONObject();
                         jo.put( "name", n );
-                        jo.put( "units", u.toString() );
+                        if ( u==Units.dimensionless ) {
+                            jo.put( "units", JSONObject.NULL );
+                        } else {
+                            jo.put( "units", u.toString() );
+                        }
                         JSONArray ranges= new JSONArray();
                         for ( int j=0; j<qube[i]; j++ ) {
                             JSONArray range= new JSONArray();
@@ -389,6 +504,7 @@ public class HapiDataSourceFormat implements DataSourceFormat {
                             ranges.put(j,range);
                         }
                         jo.put( "ranges", ranges );
+                        if ( desc!=null ) jo.put( "description", desc );
                         binsArray.put( i-1, jo ); // -1 is because DEPEND_0 is the streaming index.                        
                     } else {
                         throw new IllegalArgumentException("independent variable must be a simple 1-D array");
@@ -398,13 +514,17 @@ public class HapiDataSourceFormat implements DataSourceFormat {
                     Units u= SemanticOps.getUnits(dep);
                     JSONObject jo= new JSONObject();
                     jo.put( "name", n );
-                    jo.put( "units", u.toString() );
+                    if ( u==Units.dimensionless ) {
+                        jo.put( "units", JSONObject.NULL );
+                    } else {
+                        jo.put( "units", u.toString() );
+                    }
                     JSONArray centers= new JSONArray();
                     for ( int j=0; j<qube[i]; j++ ) {
                         centers.put(j,dep.value(j));
                     }
                     jo.put( "centers", centers );
-                    
+                    if ( desc!=null ) jo.put( "description", desc );
                     QDataSet binMax= (QDataSet) dep.property(QDataSet.BIN_MAX);
                     QDataSet binMin= (QDataSet) dep.property(QDataSet.BIN_MIN);
                     if ( binMin!=null && binMax!=null ) {
@@ -422,5 +542,189 @@ public class HapiDataSourceFormat implements DataSourceFormat {
             }
             return binsArray;
         }
+    }
+
+    
+    //@Override
+    public boolean streamData(Map<String, String> params, Iterator<QDataSet> dataIt, OutputStream out) throws Exception {
+        String format= params.get("format");
+        if ( format==null || format.length()==0 ) format="csv";
+        
+        WritableByteChannel channel= null;
+        OutputStreamWriter fw=null;
+        
+        if ( format.equals("binary") ) {
+            channel= Channels.newChannel(out);
+        } else if ( format.equals("csv") ) {
+            fw= new OutputStreamWriter(out);
+        }
+        
+        while ( dataIt.hasNext() ) {
+            QDataSet data= dataIt.next();
+            
+            List<QDataSet> dss= new ArrayList<>();
+            List<FloatReadAccess> ffds= new ArrayList<>();
+
+            QDataSet dep0= (QDataSet) data.property( QDataSet.CONTEXT_0 );
+            if ( dep0!=null ) {
+                dss.add(dep0);
+                ffds.add(null);
+            } else {
+                throw new IllegalArgumentException("data must have a DEPEND_0");
+            }
+            
+            boolean dep1IsOrdinal= false;
+            QDataSet dep1= (QDataSet)data.property(QDataSet.DEPEND_1);
+            if ( dep1!=null && dep1.rank()==1 ) {
+                if ( UnitsUtil.isOrdinalMeasurement( SemanticOps.getUnits(dep1) ) ) {
+                    dep1IsOrdinal= true;
+                } else {
+                    dep1IsOrdinal= true;
+                    for ( int i=0; dep1IsOrdinal && i<dep1.length(); i++ ) {
+                        if ( dep1.value(i)!=(i+1) ) { // silly vap+cdaweb:ds=THA_L1_STATE&filter=pos&id=tha_pos&timerange=2016-10-02
+                            dep1IsOrdinal= false;
+                        }
+                    }
+                }
+            }
+            
+            FloatReadAccess fra= data.capability(FloatReadAccess.class); // note this might be null
+            if ( ( dep1IsOrdinal || data.property(QDataSet.DEPEND_1)==null ) && SemanticOps.isBundle(data) ) {
+                for ( int i=0; i<data.length(0); i++ ) {
+                    dss.add(Ops.unbundle(data,i));
+                    ffds.add(fra);
+                }
+            } else {
+                dss.add(data);
+                ffds.add(fra);
+            }
+            
+            if ( format.equals("binary") ) {
+                TransferType[] tts= new TransferType[dss.size()];
+                int nbytes= 0;
+                for ( int ids=0; ids<dss.size(); ids++ ) {
+                    QDataSet ds= dss.get(ids);
+                    Units u= SemanticOps.getUnits(ds);
+                    if ( UnitsUtil.isTimeLocation(u) ) {
+                        tts[ids]= new AsciiTimeTransferType(24,u);
+                    } else if ( UnitsUtil.isNominalMeasurement(u) ) {
+                        tts[ids]= new IntegerTransferType();
+                    } else {
+                        tts[ids]= new DoubleTransferType();
+                    }
+                    switch (ds.rank()) {
+                        case 0:
+                            nbytes+= tts[ids].sizeBytes();
+                            break;
+                        case 1:
+                            nbytes+= tts[ids].sizeBytes()*ds.length();
+                            break;
+                        default:
+                            throw new IllegalArgumentException("not supported!");
+                    }
+                }
+
+                ByteBuffer buf= ByteBuffer.allocate(nbytes);
+                buf.order(ByteOrder.LITTLE_ENDIAN);
+                for ( int ids=0; ids<dss.size(); ids++ ) {
+                    QDataSet ds= dss.get(ids);
+                    TransferType tt= tts[ids];
+                    //Units u= SemanticOps.getUnits(ds);
+                    //boolean uIsOrdinal= UnitsUtil.isOrdinalMeasurement(u);
+                    //fra= ffds.get(ids); // not used b/c no float transfer types.
+                    if ( ds.rank()==0 ) {
+                        tt.write( ds.value(), buf );
+                    } else if ( ds.rank()==1 ) {
+                        for ( int j=0; j<ds.length(); j++ ) {
+                            tt.write( ds.value(j), buf );
+                        }
+                    } else if ( ds.rank()>1 ) {
+                        QDataSet ds1= ds;
+                        QubeDataSetIterator iter= new QubeDataSetIterator(ds1);
+                        while ( iter.hasNext() ) {
+                            iter.next();
+                            double d= iter.getValue(ds1);
+                            tt.write( d, buf );
+                        }
+                    }
+                }
+                buf.flip();
+                assert channel!=null;
+                channel.write(buf);
+                buf.flip();
+                
+            } else {
+                DatumFormatter[] dfs= new DatumFormatter[dss.size()];
+                for ( int ids=0; ids<dss.size(); ids++ ) {
+                    QDataSet ds= dss.get(ids);
+                    Units u= SemanticOps.getUnits(ds);
+                    if ( UnitsUtil.isTimeLocation(u) ) {
+                        //dfs[ids]= DataSetUtil.bestFormatter(ds);
+                        dfs[ids]= new TimeDatumFormatter("yyyy-MM-dd'T'HH:mm:ss.SSS'Z')");
+                    } else if ( UnitsUtil.isNominalMeasurement(u) ) {
+                        dfs[ids]= DataSetUtil.bestFormatter(ds);
+                    } else {
+                        dfs[ids]= DefaultDatumFormatterFactory.getInstance().defaultFormatter();
+                    }
+                }
+
+//                int nrec= dss.get(0).length();
+
+                assert fw!=null;
+                
+//                for ( int irec=0; irec<nrec; irec++ ) {
+                    String delim="";
+                    for ( int ids=0; ids<dss.size(); ids++ ) {
+                        QDataSet ds= dss.get(ids);
+                        DatumFormatter df= dfs[ids];
+                        Units u= SemanticOps.getUnits(ds);
+                        if ( ids>0 ) delim=",";
+                        boolean uIsOrdinal= UnitsUtil.isOrdinalMeasurement(u);
+                        fra= ffds.get(ids);
+                        if ( ds.rank()==0 ) {
+                            if ( ids>0 ) fw.write( delim );
+                            if ( fra!=null ) {
+                                fw.write( String.valueOf( fra.fvalue() ) );
+                            } else {
+                                fw.write( df.format( u.createDatum(ds.value()), u ) );
+                            }
+                        } else if ( ds.rank()==1 ) {
+                            if ( fra!=null ) {
+                                for ( int j=0; j<ds.length(); j++ ) {
+                                    if ( ids>0 ) fw.write( delim );
+                                    fw.write( String.valueOf( fra.fvalue(j) ) );
+                                }
+                            } else {
+                                for ( int j=0; j<ds.length(); j++ ) {
+                                    if ( ids>0 ) fw.write( delim );
+                                    fw.write( df.format( u.createDatum(ds.value(j)), u ) );
+                                }                            
+                            }
+                        } else if ( ds.rank()>1 ) {
+                            QDataSet ds1= ds;
+                            QubeDataSetIterator iter= new QubeDataSetIterator(ds1);
+                            while ( iter.hasNext() ) {
+                                iter.next();
+                                double d= iter.getValue(ds1);
+                                if ( ids>0 ) fw.write( delim );
+                                if ( uIsOrdinal ) {
+                                    fw.write("\"");
+                                    fw.write( df.format( u.createDatum(d), u ) );
+                                    fw.write("\"");
+                                } else {
+                                    fw.write( df.format( u.createDatum(d), u ) );
+                                }
+                            }
+                        }
+                    }
+                    fw.write( "\n" );
+                //}
+            }
+        }
+        
+        if ( fw!=null ) fw.close();
+        if ( channel!=null ) channel.close();
+        
+        return true;
     }
 }

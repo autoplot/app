@@ -77,7 +77,8 @@ public class CDAWebDB {
     }
 
     public static final String dbloc= CDAWeb + "pub/catalogs/all.xml";
-
+    //public static final String dbloc= "https://cdaweb.sci.gsfc.nasa.gov/%7Ecgladney/all.xml";
+    
     //private String version;
     private Document document; // should consume ~ 2 MB
     private Map<String,String> ids;  // serviceproviderId,Id
@@ -133,7 +134,23 @@ public class CDAWebDB {
             refreshTime= t;
         }
     }
-
+//
+//    public synchronized void refreshViaWebServices( ProgressMonitor mon ) throws IOException {
+//        try {
+//            DocumentBuilder builder = DocumentBuilderFactory.newInstance().newDocumentBuilder();
+//            mon.setProgressMessage("refreshing database");//TODO: is this working
+//            mon.started();
+//            mon.setTaskSize(30);
+//            mon.setProgressMessage("call WS for listing" );
+//            
+//        } catch (SAXException ex) {
+//            logger.log(Level.SEVERE, ex.getMessage(), ex);
+//        } catch (ParserConfigurationException | URISyntaxException ex) {
+//            logger.log(Level.SEVERE, ex.getMessage(), ex);
+//        }
+//        
+//    }
+//    
     /**
      * Download and parse the all.xml to create a database of available products.
      * @param mon progress monitor for the task
@@ -144,7 +161,7 @@ public class CDAWebDB {
 
             DocumentBuilder builder = DocumentBuilderFactory.newInstance().newDocumentBuilder();
 
-            mon.setProgressMessage("refreshing database");//TODO: is this working
+            mon.setProgressMessage("refreshing database");
             mon.started();
             mon.setTaskSize(30);
             mon.setProgressMessage("downloading file "+dbloc );
@@ -184,6 +201,7 @@ public class CDAWebDB {
                             String[] sss= ss.split("\\s+");
                             String naming= sss[2];
                             naming= naming.replaceAll("\\%", "\\$");
+                            naming= naming.replaceAll("\\?","."); //TODO: this . happens to match one character.  This may change.
                             tmpls.put( sss[0], naming );
                             if ( sss[1].length()>1 ) bases.put( sss[0], sss[1] );
                         }
@@ -214,7 +232,7 @@ public class CDAWebDB {
      * we can use the web service when it is available.
      * @param spid the service provider id, like "AC_H2_CRIS"
      * @param tr the timerange
-     * @param useWebServiceHint null means no preference, or "T", or "F"
+     * @param useWebServiceHint null means no preference, or "T", or "F" means use file template found in all.xml.
      * @param mon progress monitor for the download
      * @return array of strings, with filename|startTime|endTime
      * @throws java.io.IOException 
@@ -277,7 +295,7 @@ public class CDAWebDB {
      * @throws java.io.IOException
      * @throws org.das2.util.monitor.CancelledOperationException
      */    
-    public String[] getOriginalFilesAndRangesFromWebService(String spid, DatumRange tr, ProgressMonitor mon ) throws IOException, CancelledOperationException {
+    public static String[] getOriginalFilesAndRangesFromWebService(String spid, DatumRange tr, ProgressMonitor mon ) throws IOException, CancelledOperationException {
         TimeParser tp= TimeParser.create("$Y$m$dT$H$M$SZ");
         String tstart= tp.format(tr.min(),tr.min());
         String tstop= tp.format(tr.max(),tr.max());
@@ -292,19 +310,23 @@ public class CDAWebDB {
 
             urlc = url.openConnection();
             urlc.setConnectTimeout(FileSystem.settings().getConnectTimeoutMs());
-            
+            urlc.setReadTimeout(FileSystem.settings().getConnectTimeoutMs()*2);
             //urlc= HttpUtil.checkRedirect(urlc);
             loggerUrl.log(Level.FINE,"GET data from CDAWeb {0}", urlc.getURL() );
 
-            ins= urlc.getInputStream();
-            
-            InputSource source = new InputSource( ins );
-
-            DocumentBuilder builder;
-            builder = DocumentBuilderFactory.newInstance().newDocumentBuilder();
             Document doc;
-            doc = builder.parse(source);
-
+            
+            synchronized ( CDAWebDB.class ) { 
+                ins= urlc.getInputStream();
+                InputSource source = new InputSource( ins );
+            
+                DocumentBuilder builder;
+                builder = DocumentBuilderFactory.newInstance().newDocumentBuilder();
+                doc = builder.parse(source);
+            
+                ins.close();
+            }
+            
             XPath xp = XPathFactory.newInstance().newXPath();
 
             NodeList set = (NodeList) xp.evaluate( "/DataResult/FileDescription", doc.getDocumentElement(), javax.xml.xpath.XPathConstants.NODESET );
@@ -312,13 +334,20 @@ public class CDAWebDB {
             mon.setTaskSize( set.getLength() );
             mon.started();
             
-            String[] result= new String[ set.getLength() ];
+            // 2019-04-29 suddenly getting dumplicate entries from 
+            // https://cdaweb.gsfc.nasa.gov/WS/cdasr/1/dataviews/sp_phys/datasets/THA_L2_ESA/orig_data/20190405T000000Z,20190406T000000Z
+            // See http://jfaden.net/jenkins/job/autoplot-test142.
+            
+            ArrayList<String> r= new ArrayList<>();
             for ( int i=0; i<set.getLength(); i++ ) {
                 if ( mon.isCancelled() ) throw new CancelledOperationException("cancel during parse");
                 mon.setTaskProgress(i);
                 Node item= set.item(i);
-                result[i]= xp.evaluate("Name/text()",item) + "|"+ xp.evaluate("StartTime/text()",item)+ "|" + xp.evaluate("EndTime/text()",item );
+                String s= xp.evaluate("Name/text()",item) + "|"+ xp.evaluate("StartTime/text()",item)+ "|" + xp.evaluate("EndTime/text()",item );
+                if ( !r.contains(s) ) r.add(s);
             }
+            
+            String[] result= r.toArray( new String[ r.size() ] );
             
             return result;
 
@@ -345,7 +374,7 @@ public class CDAWebDB {
      * @return  filename|startTime|endTime
      * @throws java.io.IOException
      */
-    public String[] getFilesAndRangesFromWebService(String spid, DatumRange tr) throws IOException {
+    public static String[] getFilesAndRangesFromWebService(String spid, DatumRange tr) throws IOException {
         TimeParser tp= TimeParser.create("$Y$m$dT$H$M$SZ");
         String tstart= tp.format(tr.min(),tr.min());
         String tstop= tp.format(tr.max(),tr.max());
@@ -361,18 +390,23 @@ public class CDAWebDB {
             
             urlc = url.openConnection();
             urlc.setConnectTimeout(FileSystem.settings().getConnectTimeoutMs());
-
+            urlc.setReadTimeout(FileSystem.settings().getConnectTimeoutMs()*2);
             //urlc= HttpUtil.checkRedirect(urlc);
             
             loggerUrl.log(Level.FINE,"getInputStream {0}", url);
-            ins= urlc.getInputStream();
-            InputSource source = new InputSource( ins );
-
-            DocumentBuilder builder;
-            builder = DocumentBuilderFactory.newInstance().newDocumentBuilder();
+            
             Document doc;
-            doc = builder.parse(source);
-
+            synchronized ( CDAWebDB.class ) {
+                ins= urlc.getInputStream();
+                InputSource source = new InputSource( ins );
+            
+                DocumentBuilder builder;
+                builder = DocumentBuilderFactory.newInstance().newDocumentBuilder();
+                doc = builder.parse(source);
+            
+                ins.close();
+            }            
+            
             XPath xp = XPathFactory.newInstance().newXPath();
 
             NodeList set = (NodeList) xp.evaluate( "/DataResult/FileDescription", doc.getDocumentElement(), javax.xml.xpath.XPathConstants.NODESET );
@@ -658,14 +692,14 @@ public class CDAWebDB {
                 dr = DatumRangeUtil.parseTimeRange(avail);
             } catch (ParseException ex1) {
                 logger.log(Level.SEVERE, ex1.getMessage(), ex1);
-                master= fsm.getRepresentativeFile(p);
+                master= fsm.getRepresentativeFile(p.getSubtaskMonitor("get representative file"));
                 dr= fsm.getRangeFor(master);
             }
             //String[] files1= getFilesAndRangesFromWebService( ds, dr );
 
-            String[] files= fsm.getBestNamesFor( dr, p );
+            String[] files= fsm.getBestNamesFor( dr, p.getSubtaskMonitor("get best names for") );
             if ( files.length==0 ) {
-                master= fsm.getRepresentativeFile(p);
+                master= fsm.getRepresentativeFile(p.getSubtaskMonitor("get representative file"));
                 if ( master==null ) {
                     throw new FileNotFoundException("unable to find any files to serve as master file in "+fsm );
                 } else {
@@ -699,7 +733,7 @@ public class CDAWebDB {
                 for ( int k=0; k<kids2.getLength(); k++ ) {
                     if ( kids2.item(k).getNodeName().equals("URL") ) {
                         if ( kids2.item(k).getFirstChild()==null ) {
-                            logger.warning("URL is missing for "+id);
+                            logger.log(Level.FINE, "URL is missing for {0}, data cannot be accessed.", id);
                             return null;
                         }
                         String url= kids2.item(k).getFirstChild().getTextContent().trim();
@@ -802,8 +836,7 @@ public class CDAWebDB {
                         String name= attrs.getNamedItem("serviceprovider_ID").getTextContent();
                         String url= getURL(name,node);
                         if ( url!=null && 
-                                ( url.startsWith( CDAWeb + "istp_public/data/" ) ||
-                                url.startsWith( CDAWeb + "sp_phys/data/" ) ||
+                                ( url.startsWith( CDAWeb ) ||
                                 url.startsWith("ftp://cdaweb.gsfc.nasa.gov" ) ) && !url.startsWith("/tower3/private" ) ) {
                             String filenaming= getFilenaming(node);
                             String s=attrs.getNamedItem("serviceprovider_ID").getTextContent();
@@ -811,8 +844,15 @@ public class CDAWebDB {
                                 String desc= getDescription(node);
                                 //String sid=attrs.getNamedItem("ID").getTextContent();
                                 result.put(s,desc);
+                            } else if ( filenaming.endsWith(".nc" ) ) {
+                                if ( !name.contains("FORMOSAT") ) { // GOLD_L2_ON2 missing visad library -- not sure why.
+                                    logger.log(Level.FINE, "ignoring {0} because .nc file is not supported", s);
+                                }
+                                String desc= getDescription(node);
+                                //String sid=attrs.getNamedItem("ID").getTextContent();
+                                result.put(s,desc);                                
                             } else {
-                                logger.log(Level.FINE, "ignoring {0} because files do not end in .cdf", s);
+                                logger.log(Level.FINE, "ignoring {0} because files do not end in .cdf or .nc", s);
                             }
                         }
                     }

@@ -1,7 +1,3 @@
-/*
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
- */
 
 /*
  * PngWalkTool.java
@@ -11,20 +7,26 @@
 
 package org.autoplot.pngwalk;
 
+import com.itextpdf.text.BaseColor;
+import com.itextpdf.text.Chunk;
 import com.itextpdf.text.Document;
 import com.itextpdf.text.DocumentException;
+import com.itextpdf.text.Element;
+import com.itextpdf.text.Font;
 import com.itextpdf.text.Image;
 import com.itextpdf.text.Paragraph;
 import com.itextpdf.text.Rectangle;
 import com.itextpdf.text.pdf.PdfContentByte;
+import com.itextpdf.text.pdf.PdfPCell;
+import com.itextpdf.text.pdf.PdfPHeaderCell;
+import com.itextpdf.text.pdf.PdfPTable;
 import com.itextpdf.text.pdf.PdfWriter;
 import external.AnimatedGifDemo;
+import java.awt.BorderLayout;
 import java.awt.Color;
 import java.awt.Component;
 import java.awt.Container;
 import java.awt.Dimension;
-import java.awt.FlowLayout;
-import java.awt.Frame;
 import java.awt.Toolkit;
 import java.awt.Window;
 import java.awt.datatransfer.Clipboard;
@@ -36,7 +38,6 @@ import java.awt.event.KeyEvent;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.awt.event.MouseWheelEvent;
-import java.awt.event.MouseWheelListener;
 import java.awt.image.BufferedImage;
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
@@ -47,6 +48,8 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.PrintWriter;
+import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.net.URL;
@@ -55,6 +58,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.Iterator;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
@@ -64,6 +68,7 @@ import java.util.prefs.Preferences;
 import java.util.regex.Pattern;
 import javax.imageio.ImageIO;
 import javax.swing.AbstractAction;
+import javax.swing.AbstractButton;
 import javax.swing.Action;
 import javax.swing.Box;
 import javax.swing.BoxLayout;
@@ -84,11 +89,12 @@ import javax.swing.JMenuItem;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JScrollPane;
+import javax.swing.JSeparator;
 import javax.swing.JSplitPane;
-import javax.swing.JTextField;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import javax.swing.UnsupportedLookAndFeelException;
+import javax.swing.filechooser.FileNameExtensionFilter;
 import org.das2.components.DasProgressPanel;
 import org.das2.components.DataPointRecorder;
 import org.das2.components.TearoffTabbedPane;
@@ -134,7 +140,11 @@ import org.das2.qds.QDataSet;
 import org.autoplot.datasource.DataSetSelector;
 import org.autoplot.datasource.DataSetURI;
 import org.autoplot.datasource.FileSystemUtil;
+import org.autoplot.datasource.TimeRangeTool;
 import org.autoplot.datasource.URISplit;
+import org.autoplot.dom.Application;
+import org.autoplot.dom.Plot;
+import org.das2.graph.Painter;
 import org.xml.sax.SAXException;
 
 /**
@@ -156,10 +166,32 @@ public final class PngWalkTool extends javax.swing.JPanel {
      */
     public static final String PREF_LAST_EXPORT= "pngWalkLastExport";
 
+    private static final String DEFAULT_BOOKMARKS = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><bookmark-list version=\"1.1\">    " +
+            "<bookmark-folder remoteUrl=\"http://autoplot.org/git/pngwalks.xml\">" +
+            "<title>Demos</title>" +
+            "<bookmark-list>" +
+            "    <bookmark>" +
+            "        <title>POLAR/VIS Images</title>" +
+            "        <uri>pngwalk:http://vis.physics.uiowa.edu/survey/1996/04-apr/03/images/VIS_$Y_$m_$d_$H_$M_$S_EC.PNG</uri>" +
+            "        <description>Images from the POLAR/VIS instrument</description>" +
+            "    </bookmark>" +
+            "    <bookmark>" +
+            "        <title>RBSP Emfisis HFR-WFR Orbits</title>" +
+            "        <uri>pngwalk:https://emfisis.physics.uiowa.edu/pngwalk/RBSP-A/HFR-WFR_orbit/product_$(o,id=rbspa-pp).png</uri>" +
+            "    </bookmark>" +
+            "    <bookmark>" +
+            "        <title>RBSP-A MagEIS Combined Spectra</title>" +
+            "        <uri>pngwalk:https://www.rbsp-ect.lanl.gov/data_pub/rbspa/ect/level2/combined-elec/rbspa_ect_L2-elec_$Y$m$d_v.1.0.0.png</uri>" +
+            "    </bookmark>" +
+            "</bookmark-list>" +
+            "</bookmark-folder>" +
+            "</bookmark-list>";
+
+    
     public PngWalkView[] views;
     TearoffTabbedPane tabs;
     
-    transient WalkImageSequence seq;
+    WalkImageSequence seq;
     
     JMenu navMenu;
     
@@ -180,6 +212,10 @@ public final class PngWalkTool extends javax.swing.JPanel {
 
     private String product; // the product
     private String baseurl; // the base url
+    private String version; // the version, if used.
+    private String qcturl;  // the url for quality control data.
+    private String pwd=null; // the location of the .pngwalk file, if used, or null.
+    private String vapfile=null;
     
     public static void main(String[] args) {
 
@@ -198,7 +234,9 @@ public final class PngWalkTool extends javax.swing.JPanel {
         alm.addOptionalPositionArgument(0, "template",  output, "initial template to use.");
         alm.addOptionalSwitchArgument( "template", "t", "template", output, "initial template to use." );
 
-        alm.process(args);
+        if ( !alm.process(args) ) {
+            System.exit( alm.getExitCode() );
+        }
 
         if (alm.getBooleanValue("nativeLAF")) {
             logger.fine("nativeLAF");
@@ -227,8 +265,11 @@ public final class PngWalkTool extends javax.swing.JPanel {
     /**
      * returns a map containing data from the .pngwalk file.
      * <ul>
-     * <li>product
-     * <li>template
+     * <li>baseurl - the location of the png images
+     * <li>product - the base used to create file names &lt;product&gt;_$Y$m$d.png
+     * <li>template - the template for files, like product_$Y$m$d.png
+     * <li>pwd - the location of the .pngwalk file.
+     * <li>qcturl - optional location of the quality control files, "" if not specified.
      * </ul>
      * @param template
      * @return the map
@@ -238,23 +279,41 @@ public final class PngWalkTool extends javax.swing.JPanel {
         InputStream in=null;
         String product= "";
         String baseurl= "";
+        String pwd="";
+        String qcturl= "";
+        String vapfile= "";
+        String version= "";
+        
         try {
             Properties p= new Properties();
             if ( split.file==null ) {
                 throw new IllegalArgumentException("template does not appear to be files: "+template);
             }
-            File local= FileSystemUtil.doDownload( split.file, new NullProgressMonitor() );
+            final File local = DataSetURI.getFile( split.resourceUri, new NullProgressMonitor() ); 
+
             in= new FileInputStream( local );
             p.load( in );
             String vers= p.getProperty("version");
             if ( vers==null || vers.trim().length()==0 ) vers=""; else vers="_"+vers;
+            
+            pwd= split.path; // pwd is the location of the pngwalk file, which could be different than the template.
+            
+            product= p.getProperty("product");
+
+            pwd= p.getProperty("pwd",pwd);  // so that the .pngwalk file can be used out-of-context.
+            
             baseurl= p.getProperty("baseurl","."); // baseurl is needed so that pngwalks can be used out-of-context, for example when a browser downloads the file and hands it off to Autoplot.
-            if ( !baseurl.equals(".") ) {
+            if ( !baseurl.startsWith(".") ) {
                 if ( !baseurl.endsWith("/") ) {
                     baseurl= baseurl + "/";
                 }
-                split.path=baseurl;
+                split.path= baseurl;
+            } else {
+                split.path= checkRelativeBaseurl( baseurl, pwd, product );
             }
+            
+            qcturl= p.getProperty("qcturl",""); // allow the qc data to come from a different place
+            
             String t;
             if ( !p.getProperty("filePattern","").equals("") ) {
                 // names were specified in the batch file.
@@ -263,8 +322,10 @@ public final class PngWalkTool extends javax.swing.JPanel {
                 t= split.path + p.getProperty("product") + "_" + p.getProperty("timeFormat") +vers + ".png";
             }
             template= t;
-            product= p.getProperty("product");
-        } catch (FileSystemOfflineException | URISyntaxException ex) {
+            vapfile= p.getProperty("vapfile","");
+            version= vers;
+            
+        } catch (FileSystemOfflineException ex) {
             logger.log(Level.SEVERE, ex.getMessage(), ex);
         } catch (FileNotFoundException ex) {
             throw new IllegalArgumentException("File does not exist: "+template);
@@ -282,22 +343,30 @@ public final class PngWalkTool extends javax.swing.JPanel {
         result.put( "template", template );
         result.put( "product", product );
         result.put( "baseurl", baseurl );
+        result.put( "qcturl", qcturl );
+        result.put( "pwd", pwd );
+        result.put( "vapfile", vapfile );
+        result.put( "version", version );
         return result;
 
     }
 
     private static void raiseApWindowSoon( final Window apWindow ) {
-        Runnable run= new Runnable() {
-            @Override
-            public void run() {
-                GuiSupport.raiseApplicationWindow((JFrame)apWindow);
-                apWindow.toFront();
-                apWindow.repaint();
-            }
+        Runnable run= () -> {
+            GuiSupport.raiseApplicationWindow((JFrame)apWindow);
+            apWindow.toFront();
+            apWindow.repaint();
         };
         SwingUtilities.invokeLater(run);
     }
     
+    /**
+     * 
+     * @param baseurl  -- possibly relative location, only "./" and ../dir/" supported.
+     * @param template
+     * @param product
+     * @return 
+     */
     private static String checkRelativeBaseurl( String baseurl, String template, String product ) {
         if ( baseurl.equals(".") ) {
             URISplit split= URISplit.parse(template);
@@ -315,8 +384,60 @@ public final class PngWalkTool extends javax.swing.JPanel {
             if ( i>-1 ) {
                 baseurl= f.substring(0,i+1);
             }
+        } else if ( baseurl.startsWith("../") ) { // ../fgmjuno/
+            URISplit split= URISplit.parse(template);
+            String f= split.path;
+            int i= f.lastIndexOf("/",f.length()-2);
+            f= f.substring(0,i) + baseurl.substring(2);
+            i= f.indexOf( "/"+product+".pngwalk" );
+            if ( i==-1 ) {
+                i= f.indexOf('*');
+                if ( i>-1 ) i= f.lastIndexOf('/',i);
+            }
+            if ( i==-1 ) {
+                if ( f.endsWith("/") ) {
+                    baseurl= f;
+                }
+            }
+            if ( i>-1 ) {
+                baseurl= f.substring(0,i+1);
+            }
         }
         return baseurl;
+    }
+    
+    private void loadPngwalkFile( String file ) {
+        Map<String,String> map= readPngwalkFile(file);
+        product= map.get("product");
+        baseurl= map.get("baseurl");
+        qcturl= map.get("qcturl");
+        pwd= map.get("pwd");
+        vapfile= map.get("vapfile");
+        version= map.get("version");
+        baseurl= checkRelativeBaseurl( baseurl, file, product );
+        boolean doStartQC=false;
+        if ( !"".equals(map.get("qcturl")) ) {
+            qcturl= checkRelativeBaseurl( qcturl, pwd, product );
+            doStartQC= true;
+        } else {
+            qcturl= pwd;
+        }
+        vapfile= checkRelativeBaseurl( vapfile, pwd, product );
+        String template= map.get("template");  
+        this.setTemplate(template); 
+        if ( doStartQC ) {
+            this.startQC();
+        }
+        boolean addToRecent=true;
+        if ( addToRecent ) {
+            SwingUtilities.invokeLater( new Runnable() {
+                @Override
+                public void run() {
+                    dataSetSelector1.addToRecent(file);
+                }
+            });
+        }
+        
     }
     
     /**
@@ -330,45 +451,7 @@ public final class PngWalkTool extends javax.swing.JPanel {
         final PngWalkTool tool = new PngWalkTool();
         tool.parentWindow= parent;
 
-        if ( template!=null ) {
-            URISplit split= URISplit.parse(template);
-            if ( split.file.endsWith(".pngwalk") ) {
-                Map<String,String> map= readPngwalkFile(template);
-                tool.product= map.get("product");
-                tool.baseurl= map.get("baseurl");
-                tool.baseurl= checkRelativeBaseurl(tool.baseurl, template, tool.product );
-                template= map.get("template");
-            } else {
-                tool.product= "";
-                tool.baseurl= "";
-            }
-            tool.setTemplate(template);
-        } else {
-            tool.product= "";
-            tool.baseurl= "";
-        }
-
-        String sdeft= "<?xml version=\"1.0\" encoding=\"UTF-8\"?><bookmark-list version=\"1.1\">    " +
-        "<bookmark-folder remoteUrl=\"http://autoplot.org/git/pngwalks.xml\">" +
-        "<title>Demos</title>" +
-        "<bookmark-list>" +
-        "    <bookmark>" +
-        "        <title>POLAR/VIS Images</title>" +
-        "        <uri>pngwalk:http://vis.physics.uiowa.edu/survey/1996/04-apr/03/images/VIS_$Y_$m_$d_$H_$M_$S_EC.PNG</uri>" +
-        "        <description>Images from the POLAR/VIS instrument</description>" +
-        "    </bookmark>" +
-        "    <bookmark>" +
-        "        <title>RBSP Emfisis HFR-WFR Orbits</title>" +
-        "        <uri>pngwalk:http://emfisis.physics.uiowa.edu/pngwalk/RBSP-A/HFR-WFR_orbit/product_$(o,id=rbspa-pp).png</uri>" +
-        "    </bookmark>" +
-        "    <bookmark>" +
-        "        <title>RBSP-A MagEIS Combined Spectra</title>" +
-        "        <uri>pngwalk:https://www.rbsp-ect.lanl.gov/data_pub/rbspa/ect/level2/combined-elec/rbspa_ect_L2-elec_$Y$m$d_v.1.0.0.png</uri>" +
-        "    </bookmark>" +
-        "</bookmark-list>" +
-    "</bookmark-folder>" +
-"</bookmark-list>";
-
+        String sdeft= DEFAULT_BOOKMARKS;
 
         List<Bookmark> deft=null;
         try {
@@ -379,15 +462,29 @@ public final class PngWalkTool extends javax.swing.JPanel {
         }
 
         Util.loadRecent( "pngwalkRecent", tool.dataSetSelector1, deft );
-
-        Runnable run= new Runnable() {
-            public void run() {
-                addFileEnabler(tool,parent);
+        
+        if ( template!=null ) {
+            URISplit split= URISplit.parse(template);
+            if ( split.file.endsWith(".pngwalk") ) {
+                tool.loadPngwalkFile( template );
+            } else {
+                tool.product= "";
+                tool.baseurl= "";
+                tool.pwd= split.path;
+                tool.setTemplate(template);
             }
+            
+        } else {
+            tool.product= "";
+            tool.baseurl= "";
+        }
+
+        Runnable run= () -> {
+            addFileEnabler(tool,parent);
         };
         new Thread(run).start();
 
-        JFrame frame = new JFrame("PNG Walk Viewer");
+        JFrame frame = new JFrame("PNG Walk Tool");
         frame.setIconImage( AutoplotUtil.getAutoplotIcon() );
 
         frame.setJMenuBar( createMenuBar(tool,frame) );
@@ -405,46 +502,70 @@ public final class PngWalkTool extends javax.swing.JPanel {
 
         return tool;
     }
-
+    
     private static void addFileEnabler( final PngWalkTool tool, final Window parent ) {
-        PngWalkTool.ActionEnabler enabler= new PngWalkTool.ActionEnabler() {
-            @Override
-            public boolean isActionEnabled(String filename) {
-                String template = tool.getTemplate();
-                int i0 = -1;
-                if ( i0==-1 ) i0= template.indexOf("_$Y");
-                if ( i0==-1 ) i0= template.indexOf("_$o");
-                if ( i0==-1 ) i0= template.indexOf("_$(o,");
-                
-                String productFile=null;
-                
-                if ( i0==-1 ) {
-                    try {
-                        File file = DataSetURI.getFile( filename, new AlertNullProgressMonitor("get image file") ); // assume it's local.
-                        String json= ImageUtil.getJSONMetadata( file );
-                        if ( json!=null ) {
-                            if ( i0==-1 ) i0= template.indexOf('*'); 
-                            if ( i0==-1 ) i0= template.indexOf("$x");
-                        }
-                        productFile= tool.baseurl + tool.product + ".vap";
-                        
-                    } catch ( IOException ex ) {
-                        logger.log( Level.WARNING, null, ex );
-                    }
-                }
-
-                if ( i0==-1 ) return false;
-                
-                if ( productFile==null ) {
-                    productFile = template.substring(0, i0) + ".vap";
-                }
-                
+        PngWalkTool.ActionEnabler enabler= (String filename) -> {
+            String template = tool.getTemplate();
+            int i0 = -1;
+            if ( i0==-1 ) i0= template.indexOf("_$Y");
+            if ( i0==-1 ) i0= template.indexOf("_$o");
+            if ( i0==-1 ) i0= template.indexOf("_$(o,");
+            
+            String productFile=null;
+            
+            if ( i0==-1 ) {
                 try {
-                    return WalkUtil.fileExists(productFile);
-                } catch (FileSystemOfflineException | URISyntaxException ex) {
-                    logger.log(Level.SEVERE, ex.getMessage(), ex);
-                    return false;
+                    File file = DataSetURI.getFile( filename, new AlertNullProgressMonitor("get image file") ); // assume it's local.
+                    String json= ImageUtil.getJSONMetadata( file );
+                    if ( json!=null ) {
+                        if ( i0==-1 ) i0= template.indexOf('*');
+                        if ( i0==-1 ) i0= template.indexOf("$x");
+                    }
+                    productFile= tool.baseurl + tool.product + ".vap";
+                    
+                } catch ( IOException ex ) {
+                    logger.log( Level.WARNING, null, ex );
                 }
+            }
+            
+            try {
+                File file = DataSetURI.getFile( filename, new AlertNullProgressMonitor("get image file") ); // assume it's local.
+                String scriptURI= ImageUtil.getScriptURI(file);
+                if ( scriptURI!=null ) {
+                    return true;
+                }
+            } catch (FileSystemOfflineException ex) {
+                Logger.getLogger(PngWalkTool.class.getName()).log(Level.SEVERE, null, ex);
+            } catch (IOException ex) {
+                Logger.getLogger(PngWalkTool.class.getName()).log(Level.SEVERE, null, ex);
+            }
+            
+            if ( productFile==null && i0>-1 ) {
+                productFile = template.substring(0, i0) + ".vap";
+            }
+            
+            try {
+                if ( productFile!=null && !WalkUtil.fileExists(productFile) ) {
+                    if ( template.startsWith(tool.baseurl) ) {
+                        String vv= tool.pwd +  tool.product + ".vap";
+                        if ( vv!=null ) {
+                            if ( WalkUtil.fileExists(vv) ) {
+                                return true;
+                            } else {
+                                if ( tool.version!=null && tool.version.length()>0 ) {
+                                    vv= tool.pwd +  tool.product + tool.version + ".vap";
+                                    return WalkUtil.fileExists(vv);
+                                } else {
+                                    return false;
+                                }
+                            }
+                        }
+                    }
+                } 
+                return WalkUtil.fileExists(productFile);
+            } catch (FileSystemOfflineException | URISyntaxException ex) {
+                logger.log(Level.SEVERE, ex.getMessage(), ex);
+                return false;
             }
         };
 
@@ -454,7 +575,7 @@ public final class PngWalkTool extends javax.swing.JPanel {
             @Override
             public void actionPerformed(ActionEvent e) {
                 LoggerManager.logGuiEvent(e);                        
-                final String suri;
+                String suri=null;
                 if ( tool.seq==null ) {
                     suri=null;
                 } else {
@@ -472,6 +593,18 @@ public final class PngWalkTool extends javax.swing.JPanel {
                         if ( json!=null ) { 
                             jsonTimeRange= RichPngUtil.getXRange(json);
                         }
+                    } catch ( IOException ex ) {
+                        logger.log( Level.WARNING, null, ex );
+                    }
+                    
+                    // look in script and offer to run the script.
+                    try {
+                        File file = DataSetURI.getFile( s, new AlertNullProgressMonitor("get image file") ); // assume it's local.
+                        String scriptURI= ImageUtil.getScriptURI( file );
+                        if ( scriptURI!=null ) {
+                            suri= scriptURI;
+                        }
+
                     } catch ( IOException ex ) {
                         logger.log( Level.WARNING, null, ex );
                     }
@@ -535,33 +668,67 @@ public final class PngWalkTool extends javax.swing.JPanel {
                         timeRange= jsonTimeRange.toString().replaceAll("\\s", "+");
                     }
                     
-                    String productFile;
-                    
-                    if ( tool.product!=null && tool.product.length()>0 && tool.baseurl.length()>1 ) {
-                        productFile = tool.baseurl + tool.product + ".vap";  //HERE IT IS
-                    } else {
-                        productFile = template.substring(0, i0) + ".vap";  
-                    }
-                    if ( timeRange!=null ) {
-                        suri = productFile + "?timeRange=" + timeRange;
-                    } else {
-                        JOptionPane.showMessageDialog(ScriptContext.getViewWindow(), "unable to resolve time range from image metadata or filename.");
-                        return;
+                    if ( suri==null ) {
+                        String productFile;
+
+                        if ( tool.product!=null && tool.product.length()>0 && tool.baseurl.length()>1 ) {
+                            productFile = tool.baseurl + tool.product + ".vap";  //HERE IT IS
+                        } else {
+                            productFile = template.substring(0, i0) + ".vap";  
+                        }
+                        
+                        try {
+                            if ( !WalkUtil.fileExists(productFile) ) {
+                                String productFile2 = tool.pwd + tool.product + ".vap";
+                                if ( WalkUtil.fileExists(productFile2) ) {
+                                    productFile= productFile2;
+                                } else {
+                                    productFile2 = tool.pwd + tool.product + tool.version + ".vap";
+                                    if ( WalkUtil.fileExists(productFile2) ) {
+                                        productFile= productFile2;
+                                    }
+                                }
+                            }
+                        } catch (FileSystemOfflineException | URISyntaxException ex) {
+                            logger.log(Level.SEVERE, null, ex);
+                        }
+                        
+                        if ( timeRange!=null ) {
+                            suri = productFile + "?timeRange=" + timeRange;
+                        } else {
+                            JOptionPane.showMessageDialog(ScriptContext.getViewWindow(), "unable to resolve time range from image metadata or filename.");
+                            return;
+                        }
                     }
                 }
 
-                Runnable run = new Runnable() {
-                    @Override
-                    public void run() {
-                        ScriptContext.createGui();
-                        Window apWindow= ScriptContext.getViewWindow();
-                        if ( suri!=null ) {
-                            raiseApWindowSoon(apWindow);
-                            ScriptContext.plot(suri);
+                final String fsuri= suri;
+                
+                Runnable run = () -> {
+                    ScriptContext.createGui();
+                    Window apWindow= ScriptContext.getViewWindow();
+                    if ( fsuri!=null ) {
+                        raiseApWindowSoon(apWindow);
+                        if ( fsuri.startsWith("script:") ) {
+                            ScriptContext.getApplication().runScriptTools(fsuri);
+                            return;
+                        } else {
+                            ScriptContext.plot(fsuri);
                         }
-                        if ( parent==null ) {
-                            apWindow.setVisible(true);
+                    }
+                    // go through and check for the axis autorange flag, and autorange if necessary.
+                    Application dom= ScriptContext.getDocumentModel();
+                    for ( int i=0; i<dom.getPlots().length; i++ ) {
+                        Plot p= dom.getPlots(i);
+                        if ( p.getYaxis().isAutoRange() ) {
+                            AutoplotUtil.resetZoomY(dom,p);
                         }
+                        if ( p.getZaxis().isAutoRange() ) {
+                            AutoplotUtil.resetZoomZ(dom,p);
+                        }
+                    }
+                    if ( parent==null ) {
+                        apWindow.setVisible(true);
                     }
                 };
                 new Thread(run).start();
@@ -600,6 +767,51 @@ public final class PngWalkTool extends javax.swing.JPanel {
     }
     
     /**
+     * Write a pngwalk file describing the current pngwalk.
+     * http://autoplot.org/PNG_Walks
+     * @param parent
+     * @param ssrc the focus file 
+     * @throws java.io.IOException
+     */
+    protected static void savePngwalkFile( PngWalkTool parent, String ssrc ) throws IOException {
+        Preferences prefs = AutoplotSettings.getPreferences(PngWalkTool.class);
+        String srecent = prefs.get( PngWalkTool.PREF_RECENT, System.getProperty("user.home") );
+        JFileChooser chooser= new JFileChooser( srecent );
+        chooser.setFileFilter( new FileNameExtensionFilter( "pngwalk files", "pngwalk" ) );
+        chooser.setMultiSelectionEnabled(false);
+        if ( JFileChooser.APPROVE_OPTION==chooser.showSaveDialog(parent) ) {
+            File f= chooser.getSelectedFile();
+            if ( !f.getName().endsWith(".pngwalk") ) {
+                f= new File( f.getAbsolutePath() + ".pngwalk" );
+            }
+            prefs.put( PngWalkTool.PREF_RECENT, f.getName() );
+            try ( PrintWriter w= new PrintWriter(f) ) {
+                if ( parent.baseurl.length()==0 ) {
+                    String t= parent.getTemplate();
+                    int i= WalkUtil.splitIndex( t );
+                    w.println( "baseurl="+t.substring(0,i+1));
+                    String filePattern= t.substring(i+1);
+                    w.println( "filePattern="+filePattern);
+                } else {
+                    w.println( "baseurl="+parent.baseurl);
+                    if ( parent.product!=null ) {
+                        w.println( "product="+parent.product);
+                    }
+                    String s= parent.getTemplate();
+                    if ( parent.product!=null && s.endsWith(".png") ) {
+                        s= s.substring(0,s.length()-4);
+                    }
+                    w.println( "timeFormat="+s );
+                }
+                if ( parent.getQCTUrl()!=null && parent.getQCTUrl().length()>0 ) {
+                    w.println( "qcturl="+parent.getQCTUrl() );
+                }
+                w.println( "pwd="+ chooser.getSelectedFile().getParent() );
+            }
+        }
+    }
+    
+    /**
      * save a copy of the current selection to a local disk.
      * @param parent dialog parent
      * @param ssrc the file
@@ -633,12 +845,13 @@ public final class PngWalkTool extends javax.swing.JPanel {
         if ( r==JFileChooser.APPROVE_OPTION ) {
             prefs.put( PngWalkTool.PREF_RECENT, chooser.getSelectedFile().getParent() );
             try {
+                if ( !src.exists() ) throw new IllegalArgumentException("Image file no longer exists: "+src);
                 if ( r60.isSelected() ) {
                     BufferedImage im= ImageIO.read(src);
                     int size= (int)Math.sqrt( im.getWidth()*im.getWidth() + im.getHeight()*im.getHeight() );
                     im= ImageResize.getScaledInstance( im, size*60/100 );
                     String ext= chooser.getSelectedFile().toString();
-                    int i= ext.lastIndexOf(".");
+                    int i= ext.lastIndexOf('.');
                     ext= ext.substring(i+1);
                     ImageIO.write( im, ext, chooser.getSelectedFile() );
                             
@@ -653,7 +866,7 @@ public final class PngWalkTool extends javax.swing.JPanel {
         }
     }
     private Window parentWindow;
-    private JCheckBoxMenuItem qcFilterMenuItem;
+    private List<AbstractButton> qcFilterMenuItems= new ArrayList<>();
 
     /**
      * return the interval size (up/down)
@@ -747,13 +960,26 @@ public final class PngWalkTool extends javax.swing.JPanel {
         JMenuBar result= new JMenuBar();
         JMenu fileMenu= new JMenu("File");
 
-        fileMenu.add( new AbstractAction( "Save Local Copy..." ) {
+        fileMenu.add( new AbstractAction( "Save Local Copy of Image..." ) {
             @Override
             public void actionPerformed( ActionEvent e ) {
                 LoggerManager.logGuiEvent(e);        
                 saveLocalCopy(tool,tool.getSelectedFile());
             }
         } );
+        fileMenu.add( new AbstractAction( "Save .pngwalk File..." ) {
+            @Override
+            public void actionPerformed( ActionEvent e ) {
+                LoggerManager.logGuiEvent(e);  
+                try {
+                    savePngwalkFile(tool,tool.getSelectedFile());
+                } catch ( IOException ex ) {
+                    throw new RuntimeException(ex);
+                }
+            }
+
+        } );
+
         fileMenu.add( new AbstractAction( "Show Autoplot" ) {
             @Override
             public void actionPerformed(ActionEvent ae) {
@@ -910,12 +1136,9 @@ public final class PngWalkTool extends javax.swing.JPanel {
         
         final JMenu optionsMenu= new JMenu( "Options" );
         final JCheckBoxMenuItem persMi= new JCheckBoxMenuItem("Use Perspective",true);
-        persMi.addActionListener( new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                ((CoversWalkView)tool.views[4]).setPerspective(persMi.isSelected());
-            }
-        } );
+        persMi.addActionListener((ActionEvent e) -> {
+            ((CoversWalkView)tool.views[4]).setPerspective(persMi.isSelected());
+        });
 
         optionsMenu.add(persMi);
 
@@ -943,8 +1166,80 @@ public final class PngWalkTool extends javax.swing.JPanel {
         }
         optionsMenu.add( thumbsizeMenu );
 
+        final JMenu qcFiltersMenu= new JMenu("QC Filters");
+        ButtonGroup bg= new ButtonGroup();
+        
         final JCheckBoxMenuItem qcmi= new JCheckBoxMenuItem("Show Only Quality Control Records",false);
-        tool.qcFilterMenuItem= qcmi;
+        tool.qcFilterMenuItems.add( qcFiltersMenu );
+        
+        qcmi.addActionListener( new AbstractAction(  ) {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                if ( qcmi.isSelected() ) {
+                    tool.seq.setQCFilter("op");
+                }
+            }
+        } );
+        qcmi.setToolTipText("show only QC records with Okay or Problem setting.");
+        tool.qcFilterMenuItems.add( qcmi);
+        bg.add(qcmi);
+        qcFiltersMenu.add(qcmi);
+        
+        final JCheckBoxMenuItem qcmi2= new JCheckBoxMenuItem("Show Okay Records",false);
+        
+        qcmi2.addActionListener( new AbstractAction(  ) {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                if ( qcmi2.isSelected() ) {
+                    tool.seq.setQCFilter("o");
+                }
+            }
+        } );
+        qcmi2.setToolTipText("show only QC records with Okay setting.");
+        tool.qcFilterMenuItems.add( qcmi2);
+        bg.add(qcmi2);
+        qcFiltersMenu.add(qcmi2);
+        
+        final JCheckBoxMenuItem qcmi3= new JCheckBoxMenuItem("Show Problem Records",false);
+        
+        qcmi3.addActionListener( new AbstractAction(  ) {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                if ( qcmi3.isSelected() ) {
+                    tool.seq.setQCFilter("p");
+                }
+            }
+        } );
+        qcmi3.setToolTipText("show only QC records with Problem setting.");
+        tool.qcFilterMenuItems.add(qcmi3);
+        bg.add(qcmi3);
+        qcFiltersMenu.add(qcmi3);
+        
+     
+        final JCheckBoxMenuItem qcmi4= new JCheckBoxMenuItem("Show All Records",false);
+           
+        qcmi4.addActionListener( new AbstractAction(  ) {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                if ( qcmi4.isSelected() ) {
+                    tool.seq.setQCFilter("");
+                }
+            }
+        } );
+        qcmi4.setToolTipText("show all records.");
+        tool.qcFilterMenuItems.add(qcmi4);
+        bg.add(qcmi4);
+        qcmi4.setSelected(true);
+        qcFiltersMenu.add(qcmi4);
+        optionsMenu.add(qcFiltersMenu);
+        
+        for ( AbstractButton b: tool.qcFilterMenuItems ) {
+            b.setEnabled( tool.qcPanel!=null );
+        }
+        
+        result.add( optionsMenu );
+
+        final JMenu toolsMenu= new JMenu("Tools");
         
         final JMenuItem qc= new JMenuItem( new AbstractAction( "Start Quality Control Tool (QC)" ) {
             @Override
@@ -956,22 +1251,7 @@ public final class PngWalkTool extends javax.swing.JPanel {
             }
         });
         qc.setToolTipText("Start up the Quality Control tool that adds documentation to images.");
-        optionsMenu.add( qc );
-        
-        qcmi.addActionListener( new AbstractAction(  ) {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                if ( qcmi.isSelected() ) {
-                    tool.seq.setQCFilter("op");
-                } else {
-                    tool.seq.setQCFilter("");
-                }
-            }
-        } );
-        qcmi.setToolTipText("show only QC records with Okay or Bad setting.");
-        qcmi.setEnabled(false);
-        
-        optionsMenu.add(qcmi);
+        toolsMenu.add( qc );
         
         final JMenuItem dg= new JMenuItem( new AbstractAction( "Start Digitizer" ) {
             @Override
@@ -983,11 +1263,10 @@ public final class PngWalkTool extends javax.swing.JPanel {
             }
         });
         dg.setToolTipText("Start up the Digitizer that receives pairs from the single view.  See http://autoplot.org/richPng.");
-        optionsMenu.add( dg );
+        toolsMenu.add( dg );
         
-        result.add( optionsMenu );
-
-        final JMenu toolsMenu= new JMenu("Tools");
+        toolsMenu.add( new JSeparator() );
+        
         final JMenuItem writePdf= new JMenuItem( new AbstractAction( "Write to PDF..." ) {
             @Override
             public void actionPerformed(ActionEvent e) {
@@ -1019,16 +1298,36 @@ public final class PngWalkTool extends javax.swing.JPanel {
         writeHtml.setToolTipText("Write the visible images to an HTML file.");
         toolsMenu.add( writeHtml );
         
+        final JMenuItem writeCsv= new JMenuItem( new AbstractAction( "Write to CSV..." ) {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                LoggerManager.logGuiEvent(e);        
+                tool.writeCsv();
+            }
+        });
+        writeCsv.setToolTipText("Write the visible images to a CSV file.");
+        toolsMenu.add( writeCsv );
+        
+        
+        result.add( toolsMenu );
+        
+        final JMenuItem writeContactSheet= new JMenuItem( new AbstractAction( "Write to PNG Contact Sheet..." ) {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                LoggerManager.logGuiEvent(e);        
+                tool.writeContactSheet();
+            }
+        });
+        writeContactSheet.setToolTipText("Write the visible thumbnails to PNG file.");
+        toolsMenu.add( writeContactSheet );
+        
         result.add( toolsMenu );
         
         final JMenu bookmarksMenu= new JMenu("Bookmarks");
         final BookmarksManager man= new BookmarksManager(frame,true,"PNG Bookmarks");
 
-        man.getModel().addPropertyChangeListener( BookmarksManagerModel.PROP_LIST, new PropertyChangeListener() {
-            @Override
-            public void propertyChange(PropertyChangeEvent evt) {
-                man.updateBookmarks( bookmarksMenu, tool.getSelector() );
-            }
+        man.getModel().addPropertyChangeListener(BookmarksManagerModel.PROP_LIST, (PropertyChangeEvent evt) -> {
+            man.updateBookmarks( bookmarksMenu, tool.getSelector() );
         });
         man.setVisible(false);
         man.setPrefNode("pngwalk","autoplot.default.pngwalk.bookmarks", "http://autoplot.org/data/pngwalk.demos.xml");
@@ -1036,7 +1335,21 @@ public final class PngWalkTool extends javax.swing.JPanel {
         man.updateBookmarks( bookmarksMenu, tool.getSelector() );
 
         result.add( bookmarksMenu );
-
+        
+        final JMenu helpMenu= new JMenu( "Help" );
+        final JMenuItem helpContentsMI= new JMenuItem( new AbstractAction( "Help Contents..." ) {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                LoggerManager.logGuiEvent(e);        
+                String surl = "http://autoplot.org/PNGWalks";
+                AutoplotUtil.openBrowser(surl);
+            }
+        });
+        helpContentsMI.setToolTipText("Help page for the PNG Walk Tool.");
+        helpMenu.add( helpContentsMI );
+        
+        result.add( helpMenu );
+        
         return result;
     }
 
@@ -1054,13 +1367,10 @@ public final class PngWalkTool extends javax.swing.JPanel {
             public void actionPerformed( ActionEvent ev ) {
                 String template= dataSetSelector1.getValue();
                 if ( template.endsWith(".pngwalk") ) {
-                    Map<String,String> m= readPngwalkFile(template);
-                    template= m.get("template");
-                    product= m.get("product");
-                    baseurl= m.get("baseurl");
-                    baseurl= checkRelativeBaseurl(baseurl, template, product );
+                    loadPngwalkFile( template );
+                } else {
+                    setTemplate(template);
                 }
-                setTemplate(template);
             }
         });
 
@@ -1068,13 +1378,11 @@ public final class PngWalkTool extends javax.swing.JPanel {
 
         views[0]= new GridPngWalkView( null );
         views[1]= new RowPngWalkView( null );
-        views[2]= new SinglePngWalkView( null );
-        views[3]= new SinglePngWalkView( null );
+        views[2]= new SinglePngWalkView( null, this );
+        views[3]= new SinglePngWalkView( null, this );
         views[4]= new CoversWalkView( null );
-        views[5]= new SinglePngWalkView( null );
+        views[5]= new SinglePngWalkView( null, this );
         views[6]= new ContextFlowView(null);
-        
-        ((SinglePngWalkView)views[2]).clickDigitizer.setViewer(this);
         
         final int SCROLLBAR_HEIGHT = (int) Math.round( new JScrollPane().getHorizontalScrollBar().getPreferredSize().getHeight() );
 
@@ -1082,11 +1390,8 @@ public final class PngWalkTool extends javax.swing.JPanel {
 
         //p.setEnabled(false);  //prevents user manipulation
         filmStripSplitPane.setDividerLocation(getThumbnailSize()+ (int)(1.2 *SCROLLBAR_HEIGHT));
-        views[1].addPropertyChangeListener( PngWalkView.PROP_THUMBNAILSIZE, new PropertyChangeListener() {
-            @Override
-            public void propertyChange(PropertyChangeEvent evt) {
-                filmStripSplitPane.setDividerLocation( (Integer)evt.getNewValue() + SCROLLBAR_HEIGHT );
-            }
+        views[1].addPropertyChangeListener(PngWalkView.PROP_THUMBNAILSIZE, (PropertyChangeEvent evt) -> {
+            filmStripSplitPane.setDividerLocation( (Integer)evt.getNewValue() + SCROLLBAR_HEIGHT );
         });
 
         filmStripSplitPane.setMinimumSize( new Dimension(640,480) );
@@ -1094,11 +1399,8 @@ public final class PngWalkTool extends javax.swing.JPanel {
         
         final JSplitPane coversSplitPane = new JSplitPane(JSplitPane.VERTICAL_SPLIT, views[4], views[5] );
         coversSplitPane.setDividerLocation(getThumbnailSize()+ (int)(1.2 *SCROLLBAR_HEIGHT));
-        views[4].addPropertyChangeListener( PngWalkView.PROP_THUMBNAILSIZE, new PropertyChangeListener() {
-            @Override
-            public void propertyChange(PropertyChangeEvent evt) {
-                coversSplitPane.setDividerLocation( (Integer)evt.getNewValue() + SCROLLBAR_HEIGHT  );
-            }
+        views[4].addPropertyChangeListener(PngWalkView.PROP_THUMBNAILSIZE, (PropertyChangeEvent evt) -> {
+            coversSplitPane.setDividerLocation( (Integer)evt.getNewValue() + SCROLLBAR_HEIGHT  );
         });
         
         coversSplitPane.setMinimumSize( new Dimension(640,480) );
@@ -1137,11 +1439,11 @@ public final class PngWalkTool extends javax.swing.JPanel {
         nextButton.requestFocus();
 
         if (isQualityControlEnabled()) {
-            qcPanel = new QualityControlPanel();
+            qcPanel = new QualityControlPanel(this);
             JSplitPane qcPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, true, tabs, qcPanel);
             qcPane.setResizeWeight(1.0);
             pngsPanel.add(qcPane);
-            qcPanel.setWalkImageSequece(seq);
+            qcPanel.setWalkImageSequence(seq);
         } else {
             pngsPanel.add( tabs );
         }
@@ -1154,13 +1456,8 @@ public final class PngWalkTool extends javax.swing.JPanel {
         }
         bc.bind();
         
-        addMouseWheelListener( new MouseWheelListener() {
-
-            @Override
-            public void mouseWheelMoved(MouseWheelEvent e) {
-                 if ( seq!=null && seq.size()!=0 ) seq.skipBy(e.getWheelRotation());
-            }
-
+        addMouseWheelListener( (MouseWheelEvent e) -> {
+            if ( seq!=null && seq.size()!=0 ) seq.skipBy(e.getWheelRotation());
         });
 
         setStatus("ready");
@@ -1209,13 +1506,15 @@ public final class PngWalkTool extends javax.swing.JPanel {
                 logger.fine("seq was null");
                 return;
             }
-            String item= seq.currentImage().getUri().toString();
+            String item= DataSetURI.fromUri(seq.currentImage().getUri());
 
             for ( int i=0; i<actionEnablers.size(); i++ ) {
-                boolean actionEnabled= actionEnablers.get(i).isActionEnabled(item);
-                actionButtons.get(i).setEnabled(actionEnabled);
-                if ( actionEnabled ) {
-                   actionButtons.get(i).setActionCommand(actionCommand+" "+item);
+                if ( actionEnablers.get(i)!=null ) {
+                    boolean actionEnabled= actionEnablers.get(i).isActionEnabled(item);
+                    actionButtons.get(i).setEnabled(actionEnabled);
+                    if ( actionEnabled ) {
+                       actionButtons.get(i).setActionCommand(actionCommand+" "+item);
+                    }
                 }
             }
             firePropertyChange( PROP_SELECTED_NAME, null, seq.getSelectedName() );
@@ -1229,11 +1528,8 @@ public final class PngWalkTool extends javax.swing.JPanel {
     /**
      * listen for status updates from other agents, relay the status for the view.
      */
-    private transient PropertyChangeListener statusListener= new PropertyChangeListener() {
-        @Override
-        public void propertyChange(PropertyChangeEvent evt) {
-           setStatus((String)evt.getNewValue());
-        }
+    private transient PropertyChangeListener statusListener= (PropertyChangeEvent evt) -> {
+        setStatus((String)evt.getNewValue());
     };
 
     /**
@@ -1307,11 +1603,13 @@ public final class PngWalkTool extends javax.swing.JPanel {
             setNavButtonsEnabled(true);
             if ( navMenu!=null ) navMenu.setEnabled(true);
             seq.setQCFilter("");
-            if ( qcFilterMenuItem!=null ) {
-                qcFilterMenuItem.setSelected(false);
+            if ( qcFilterMenuItems!=null ) {
+                for ( AbstractButton b: qcFilterMenuItems ) {
+                    b.setEnabled( qcPanel!=null );
+                }
             }
             if ( qcPanel!=null ) {
-                qcPanel.setWalkImageSequece(seq);
+                qcPanel.setWalkImageSequence(seq);
             }
             
         } catch ( Exception ex ) {
@@ -1341,32 +1639,32 @@ public final class PngWalkTool extends javax.swing.JPanel {
             return;
         }
         
-        Runnable run= new Runnable() {
-            @Override
-            public void run() {
-                try {
-                    seq.initialLoad();
-
-                    if ( pendingGoto!=null )  {
-                        seq.gotoSubrange(pendingGoto);
-                        pendingGoto= null;
-                    }
-
-                } catch (java.io.IOException e) {
-                    // This probably means the template was invalid. Don't set new sequence.
-                    if ( !getStatus().startsWith("error") ) setStatus("error:"+e.getMessage());
-                    throw new RuntimeException(e);
-                }
-
-                SwingUtilities.invokeLater( new Runnable() {
-                    @Override
-                    public void run() {
-                        updateInitialGui();
-                    }
-                });
+        Runnable run= () -> {
+            try {
+                seq.initialLoad();
                 
+                if ( pendingGoto!=null )  {
+                    seq.gotoSubrange(pendingGoto);
+                    pendingGoto= null;
+                }
+                
+            } catch (java.io.IOException e) {
+                // This probably means the template was invalid. Don't set new sequence.
+                if ( !getStatus().startsWith("error") ) setStatus("error:"+e.getMessage());
+                Container p= SwingUtilities.getWindowAncestor(this);
+                if ( p==null ) p= parentWindow;
+                if ( this.getX()!=0 ) p= this; // for Linux, where the component isn't initialized yet.
+                JOptionPane.showMessageDialog( p, "<html>Unable to find directory for: <br>"+ seq.getTemplate() );
+                
+                return;
             }
 
+            SwingUtilities.invokeLater( new Runnable() {
+                @Override
+                public void run() {
+                    updateInitialGui();
+                }
+            });
         };
 
         new Thread(run).start();
@@ -1377,14 +1675,8 @@ public final class PngWalkTool extends javax.swing.JPanel {
      * initial settings to be performed on the event thread.
      */
     private void updateInitialGui() {
-        List<String> urls = new ArrayList<>();
-        List<String> recent = dataSetSelector1.getRecent();
-        recent.removeAll( Collections.singleton( seq.getTemplate() ) );
-        for (String b : recent) {
-            urls.add( b );
-        }
-        urls.add( seq.getTemplate() );
-        dataSetSelector1.setRecent(urls);
+
+        dataSetSelector1.addToRecent( seq.getTemplate() );
 
         useRangeCheckBox.setEnabled(seq.getTimeSpan() != null);
 
@@ -1421,7 +1713,7 @@ public final class PngWalkTool extends javax.swing.JPanel {
         } else {
             indexListener.propertyChange( null );
             if (qcPanel != null ) {
-                qcPanel.setWalkImageSequece(seq);
+                qcPanel.setWalkImageSequence(seq);
                 if ( seq.getIndex()<seq.size() ) {
                     if ( seq.getQualityControlSequence()!=null ) {
                         QualityControlRecord rec= seq.getQualityControlSequence().getQualityControlRecord(seq.getIndex());
@@ -1436,10 +1728,30 @@ public final class PngWalkTool extends javax.swing.JPanel {
         }
     }
 
+    /**
+     * get the template used to describe the files in the pngwalk.
+     * @return the template used to describe the files in the pngwalk.
+     */
     public String getTemplate() {
         return seq.getTemplate();
     }
+    
+    /**
+     * return the present working directory of the .pngwalk file (if used).
+     * @return the present working directory of the .pngwalk file (if used).
+     */
+    public String getPwd() {
+        return pwd;
+    }
 
+    /**
+     * return the path for the quality control data.
+     * @return 
+     */
+    public String getQCTUrl() {
+        return qcturl;
+    }
+    
     protected int thumbnailSize = 100;
     public static final String PROP_THUMBNAILSIZE = "thumbnailSize";
 
@@ -1466,11 +1778,15 @@ public final class PngWalkTool extends javax.swing.JPanel {
      * @return the current timerange
      */
     public DatumRange getTimeRange() {
-        DatumRange tr=null;
-        tr= seq.imageAt( seq.getIndex() ).getDatumRange();
-        if ( tr!=null ) {
-            return tr;
-        } else {
+        try {
+            DatumRange tr= seq.imageAt( seq.getIndex() ).getDatumRange();
+            if ( tr!=null ) {
+                return tr;
+            } else {
+                return timeRange;
+            }
+        } catch ( Exception ex ) {
+            // this happens when the sequence is initializing on another thread.
             return timeRange;
         }
     }
@@ -1521,12 +1837,27 @@ public final class PngWalkTool extends javax.swing.JPanel {
         firePropertyChange(PROP_MOUSERELEASELOCATION, oldMouseReleaseLocation, mouseReleaseLocation);
     }
 
+    private MouseAdapter imageMouseAdapter = null;
 
-    transient PropertyChangeListener seqTimeRangeListener= new PropertyChangeListener() {
-        @Override
-        public void propertyChange(PropertyChangeEvent evt) {
-            setTimeRange((DatumRange)evt.getNewValue());
-        }
+    public static final String PROP_IMAGEMOUSEADAPTER = "imageMouseAdapter";
+
+    public MouseAdapter getImageMouseAdapter() {
+        return imageMouseAdapter;
+    }
+
+    /**
+     * add a mouse event handler, which will get events in the coordinate frame
+     * of the image.  This can be set to null to clear the adapter.
+     * @param imageMouseAdapter 
+     */
+    public void setImageMouseAdapter(MouseAdapter imageMouseAdapter) {
+        MouseAdapter oldImageMouseAdapter = this.imageMouseAdapter;
+        this.imageMouseAdapter = imageMouseAdapter;
+        firePropertyChange(PROP_IMAGEMOUSEADAPTER, oldImageMouseAdapter, imageMouseAdapter);
+    }
+
+    transient PropertyChangeListener seqTimeRangeListener= (PropertyChangeEvent evt) -> {
+        setTimeRange((DatumRange)evt.getNewValue());
     };
 
     boolean setting= false;
@@ -1570,17 +1901,21 @@ public final class PngWalkTool extends javax.swing.JPanel {
     }
 
     public void setMessage(String message) {
-        this.statusLabel.setIcon( IDLE_ICON );
-        this.statusLabel.setText(message);
+        setMessage( IDLE_ICON, message );
     }
 
     public void setMessage( Icon icon, String message ) {
         if ( message==null ) message= "<null>"; // TODO: fix this later
         String myMess= message;
         if ( myMess.length()>100 ) myMess= myMess.substring(0,100)+"...";
-        this.statusLabel.setIcon( icon );
-        this.statusLabel.setText(myMess);
-        this.statusLabel.setToolTipText(message);
+        String fMyMessag= myMess;
+        String fMessage= message;
+        Runnable run= () -> {
+            statusLabel.setIcon( icon );
+            statusLabel.setText(fMyMessag);
+            statusLabel.setToolTipText(fMessage);
+        };
+        SwingUtilities.invokeLater(run);
     }
 
     /**
@@ -1588,15 +1923,17 @@ public final class PngWalkTool extends javax.swing.JPanel {
      */
     public void startQC() {
         if ( !isQualityControlEnabled() ) {
-            qcPanel= new QualityControlPanel();
+            qcPanel= new QualityControlPanel(this);
             tabs.add( "Quality Control", qcPanel );
             if ( seq!=null ) {
-                qcPanel.setWalkImageSequece(seq);
+                qcPanel.setWalkImageSequence(seq);
                 seq.addPropertyChangeListener(WalkImageSequence.PROP_BADGE_CHANGE, qcStatusListener);
             }
             ENABLE_QUALITY_CONTROL= true;
         }
-        qcFilterMenuItem.setEnabled(true);
+        for ( AbstractButton b: qcFilterMenuItems ) {
+            b.setEnabled(true);
+        }
     }
 
     protected DataPointRecorder digitizer= null;
@@ -1609,24 +1946,18 @@ public final class PngWalkTool extends javax.swing.JPanel {
     public void startDigitizer() {
         if ( digitizer==null ) {
             digitizer= new DataPointRecorder();
-            digitizer.addDataSetUpdateListener(new DataSetUpdateListener() {
-                @Override
-                public void dataSetUpdated(DataSetUpdateEvent e) {
-                    for (PngWalkView v : views) {
-                       if ( v instanceof SinglePngWalkView ) {
-                           v.repaint();
-                        }
+            digitizer.addDataSetUpdateListener((DataSetUpdateEvent e) -> {
+                for (PngWalkView v : views) {
+                    if ( v instanceof SinglePngWalkView ) {
+                        v.repaint();
                     }
                 }
             });
-            digitizer.addDataPointSelectionListener(new DataPointSelectionListener() {
-                @Override
-                public void dataPointSelected(DataPointSelectionEvent e) {
-                    String image= (e.getPlane("image").toString());
-                    int i= seq.findIndex(image);
-                    if ( i>-1 ) {
-                        seq.setIndex(i);
-                    }
+            digitizer.addDataPointSelectionListener((DataPointSelectionEvent e) -> {
+                String image= (e.getPlane("image").toString());
+                int i= seq.findIndex(image);
+                if ( i>-1 ) {
+                    seq.setIndex(i);
                 }
             });
             tabs.add( "Digitizer" , digitizer );
@@ -1639,17 +1970,13 @@ public final class PngWalkTool extends javax.swing.JPanel {
             JComboBox annoType= new JComboBox( new String[] { "| vertical line", "+ cross hairs", ". dots" } );
             digitizer.addAccessory( annoType );
             
-            annoType.addItemListener(new ItemListener() {
-                @Override
-                public void itemStateChanged(ItemEvent e) {
-                    annoTypeChar= e.getItem().toString().charAt(0);
-                    for (PngWalkView v : views) {
-                       if ( v instanceof SinglePngWalkView ) {
-                           v.repaint();
-                        }
+            annoType.addItemListener((ItemEvent e) -> {
+                annoTypeChar= e.getItem().toString().charAt(0);
+                for (PngWalkView v : views) {
+                    if ( v instanceof SinglePngWalkView ) {
+                        v.repaint();
                     }
                 }
-                
             });
             digitizerRecording= true;
         }
@@ -1676,6 +2003,46 @@ public final class PngWalkTool extends javax.swing.JPanel {
     public void setDigitizerRecording( boolean enable ) {
         this.digitizerRecording= enable;
     }
+
+    private void writeContactSheet() {
+        Component ttt= tabs.getTabByTitle("Grid");
+        if ( ttt instanceof GridPngWalkView ) {
+            try {
+                Preferences prefs= Preferences.userNodeForPackage(PngWalkTool.class);
+                String fname= prefs.get( "writeToContactSheet", "/tmp/contactSheet.png" );
+                JFileChooser chooser= new JFileChooser(fname);
+                if ( !fname.equals("/tmp/contactSheet.png") ) {
+                    chooser.setSelectedFile( new File(fname) );
+                }
+                chooser.setFileFilter( new FileNameExtensionFilter( "PNG Files", "png") );
+                if ( chooser.showSaveDialog(this)==JFileChooser.APPROVE_OPTION ) {
+                    File f= chooser.getSelectedFile();
+                    if ( !f.getName().endsWith(".png") ) {
+                        f= new File( f.getParentFile(), f.getName()+".png" );
+                    }
+                    writeContactSheet( f );
+                    prefs.put( "writeToContactSheet", f.toString() );
+                }
+            } catch (IOException ex) {
+                logger.log(Level.SEVERE, null, ex);
+                JOptionPane.showMessageDialog( parentWindow, "Error while creating contact sheet");
+            }
+        }
+    }
+
+    /**
+     * write the current Grid view to a single PNG file.
+     * @param f
+     * @throws IOException 
+     */
+    public void writeContactSheet( File f ) throws IOException {
+        Component ttt= tabs.getTabByTitle("Grid");
+        if ( ttt instanceof GridPngWalkView ) {
+            BufferedImage im= ((GridPngWalkView)ttt).paintContactSheet();
+            ImageIO.write( im, "png", f );
+            setMessage("Wrote to "+f);
+        }
+    }
     
     public static interface ActionEnabler {
         boolean isActionEnabled( String filename );
@@ -1684,12 +2051,8 @@ public final class PngWalkTool extends javax.swing.JPanel {
     /**
      * Enabler that returns true for local files.
      */
-    public static final ActionEnabler LOCAL_FILE_ENABLER = new ActionEnabler() {
-        @Override
-        public boolean isActionEnabled( String filename ) {
-            return DataSetURI.getResourceURI(filename).toString().startsWith("file:" );
-        }
-    };
+    public static final ActionEnabler LOCAL_FILE_ENABLER =
+            (String filename) -> DataSetURI.getResourceURI(filename).toString().startsWith("file:" );
 
     transient List<ActionEnabler> actionEnablers= new ArrayList<>();
     List<JButton> actionButtons= new ArrayList<>();
@@ -1737,12 +2100,80 @@ public final class PngWalkTool extends javax.swing.JPanel {
         this.revalidate();
     }
     
+    List<Painter> decorators= new LinkedList<>();
+    
+    /**
+     * add a decorator to the PngWalkTool, which is drawn on single-image
+     * views.  Note this is draw in the coordinate system of the image, pixel
+     * coordinates with the origin (0,0) at the top left.
+     * @param p 
+     */
+    public void addTopDecorator( Painter p ) {
+        if ( !decorators.contains(p) ) {
+            decorators.add( p );
+        }
+        repaint();
+    }
+    
+    /**
+     * remove a decorator to the PngWalkTool, which is drawn on single-image
+     * views.  If the decorator is not found, no error is thrown.
+     * @param p 
+     */
+    public void removeTopDecorator( Painter p ) {
+        decorators.remove( p );
+        repaint();
+    }
+    
+    /**
+     * remove all decorators from the PngWalkTool.
+     */
+    public void removeTopDecorators() {
+        decorators.clear( );
+        repaint();
+    }
+    
+    /**
+     * returns true if there are any top decorators.
+     * @return true if there are any decorators.
+     */
+    public boolean hasTopDecorators() {
+        return ! decorators.isEmpty();
+    }
+    /**
+     * set a new component for the bottom left panel, where by default the 
+     * navigation panel resides.
+     * @param c 
+     */
+    public void setBottomLeftPanel( JComponent c ) {
+        bottomLeftPanel.removeAll();
+        if ( c!=null ) bottomLeftPanel.add( c, BorderLayout.CENTER );
+        revalidate();
+    }
+    
+    /**
+     * remove all components from the bottom left panel.
+     */
+    public void clearBottomLeftPanel() {
+        bottomLeftPanel.removeAll();
+    }
+    
+    /**
+     * get a reference to the navigation panel.  To restore the normal layout,
+     * use setBottomLeftPanel( getNavigationPanel() ).
+     * @return the navigation panel.
+     */
+    public JPanel getNavigationPanel() {
+        return navigationPanel;
+    }
+    
     /**
      * returns the current selection, which may be a URL on a remote site, or null if no sequence has been selected.
-     * @return the current selection.
+     * @return the current selection or null if the sequence is not loaded or empty.
      */
     public String getSelectedFile() {
         if ( seq==null ) return null;
+        if ( seq.size()==0 ) return null;
         return DataSetURI.fromUri( seq.currentImage().getUri() );
     }
 
@@ -1819,8 +2250,14 @@ public final class PngWalkTool extends javax.swing.JPanel {
     private void initComponents() {
 
         pngsPanel = new javax.swing.JPanel();
-        timeFilterTextField = new javax.swing.JTextField();
         actionButtonsPanel = new javax.swing.JPanel();
+        dataSetSelector1 = new org.autoplot.datasource.DataSetSelector();
+        statusLabel = new javax.swing.JLabel();
+        bottomLeftPanel = new javax.swing.JPanel();
+        navigationPanel = new javax.swing.JPanel();
+        timeFilterTextField = new javax.swing.JTextField();
+        showMissingCheckBox = new javax.swing.JCheckBox();
+        useRangeCheckBox = new javax.swing.JCheckBox();
         jPanel1 = new javax.swing.JPanel();
         prevSetButton = new javax.swing.JButton();
         prevButton = new javax.swing.JButton();
@@ -1828,29 +2265,61 @@ public final class PngWalkTool extends javax.swing.JPanel {
         nextSetButton = new javax.swing.JButton();
         jumpToFirstButton = new javax.swing.JButton();
         jumpToLastButton = new javax.swing.JButton();
-        dataSetSelector1 = new org.autoplot.datasource.DataSetSelector();
-        statusLabel = new javax.swing.JLabel();
-        showMissingCheckBox = new javax.swing.JCheckBox();
-        useRangeCheckBox = new javax.swing.JCheckBox();
         editRangeButton = new javax.swing.JButton();
 
         pngsPanel.setBorder(javax.swing.BorderFactory.createLineBorder(new java.awt.Color(0, 0, 0)));
         pngsPanel.setLayout(new java.awt.BorderLayout());
 
-        timeFilterTextField.setToolTipText("Enter a time range, for example a year like \"2009\", or month \"2009 may\", or \"2009-01-01 to 2009-03-10\"\n");
-        timeFilterTextField.setEnabled(false);
-        timeFilterTextField.addActionListener(new java.awt.event.ActionListener() {
+        actionButtonsPanel.setLayout(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT));
+
+        dataSetSelector1.setToolTipText("Enter the location of the images as a wildcard (/tmp/*.png) or template (/tmp/$Y$m$d.png).  .png, .gif, and .jpg files are supported.");
+        dataSetSelector1.setPromptText("Enter images filename template");
+        dataSetSelector1.setValue("");
+        dataSetSelector1.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
-                timeFilterTextFieldActionPerformed(evt);
+                dataSetSelector1ActionPerformed(evt);
             }
         });
+
+        statusLabel.setText("starting application...");
+
+        bottomLeftPanel.setLayout(new java.awt.BorderLayout());
+
+        timeFilterTextField.setToolTipText("Enter a time range, for example a year like \"2009\", or month \"2009 may\", or \"2009-01-01 to 2009-03-10\"\n");
+        timeFilterTextField.setEnabled(false);
         timeFilterTextField.addFocusListener(new java.awt.event.FocusAdapter() {
             public void focusLost(java.awt.event.FocusEvent evt) {
                 timeFilterTextFieldFocusLost(evt);
             }
         });
+        timeFilterTextField.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                timeFilterTextFieldActionPerformed(evt);
+            }
+        });
 
-        actionButtonsPanel.setLayout(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT));
+        showMissingCheckBox.setText("Show Missing");
+        showMissingCheckBox.setToolTipText("Insert placeholder images where there are gaps detected in the sequence");
+        showMissingCheckBox.setEnabled(false);
+        showMissingCheckBox.addItemListener(new java.awt.event.ItemListener() {
+            public void itemStateChanged(java.awt.event.ItemEvent evt) {
+                showMissingCheckBoxItemStateChanged(evt);
+            }
+        });
+        showMissingCheckBox.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                showMissingCheckBoxActionPerformed(evt);
+            }
+        });
+
+        useRangeCheckBox.setText("Limit range to:");
+        useRangeCheckBox.setToolTipText("Limit the time range of the images in the sequence.");
+        useRangeCheckBox.setEnabled(false);
+        useRangeCheckBox.addItemListener(new java.awt.event.ItemListener() {
+            public void itemStateChanged(java.awt.event.ItemEvent evt) {
+                useRangeCheckBoxItemStateChanged(evt);
+            }
+        });
 
         prevSetButton.setIcon(new javax.swing.ImageIcon(getClass().getResource("/resources/prevPrevPrev.png"))); // NOI18N
         prevSetButton.setToolTipText("Skip to previous interval");
@@ -1931,41 +2400,8 @@ public final class PngWalkTool extends javax.swing.JPanel {
 
         jPanel1Layout.linkSize(new java.awt.Component[] {nextButton, nextSetButton, prevButton, prevSetButton}, org.jdesktop.layout.GroupLayout.VERTICAL);
 
-        dataSetSelector1.setToolTipText("Enter the location of the images as a wildcard (/tmp/*.png) or template (/tmp/$Y$m$d.png).  .png, .gif, and .jpg files are supported.");
-        dataSetSelector1.setPromptText("Enter images filename template");
-        dataSetSelector1.setValue("");
-        dataSetSelector1.addActionListener(new java.awt.event.ActionListener() {
-            public void actionPerformed(java.awt.event.ActionEvent evt) {
-                dataSetSelector1ActionPerformed(evt);
-            }
-        });
-
-        statusLabel.setText("starting application...");
-
-        showMissingCheckBox.setText("Show Missing");
-        showMissingCheckBox.setToolTipText("Insert placeholder images where there are gaps detected in the sequence");
-        showMissingCheckBox.setEnabled(false);
-        showMissingCheckBox.addItemListener(new java.awt.event.ItemListener() {
-            public void itemStateChanged(java.awt.event.ItemEvent evt) {
-                showMissingCheckBoxItemStateChanged(evt);
-            }
-        });
-        showMissingCheckBox.addActionListener(new java.awt.event.ActionListener() {
-            public void actionPerformed(java.awt.event.ActionEvent evt) {
-                showMissingCheckBoxActionPerformed(evt);
-            }
-        });
-
-        useRangeCheckBox.setText("Limit range to:");
-        useRangeCheckBox.setToolTipText("Limit the time range of the images in the sequence.");
-        useRangeCheckBox.setEnabled(false);
-        useRangeCheckBox.addItemListener(new java.awt.event.ItemListener() {
-            public void itemStateChanged(java.awt.event.ItemEvent evt) {
-                useRangeCheckBoxItemStateChanged(evt);
-            }
-        });
-
-        editRangeButton.setText("Select...");
+        editRangeButton.setIcon(new javax.swing.ImageIcon(getClass().getResource("/org/autoplot/resources/calendar.png"))); // NOI18N
+        editRangeButton.setToolTipText("Time Range Tool");
         editRangeButton.setEnabled(false);
         editRangeButton.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
@@ -1973,49 +2409,65 @@ public final class PngWalkTool extends javax.swing.JPanel {
             }
         });
 
-        org.jdesktop.layout.GroupLayout layout = new org.jdesktop.layout.GroupLayout(this);
-        this.setLayout(layout);
-        layout.setHorizontalGroup(
-            layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
-            .add(org.jdesktop.layout.GroupLayout.TRAILING, pngsPanel, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-            .add(layout.createSequentialGroup()
-                .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
-                    .add(layout.createSequentialGroup()
-                        .add(jPanel1, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
-                        .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                        .add(actionButtonsPanel, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 463, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE))
-                    .add(layout.createSequentialGroup()
-                        .addContainerGap()
-                        .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
-                            .add(layout.createSequentialGroup()
-                                .add(12, 12, 12)
-                                .add(useRangeCheckBox)
-                                .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
-                                .add(timeFilterTextField, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 236, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
-                                .add(12, 12, 12)
-                                .add(editRangeButton)
-                                .add(18, 18, 18)
-                                .add(showMissingCheckBox))
-                            .add(dataSetSelector1, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)))
-                    .add(statusLabel, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+        org.jdesktop.layout.GroupLayout navigationPanelLayout = new org.jdesktop.layout.GroupLayout(navigationPanel);
+        navigationPanel.setLayout(navigationPanelLayout);
+        navigationPanelLayout.setHorizontalGroup(
+            navigationPanelLayout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+            .add(org.jdesktop.layout.GroupLayout.TRAILING, navigationPanelLayout.createSequentialGroup()
+                .addContainerGap(org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                .add(navigationPanelLayout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+                    .add(navigationPanelLayout.createSequentialGroup()
+                        .add(18, 18, 18)
+                        .add(useRangeCheckBox)
+                        .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
+                        .add(timeFilterTextField, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 236, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
+                        .add(12, 12, 12)
+                        .add(editRangeButton)
+                        .add(18, 18, 18)
+                        .add(showMissingCheckBox))
+                    .add(jPanel1, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE))
                 .addContainerGap())
         );
-        layout.setVerticalGroup(
-            layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
-            .add(org.jdesktop.layout.GroupLayout.TRAILING, layout.createSequentialGroup()
-                .add(pngsPanel, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 638, Short.MAX_VALUE)
-                .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
-                .add(dataSetSelector1, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 27, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
-                .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
-                .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.BASELINE)
+        navigationPanelLayout.setVerticalGroup(
+            navigationPanelLayout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+            .add(org.jdesktop.layout.GroupLayout.TRAILING, navigationPanelLayout.createSequentialGroup()
+                .add(navigationPanelLayout.createParallelGroup(org.jdesktop.layout.GroupLayout.BASELINE)
                     .add(timeFilterTextField, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
                     .add(useRangeCheckBox)
                     .add(editRangeButton)
                     .add(showMissingCheckBox))
                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
+                .add(jPanel1, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+        );
+
+        bottomLeftPanel.add(navigationPanel, java.awt.BorderLayout.CENTER);
+
+        org.jdesktop.layout.GroupLayout layout = new org.jdesktop.layout.GroupLayout(this);
+        this.setLayout(layout);
+        layout.setHorizontalGroup(
+            layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+            .add(org.jdesktop.layout.GroupLayout.TRAILING, pngsPanel, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 932, Short.MAX_VALUE)
+            .add(org.jdesktop.layout.GroupLayout.TRAILING, layout.createSequentialGroup()
+                .addContainerGap()
+                .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+                    .add(dataSetSelector1, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                    .add(statusLabel, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                    .add(layout.createSequentialGroup()
+                        .add(bottomLeftPanel, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
+                        .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
+                        .add(actionButtonsPanel, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)))
+                .addContainerGap())
+        );
+        layout.setVerticalGroup(
+            layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+            .add(org.jdesktop.layout.GroupLayout.TRAILING, layout.createSequentialGroup()
+                .add(pngsPanel, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 639, Short.MAX_VALUE)
+                .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
+                .add(dataSetSelector1, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 27, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
+                .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
                 .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING, false)
-                    .add(actionButtonsPanel, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                    .add(jPanel1, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))
+                    .add(bottomLeftPanel, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                    .add(actionButtonsPanel, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 57, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE))
                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
                 .add(statusLabel))
         );
@@ -2042,22 +2494,19 @@ public final class PngWalkTool extends javax.swing.JPanel {
 }//GEN-LAST:event_prevSetButtonActionPerformed
 
     private void timeFilterTextFieldActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_timeFilterTextFieldActionPerformed
+        LoggerManager.logGuiEvent(evt);
+        updateTimeRangeFilter( );
+    }//GEN-LAST:event_timeFilterTextFieldActionPerformed
+
+    public void updateTimeRangeFilter() {
         try {
-            LoggerManager.logGuiEvent(evt);
             timeFilterTextField.setBackground( dataSetSelector1.getBackground() );
             DatumRange range= DatumRangeUtil.parseTimeRange(timeFilterTextField.getText());
             seq.setActiveSubrange( range );
         } catch ( ParseException ex ) {
             timeFilterTextField.setBackground( Color.PINK );
         }
-
-        //        canvas.setTimeRange( timeFilterTextField.getText() );
-//        if ( !canvas.getTimeRange().equals(timeFilterTextField.getText() ) ) {
-//            timeFilterTextField.setBackground( Color.PINK );
-//        } else {
-//            timeFilterTextField.setBackground( dataSetSelector1.getBackground() );
-//        }
-    }//GEN-LAST:event_timeFilterTextFieldActionPerformed
+    }
 
     private void timeFilterTextFieldFocusLost(java.awt.event.FocusEvent evt) {//GEN-FIRST:event_timeFilterTextFieldFocusLost
 //        canvas.setTimeRange( timeFilterTextField.getText() );
@@ -2083,11 +2532,10 @@ public final class PngWalkTool extends javax.swing.JPanel {
         String t= dataSetSelector1.getValue();
         
         if ( t.endsWith(".pngwalk") ) {
-            Map<String,String> m= readPngwalkFile(t);
-            t= m.get("template");
-            baseurl= checkRelativeBaseurl(baseurl, t, m.get("product") );
+            loadPngwalkFile(t);
+        } else {
+            setTemplate( t );
         }
-        setTemplate( t );
         nextButton.requestFocus();
     }//GEN-LAST:event_dataSetSelector1ActionPerformed
 
@@ -2097,23 +2545,28 @@ public final class PngWalkTool extends javax.swing.JPanel {
 
     private void editRangeButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_editRangeButtonActionPerformed
         LoggerManager.logGuiEvent(evt);
-        Frame myFrame = (java.awt.Frame)SwingUtilities.getWindowAncestor(this);
-        SubrangeEditorDialog d = new SubrangeEditorDialog(myFrame, true);
-        List<DatumRange> times= seq.getAllTimes();
-        d.setTimeSpan(times);
-        if(seq.isUseSubRange()) {
-            List<DatumRange> sub = seq.getActiveSubrange();
-            d.setStartIndex(times.indexOf(sub.get(0)));
-            d.setEndIndex(times.indexOf(sub.get(sub.size()-1)));
+        TimeRangeTool t= new TimeRangeTool();
+        List<DatumRange> times;
+        if ( seq.isUseSubRange() ) {
+            t.setSelectedRange( timeFilterTextField.getText() );
+        } else {
+            times = seq.getAllTimes();
+            DatumRange tr= times.get(0);
+            for ( DatumRange tr1: times ) {
+                tr= tr.union(tr1);
+            }
+            t.setSelectedRange( timeFilterTextField.getText() );
         }
-        d.setVisible(true);  //blocks until dialog closes
+        if ( JOptionPane.OK_OPTION==JOptionPane.showConfirmDialog( parentWindow, t, "Subrange", JOptionPane.OK_CANCEL_OPTION ) ) {
+            try {
+                DatumRange range= DatumRangeUtil.parseDatumRange( t.getSelectedRange() );
+                timeFilterTextField.setText( range.toString() );
+                updateTimeRangeFilter();
+            } catch (ParseException ex) {
+                Logger.getLogger(PngWalkTool.class.getName()).log(Level.SEVERE, null, ex);
+            }
+        }
 
-        if (d.isOkClicked()) {
-            //System.err.printf("OK, start index is %d and end index is %d.%n", d.getStartIndex(), d.getEndIndex());
-            seq.setActiveSubrange(d.getStartIndex(), d.getEndIndex());
-            DatumRange range= new DatumRange( times.get(d.getStartIndex()).min(), times.get(d.getEndIndex()).max() );
-            timeFilterTextField.setText( range.toString() );
-        }
     }//GEN-LAST:event_editRangeButtonActionPerformed
 
     private void useRangeCheckBoxItemStateChanged(java.awt.event.ItemEvent evt) {//GEN-FIRST:event_useRangeCheckBoxItemStateChanged
@@ -2162,6 +2615,13 @@ public final class PngWalkTool extends javax.swing.JPanel {
     }
     
     
+    /**
+     * 
+     * @param monitor
+     * @param f the output folder.
+     * @param summary summary title for each slide.
+     * @throws FileNotFoundException 
+     */
     private void writeToHtmlImmediately( ProgressMonitor monitor, File f, String summary ) throws FileNotFoundException {
             
         monitor.setTaskSize( this.seq.size() );
@@ -2180,50 +2640,72 @@ public final class PngWalkTool extends javax.swing.JPanel {
             }
         }
         
+        if ( !f.exists() ) {
+            if ( !f.mkdirs() ) {
+                logger.log(Level.WARNING, "unable to create folder: {0}", f);
+            }
+        }
+        
+        
+        boolean writeInSitu= base.relativize(f.toURI() ).toString().trim().length()==0;
+                    
         try {
-            for ( int i= 0; i<this.seq.size(); i++ ) {
-                monitor.setTaskProgress(i);
-                if ( monitor.isCancelled() ) break;
+            if ( !writeInSitu ) {
+                for ( int i= 0; i<this.seq.size(); i++ ) {
+                    monitor.setTaskProgress(i);
+                    if ( monitor.isCancelled() ) break;
 
-                BufferedImage im= this.seq.imageAt(i).getImage();
-                while ( im==null ) {
+                    BufferedImage im= this.seq.imageAt(i).getImage();
+                    while ( im==null ) {
+                        try {
+                            Thread.sleep(100);
+                        } catch ( InterruptedException ex ) {
+                            throw new RuntimeException(ex);
+                        }
+                        im = this.seq.imageAt(i).getImage();
+                    }
                     try {
-                        Thread.sleep(100);
-                    } catch ( InterruptedException ex ) {
-                        throw new RuntimeException(ex);
+                        String n;
+                        n= base.relativize( this.seq.imageAt(i).getUri() ).getPath();
+                        ImageIO.write( im, "png", new File( f, n ) );
+                        File qcFile= new File( this.seq.imageAt(i).getUri().getPath() + ".ok" );
+                        if ( qcFile.exists() ) {
+                            FileUtil.fileCopy( qcFile, new File( f, n+".ok" ) );
+                        }
+                        qcFile= new File( this.seq.imageAt(i).getUri().getPath() + ".problem" );
+                        if ( qcFile.exists() ) {
+                            FileUtil.fileCopy( qcFile, new File( f, n+".problem" ) );
+                        }
+                    } catch (IOException ex) {
+                        logger.log(Level.SEVERE, null, ex);
                     }
-                    im = this.seq.imageAt(i).getImage();
-                }
-                try {
-                    String n;
-                    n= base.relativize( this.seq.imageAt(i).getUri() ).getPath();
-                    ImageIO.write( im, "png", new File( f, n ) );
-                    File qcFile= new File( this.seq.imageAt(i).getUri().getPath() + ".ok" );
-                    if ( qcFile.exists() ) {
-                        FileUtil.fileCopy( qcFile, new File( f, n+".ok" ) );
-                    }
-                    qcFile= new File( this.seq.imageAt(i).getUri().getPath() + ".problem" );
-                    if ( qcFile.exists() ) {
-                        FileUtil.fileCopy( qcFile, new File( f, n+".problem" ) );
-                    }
-                } catch (IOException ex) {
-                    logger.log(Level.SEVERE, null, ex);
                 }
             }
         } finally {
             monitor.finished();
         }
         
-        URL url= PngWalkTool.class.getResource("makeTutorialHtml.jy");
-        final ProgressMonitor mon= DasProgressPanel.createFramed(SwingUtilities.getWindowAncestor(this),"write HTML");
-        Map<String,String> params= new HashMap<>();
-        params.put("dir",base.toString());
-        params.put("qconly","true");
-        params.put("outdir",f.toString());
-        params.put("name",""); //TODO: what should this be?
-        params.put("summary",summary);
         try {
-            JythonUtil.invokeScriptSoon(url,null,params,false,false,mon);
+            URL url= new URL("https://github.com/autoplot/scripts/makeTutorialHtml.jy");
+            File nf= DataSetURI.getFile(url,new NullProgressMonitor()); // Note GitHub filesystem.
+            final ProgressMonitor mon= DasProgressPanel.createFramed(SwingUtilities.getWindowAncestor(this),"write HTML");
+            Map<String,String> params= new HashMap<>();
+            params.put("dir",base.toString()+"/");
+            params.put("qconly", this.seq.getQCFilter().equals("") ? "F" : "T" );
+            String sd= f.toString();
+            if ( !sd.endsWith("/") && !sd.endsWith("\\") ) {
+                sd= sd+"/";
+            }
+            params.put("outdir",sd);
+            params.put("name",""); //TODO: what should this be?
+            params.put("summary",summary);
+            try {
+                JythonUtil.invokeScriptSoon(nf.toURI(),null,params,false,false,mon);
+            } catch (IOException ex) {
+                Logger.getLogger(PngWalkTool.class.getName()).log(Level.SEVERE, null, ex);
+            }
+        } catch ( MalformedURLException ex ) {
+            throw new IllegalArgumentException(ex);
         } catch (IOException ex) {
             Logger.getLogger(PngWalkTool.class.getName()).log(Level.SEVERE, null, ex);
         }
@@ -2231,7 +2713,7 @@ public final class PngWalkTool extends javax.swing.JPanel {
     }
     
     /**
-     * write the sequence to a PDF file, so that this can be used to produce
+     * write the sequence to a HTML file, so that this can be used to produce
      * worksheets.
      * 
      */
@@ -2252,13 +2734,11 @@ public final class PngWalkTool extends javax.swing.JPanel {
             final File f= choose.getSelectedFile();
             prefs.put( "writeToHtml", f.toString() );
             final ProgressMonitor mon= DasProgressPanel.createFramed(SwingUtilities.getWindowAncestor(this),"write html");
-            Runnable run= new Runnable() {
-                public void run() {
-                    try {
-                        writeToHtmlImmediately( mon , f, hoo.getTitle() );
-                    } catch (FileNotFoundException ex) {
-                        logger.log(Level.SEVERE, null, ex);
-                    }                    
+            Runnable run= () -> {
+                try {
+                    writeToHtmlImmediately( mon , f, hoo.getTitle() );
+                } catch (FileNotFoundException ex) {
+                    throw new RuntimeException(ex);
                 }
             };
             new Thread(run).start();
@@ -2283,8 +2763,19 @@ public final class PngWalkTool extends javax.swing.JPanel {
                       
             QualityControlSequence qcseq= this.seq.getQualityControlSequence();
             
+            Font lightGreyFont= new Font();
+            lightGreyFont.setColor( BaseColor.LIGHT_GRAY );
+            
+            Chunk lineChunk= new Chunk("________________________________"+
+                            "_________________________________", lightGreyFont );
+            
+            logger.log(Level.FINE, "writeToPdf {0} {1} pages", new Object[]{f.getName(), this.seq.size()});
+            
             for ( int i= 0; i<this.seq.size(); i++ ) {
                 monitor.setTaskProgress(i);
+                if ( monitor.isCancelled() ) {
+                    break;
+                }
                 PdfContentByte cb = writer.getDirectContent();
 
                 cb.saveState();
@@ -2300,6 +2791,10 @@ public final class PngWalkTool extends javax.swing.JPanel {
                         }
                         im= this.seq.imageAt(i).getImage();
                     }
+                    logger.log(Level.FINER, "Page {0} of {1} image {2}x{3}", new Object[]{ imageNumber, this.seq.size(), im.getHeight(), im.getWidth()});
+                    //if ( im.getHeight()>800 ) {
+                    //    im= ImageUtil.getScaledInstance( im, 800, 800 * 600, true );
+                    //}
                     ImageIO.write(im, "png", baos);
                     Image pdfImage= com.itextpdf.text.Image.getInstance(baos.toByteArray() );
                     int w= (int)(7.5*72);
@@ -2307,22 +2802,82 @@ public final class PngWalkTool extends javax.swing.JPanel {
                     pdfImage.setAbsolutePosition(36,11*72-36-h);
                     pdfImage.scaleToFit(w,h);
                     
-                    cb.addImage( pdfImage );
-                    doc.add( pdfImage.rectangle(36,11*72-36-h) );
+                    PdfPTable table= new PdfPTable(1);
+                    
+                    table.getDefaultCell().setBorder( Rectangle.NO_BORDER );
+                    table.getDefaultCell().setPaddingLeft( 48 );
+                    table.getDefaultCell().setPaddingRight( 24 );
+                    
+                    table.setWidthPercentage(100);
+                    
+                    PdfPCell cell;
+                    
+                    cell= new PdfPHeaderCell();
+                    cell.setFixedHeight(72);
+                    cell.setPaddingLeft( 48 );
+                    cell.setPaddingRight( 24 );
+                    cell.setHorizontalAlignment(  Element.ALIGN_RIGHT );
+                    cell.setVerticalAlignment( Element.ALIGN_BOTTOM );
+                    
+                    Paragraph p;
+                    p= new Paragraph();
+                    p.setAlignment( Element.ALIGN_RIGHT );
+                    p.add( String.format("%d of %d", imageNumber, this.seq.size() ) );
+                    
+                    cell.addElement( p );
+                    cell.setBorder( Rectangle.NO_BORDER );
+                    cell.setPaddingLeft( 48 );
+                    cell.setPaddingRight( 48 );
+                    table.addCell( cell );
+                    
+                    cell = new PdfPCell( pdfImage );
+                    cell.setBorder( Rectangle.NO_BORDER );
+                    cell.setPaddingLeft( 48 );
+                    cell.setPaddingRight( 24 );
+                    
+                    table.addCell( cell );
+                    
                     String caption;
                     if ( qcseq!=null ) {
                         QualityControlRecord r= qcseq.getQualityControlRecord(i);
                         if ( r!=null ) {
-                            caption= String.format("%d. %s", imageNumber, r.getLastComment());
+                            caption= r.getLastComment();
                         } else {
-                            caption= String.format("%d.", imageNumber ); 
+                            caption= ""; 
                         }
                     } else {
-                        caption= String.format("%d.", imageNumber ); 
+                        caption= ""; 
                     }
-                    Paragraph p= new Paragraph();
-                    p.add(caption);
-                    doc.add(p);
+                    logger.log(Level.FINER, "caption: {0}", caption);
+                    
+                    p= new Paragraph();
+                    p.add( caption );
+                    cell = new PdfPCell( p );
+                    cell.setBorder( Rectangle.NO_BORDER );
+                    cell.setPaddingLeft( 48 );
+                    cell.setPaddingRight( 48 );
+
+                    table.addCell(cell);
+
+                    cell = new PdfPCell( p );
+                    cell.addElement( new Paragraph(" ") );
+                    for ( int j=0;j<10; j++ ) {
+                        p= new Paragraph(lineChunk);
+                        cell.addElement( p );
+                    }
+                    cell.setBorder( Rectangle.NO_BORDER );
+                    cell.setPaddingLeft( 48 );
+                    cell.setPaddingRight( 48 );
+                    table.addCell(cell);
+                    
+                    Chunk nameChunk= new Chunk( this.seq.imageAt(i).uriString, lightGreyFont );
+                    cell= new PdfPCell( new Paragraph(nameChunk) );
+                    cell.setBorder( Rectangle.NO_BORDER );
+                    cell.setPaddingLeft( 48 );
+                    cell.setPaddingRight( 48 );
+                    table.addCell( cell );
+                    
+                    doc.add( table );
                     
                 } catch (IOException ex) {
                     logger.log(Level.SEVERE, null, ex);
@@ -2356,29 +2911,36 @@ public final class PngWalkTool extends javax.swing.JPanel {
         String fname= prefs.get( "writeToPdf", "/tmp/pngwalk.pdf" );
         
         choose.setSelectedFile( new File(fname) );
+        choose.setFileFilter( new FileNameExtensionFilter("pdf files", "pdf" ));
         if ( choose.showSaveDialog(PngWalkTool.this)==JFileChooser.APPROVE_OPTION ) {
             final File f= choose.getSelectedFile();
             prefs.put( "writeToPdf", f.toString() );
             final ProgressMonitor mon= DasProgressPanel.createFramed(SwingUtilities.getWindowAncestor(this),"write pdf");
-            Runnable run= new Runnable() {
-                public void run() {
-                    try {
-                        writeToPdfImmediately( mon , f );
-                        final JPanel panel= new javax.swing.JPanel();
-                        panel.setLayout( new BoxLayout(panel,BoxLayout.Y_AXIS ));
-                        panel.add( new javax.swing.JLabel("wrote file "+f) );
-                        JButton b= new JButton("Open in Browser");
-                        b.addActionListener(new ActionListener() {
-                            @Override
-                            public void actionPerformed(ActionEvent e) {
-                                AutoplotUtil.openBrowser(f.toURI().toString());
-                            }
-                        });  
-                        panel.add( b );
-                        JOptionPane.showMessageDialog( PngWalkTool.this,panel );
-                    } catch (FileNotFoundException ex) {
-                        logger.log(Level.SEVERE, null, ex);
-                    }                    
+            Runnable run= () -> {
+                try {
+                    writeToPdfImmediately( mon , f );
+                    final JPanel panel= new javax.swing.JPanel();
+                    panel.setLayout( new BoxLayout(panel,BoxLayout.Y_AXIS ));
+                    panel.add( new javax.swing.JLabel("wrote file "+f) );
+                    JButton b= new JButton("Open in Browser");
+                    b.addActionListener(new ActionListener() {
+                        @Override
+                        public void actionPerformed(ActionEvent e) {
+                            AutoplotUtil.openBrowser(f.toURI().toString());
+                        }
+                    } );
+                    panel.add( b );
+                    JButton b2= new JButton("Copy filename to clipboard");
+                    b2.addActionListener(new ActionListener() {
+                        @Override
+                        public void actionPerformed(ActionEvent e) {
+                            GuiSupport.setClipboard( f.toURI().toString() );
+                        }
+                    });
+                    panel.add( b2 );
+                    JOptionPane.showMessageDialog( PngWalkTool.this,panel );
+                } catch (FileNotFoundException ex) {
+                    logger.log(Level.SEVERE, null, ex);                    
                 }
             };
             new Thread(run).start();
@@ -2387,13 +2949,118 @@ public final class PngWalkTool extends javax.swing.JPanel {
     }
     
     /**
+     * write the sequence to a HTML file, so that this can be used to produce
+     * worksheets.
+     * 
+     */
+    public void writeCsv() {
+        JFileChooser choose= new JFileChooser();
+        
+        Preferences prefs= Preferences.userNodeForPackage(PngWalkTool.class);
+        String fname= prefs.get( "writeToCsv", "/tmp/pngwalk.csv" );
+        
+        choose.setFileSelectionMode(JFileChooser.FILES_ONLY);
+        choose.setSelectedFile( new File(fname) );
+        choose.setFileFilter( new FileNameExtensionFilter("csv files", "csv" ));
+                
+        if ( choose.showSaveDialog(PngWalkTool.this)==JFileChooser.APPROVE_OPTION ) {
+            final File f= choose.getSelectedFile();
+            prefs.put( "writeToCsv", f.toString() );
+            final ProgressMonitor mon= DasProgressPanel.createFramed(SwingUtilities.getWindowAncestor(this),"write csv");
+            Runnable run= () -> {
+                try {
+                    writeToCsvImmediately( mon , f );
+                } catch (FileNotFoundException ex) {
+                    logger.log(Level.SEVERE, null, ex);                    
+                }
+                final JPanel panel= new javax.swing.JPanel();
+                panel.setLayout( new BoxLayout(panel,BoxLayout.Y_AXIS ));
+                panel.add( new javax.swing.JLabel("wrote file "+f) );
+                JButton b= new JButton("Open in Browser");
+                b.addActionListener(new ActionListener() {
+                    @Override
+                    public void actionPerformed(ActionEvent e) {
+                        AutoplotUtil.openBrowser(f.toURI().toString());
+                    }
+                } );
+                panel.add( b );
+                JButton b2= new JButton("Copy filename to clipboard");
+                b2.addActionListener(new ActionListener() {
+                    @Override
+                    public void actionPerformed(ActionEvent e) {
+                        GuiSupport.setClipboard( f.toURI().toString() );
+                    }
+                });
+                panel.add( b2 );
+                JOptionPane.showMessageDialog( PngWalkTool.this,panel );
+            };
+            new Thread(run).start();
+        }
+    }
+    
+    private void writeToCsvImmediately( ProgressMonitor monitor, File f ) throws FileNotFoundException {
+        try ( PrintWriter pout= new PrintWriter(f) ) {
+            monitor.setTaskSize(this.seq.size());
+            monitor.started();
+                      
+            QualityControlSequence qcseq= this.seq.getQualityControlSequence();
+                                    
+            logger.log(Level.FINE, "writeToCsv {1}", new Object[]{f.getName()});
+            
+            pout.println( "start,stop,label,filename,lastQCMessage,QCStatus");
+            
+            for ( int i= 0; i<this.seq.size(); i++ ) {
+                monitor.setTaskProgress(i);
+                if ( monitor.isCancelled() ) {
+                    break;
+                }
+ 
+                WalkImage wi= this.seq.imageAt(i);
+                String s= wi.getUri().toString();
+                URI rel= this.seq.getBaseUri().relativize(wi.getUri());
+                
+                DatumRange dr= wi.getDatumRange();
+                String smin= dr==null ? "" : dr.min().toString();
+                String smax= dr==null ? "" : dr.max().toString();
+                String scaption= wi.getCaption();
+                if ( scaption.contains(" ") || scaption.contains(",") ) {
+                    scaption = "\"" + scaption + "\"";
+                }
+                String filename= rel.toString(); 
+                if ( filename.contains(" ") || filename.contains(",") ) {
+                    filename= "\"" + filename + "\"";
+                }
+                QualityControlRecord qcr= qcseq==null ? null : qcseq.getQualityControlRecord(i);
+                String lastComment = qcr==null ? "" : qcr.getLastComment();
+                if ( lastComment.trim().length()>0 ) {
+                    int nl= lastComment.indexOf("\n");
+                    if ( nl>-1 ) lastComment= lastComment.substring(0,nl);
+                    lastComment= "\""+lastComment+"\"";
+                }
+                String status = qcr==null ? "" : qcr.getStatus().toString();
+                if ( status.equals("Unknown") ) status="";
+                                        
+                String line= String.format("%s,%s,%s,%s,%s,%s",smin,smax,scaption,filename,lastComment,status);
+                
+                pout.println(line);
+
+            }
+                        
+        } finally {
+            monitor.finished();
+            
+        }
+    }
+    
+    /**
      * 
      * @param monitor
      * @param f
      * @param overrideDelays if null, then just use 100ms between frames, otherwise use this delay. "realTime", "10ms", "secondPerDay"
+     * @param r60, if true, then reduce the image to 60% of its original size.
      * @throws FileNotFoundException 
      */
-    private void writeToAnimatedGifImmediately( final ProgressMonitor monitor, File f, final String overrideDelays ) throws FileNotFoundException {
+    private void writeToAnimatedGifImmediately( final ProgressMonitor monitor, File f, final String overrideDelays, final boolean r60 ) throws FileNotFoundException {
         try {
             monitor.setTaskSize(this.seq.size());
             monitor.started();
@@ -2413,13 +3080,14 @@ public final class PngWalkTool extends javax.swing.JPanel {
                 int i=0;
                 @Override
                 public boolean hasNext() {
-                    return i<PngWalkTool.this.seq.size();
+                    return i<PngWalkTool.this.seq.size() && !monitor.isCancelled() ;
                 }
 
                 @Override
                 public Object next() {
                     BufferedImage im= seq.imageAt(i).getImage();
                     monitor.setTaskProgress(i);
+                    
                     while ( im==null ) {
                         try {
                             Thread.sleep(100);
@@ -2428,6 +3096,12 @@ public final class PngWalkTool extends javax.swing.JPanel {
                         }
                         im= seq.imageAt(i).getImage();
                     }
+                    
+                    if ( r60 ) {
+                        int size= (int)Math.sqrt( im.getWidth()*im.getWidth() + im.getHeight()*im.getHeight() );
+                        im= ImageResize.getScaledInstance( im, size*60/100 );
+                    }
+                                        
                     i=i+1;
                     return im;
                 }
@@ -2445,7 +3119,7 @@ public final class PngWalkTool extends javax.swing.JPanel {
                 
                 @Override
                 public boolean hasNext() {
-                    return true;
+                    throw new IllegalArgumentException("use images.next");
                 }
 
                 @Override
@@ -2459,23 +3133,23 @@ public final class PngWalkTool extends javax.swing.JPanel {
                     if ( overrideDelays!=null ) {
                         switch (overrideDelays) {
                             case "realTime":
-                                result= String.valueOf((int)( seq.imageAt(i).getDatumRange().min().subtract(lastTime).convertTo(Units.milliseconds).value()) );
+                                result= String.valueOf((int) Math.ceil( seq.imageAt(i).getDatumRange().min().subtract(lastTime).convertTo(Units.milliseconds).value()/10. ) );
                                 lastTime= seq.imageAt(i).getDatumRange().min();
                                 break;
                             case "secondPerDay":
-                                result= String.valueOf((int) (seq.imageAt(i).getDatumRange().min().subtract(lastTime).convertTo(Units.milliseconds).value()/86400000) );
+                                result= String.valueOf((int) Math.ceil( seq.imageAt(i).getDatumRange().min().subtract(lastTime).convertTo(Units.milliseconds).value()/864000) );
                                 lastTime= seq.imageAt(i).getDatumRange().min();
                                 break;
                             default:
                                 try {
-                                    result= String.valueOf((int) Units.milliseconds.parse(overrideDelays).value() );
+                                    result= String.valueOf((int) Math.ceil( Units.milliseconds.parse(overrideDelays).value()/10 ) );
                                 } catch (ParseException ex) {
                                     throw new IllegalArgumentException( ex );
                                 }   
                                 break;
                         }
                     } else {
-                        result= "100";
+                        result= "1";
                     }
                     return result;
                 }
@@ -2488,6 +3162,7 @@ public final class PngWalkTool extends javax.swing.JPanel {
                 
             };
             
+            logger.log(Level.FINE, "writing to {0}", f);
             AnimatedGifDemo.saveAnimate( f, images, delays );
             
         } catch (IOException ex) {
@@ -2496,53 +3171,63 @@ public final class PngWalkTool extends javax.swing.JPanel {
             monitor.finished();
         }
     }
-        
+     
     /** 
      * Write the displayed images to an animated gif.
      */
-    public void writeAnimatedGif() {
+    public void writeAnimatedGif( ) {
         JFileChooser choose= new JFileChooser();
         
         Preferences prefs= Preferences.userNodeForPackage(PngWalkTool.class);
         String fname= prefs.get( "writeToGif", "/tmp/pngwalk.gif" );
         
         choose.setSelectedFile( new File(fname) );
-        final String[] opts= new String[] { "10ms", "200ms", "400ms", "800ms", "realTime", "secondPerDay" };
+        final String[] opts= new String[] { "10ms", "50ms", "200ms", "400ms", "800ms", "1000ms", "1200ms", "realTime", "secondPerDay" };
         JPanel p= new JPanel();
         p.setLayout( new BoxLayout(p,BoxLayout.Y_AXIS) );
         
         JComboBox jo= new JComboBox(opts);
         jo.setSelectedIndex(1);
         jo.setMaximumSize( new Dimension( 1000, 30 ) );
+        jo.setEditable(true);
+        
         p.add(new JLabel("Interslide-Delay:"));
         p.add(jo);
+        final JCheckBox r60= new JCheckBox( "Reduce to 60%" );
+        p.add(r60);
         p.add(Box.createGlue());
-        
+                
         choose.setAccessory(p);
         if ( choose.showSaveDialog(PngWalkTool.this)==JFileChooser.APPROVE_OPTION ) {
             final File f= choose.getSelectedFile();
             prefs.put( "writeToGif", f.toString() );
             final ProgressMonitor mon= DasProgressPanel.createFramed(SwingUtilities.getWindowAncestor(this),"write animated gif");
             final String fdelay= (String)jo.getSelectedItem();
-            Runnable run= new Runnable() {
-                public void run() {
-                    try {
-                        writeToAnimatedGifImmediately( mon , f, fdelay );
-                        JPanel panel= new javax.swing.JPanel();
-                        panel.setLayout( new BoxLayout(panel,BoxLayout.Y_AXIS ));
-                        panel.add( new javax.swing.JLabel("wrote file "+f) );
-                        JButton b= new JButton("Open in Browser");
-                        b.addActionListener(new ActionListener() {
-                            @Override
-                            public void actionPerformed(ActionEvent e) {
-                                AutoplotUtil.openBrowser(f.toURI().toString());
-                            }
-                        });   
-                        panel.add( b );
-                        JOptionPane.showMessageDialog( PngWalkTool.this,panel );
-                    } catch (FileNotFoundException ex) {
-                        Logger.getLogger(PngWalkTool.class.getName()).log(Level.SEVERE, null, ex);
-                    }                    
+            Runnable run= () -> {
+                try {
+                    writeToAnimatedGifImmediately( mon, f, fdelay, r60.isSelected() );
+                    JPanel panel= new javax.swing.JPanel();
+                    panel.setLayout( new BoxLayout(panel,BoxLayout.Y_AXIS ));
+                    panel.add( new javax.swing.JLabel("wrote file "+f) );
+                    JButton b= new JButton("Open in Browser");
+                    b.addActionListener(new ActionListener() {
+                        @Override
+                        public void actionPerformed(ActionEvent e) {
+                            AutoplotUtil.openBrowser(f.toURI().toString());
+                        }
+                    });
+                    panel.add( b );
+                    JButton b2= new JButton("Copy filename to clipboard");
+                    b2.addActionListener(new ActionListener() {
+                        @Override
+                        public void actionPerformed(ActionEvent e) {
+                            GuiSupport.setClipboard( f.toURI().toString() );
+                        }
+                    });
+                    panel.add( b2 );
+                    JOptionPane.showMessageDialog( PngWalkTool.this,panel );
+                } catch (FileNotFoundException ex) {
+                    Logger.getLogger(PngWalkTool.class.getName()).log(Level.SEVERE, null, ex);                    
                 }
             };
             new Thread(run).start();
@@ -2552,11 +3237,13 @@ public final class PngWalkTool extends javax.swing.JPanel {
     
     // Variables declaration - do not modify//GEN-BEGIN:variables
     private javax.swing.JPanel actionButtonsPanel;
+    private javax.swing.JPanel bottomLeftPanel;
     private org.autoplot.datasource.DataSetSelector dataSetSelector1;
     private javax.swing.JButton editRangeButton;
     private javax.swing.JPanel jPanel1;
     private javax.swing.JButton jumpToFirstButton;
     private javax.swing.JButton jumpToLastButton;
+    private javax.swing.JPanel navigationPanel;
     private javax.swing.JButton nextButton;
     private javax.swing.JButton nextSetButton;
     private javax.swing.JPanel pngsPanel;

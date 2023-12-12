@@ -7,9 +7,11 @@
 
 package org.autoplot.binarydatasource;
 
+import java.awt.Component;
 import java.awt.Rectangle;
 import java.awt.Window;
 import java.awt.event.ActionEvent;
+import java.io.File;
 import java.io.IOException;
 import java.util.List;
 import java.util.logging.Level;
@@ -27,10 +29,12 @@ import java.lang.Short; // because of Short object in this package.
 import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import javax.swing.AbstractAction;
 import javax.swing.InputMap;
 import javax.swing.KeyStroke;
+import javax.swing.table.AbstractTableModel;
 import javax.swing.text.BadLocationException;
 import org.das2.util.filesystem.FileSystem;
 import org.autoplot.datasource.URISplit;
@@ -62,8 +66,14 @@ public class BinaryDataSourceEditorPanel extends javax.swing.JPanel implements D
                 }
             }
         });
-
-        jTable1.getTableHeader().setReorderingAllowed(false);
+        jTable2.setAutoResizeMode(javax.swing.JTable.AUTO_RESIZE_OFF);
+        jTable2.getTableHeader().setReorderingAllowed(false);
+        jTable3.setAutoResizeMode(javax.swing.JTable.AUTO_RESIZE_OFF);
+        jTable3.getTableHeader().setReorderingAllowed(false);
+        for ( int i=0; i<jTable2.getColumnCount(); i++ ) {
+            jTable2.getColumnModel().getColumn(i).setPreferredWidth( jTable2.getFont().getSize() * 3 );
+            jTable2.getColumnModel().getColumn(i).setHeaderValue( "b"+i );
+        }
 
     }
 
@@ -78,14 +88,139 @@ public class BinaryDataSourceEditorPanel extends javax.swing.JPanel implements D
     // <editor-fold defaultstate="collapsed" desc="Generated Code">//GEN-BEGIN:initComponents
     private void initComponents() {
 
-        jScrollPane2 = new javax.swing.JScrollPane();
-        jTable1 = new javax.swing.JTable();
-        jButton1 = new javax.swing.JButton();
+        jPopupMenu1 = new javax.swing.JPopupMenu();
+        setByteOffsetMenuItem = new javax.swing.JMenuItem();
+        setRecOffsetMenuItem = new javax.swing.JMenuItem();
+        setDep0Offset = new javax.swing.JMenuItem();
+        jSplitPane2 = new javax.swing.JSplitPane();
+        jPanel1 = new javax.swing.JPanel();
+        jScrollPane3 = new javax.swing.JScrollPane();
+        jTable2 = new javax.swing.JTable();
         jScrollPane1 = new javax.swing.JScrollPane();
         paramsTextArea1 = new org.autoplot.datasource.ui.ParamsTextArea();
+        infoLabel = new javax.swing.JLabel();
         jLabel1 = new javax.swing.JLabel();
+        jButton1 = new javax.swing.JButton();
+        jScrollPane4 = new javax.swing.JScrollPane();
+        jTable3 = new javax.swing.JTable();
 
-        jTable1.setModel(new javax.swing.table.DefaultTableModel(
+        setByteOffsetMenuItem.setText("Set Byte Offset");
+        setByteOffsetMenuItem.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                setByteOffsetMenuItemActionPerformed(evt);
+            }
+        });
+        jPopupMenu1.add(setByteOffsetMenuItem);
+
+        setRecOffsetMenuItem.setText("Set Record Offset");
+        setRecOffsetMenuItem.setToolTipText("Set the offset of the data within each record");
+        setRecOffsetMenuItem.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                setRecOffsetMenuItemActionPerformed(evt);
+            }
+        });
+        jPopupMenu1.add(setRecOffsetMenuItem);
+
+        setDep0Offset.setText("Set Depend 0 Offset");
+        setDep0Offset.setToolTipText("Set the offset for depend0 (the x positions)");
+        setDep0Offset.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                setDep0OffsetActionPerformed(evt);
+            }
+        });
+        jPopupMenu1.add(setDep0Offset);
+
+        setPreferredSize(new java.awt.Dimension(800, 600));
+
+        jSplitPane2.setOrientation(javax.swing.JSplitPane.VERTICAL_SPLIT);
+
+        jScrollPane3.setHorizontalScrollBarPolicy(javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_ALWAYS);
+
+        jTable2.setModel(new javax.swing.table.DefaultTableModel(
+            new Object [][] {
+                {null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null, null}
+            },
+            new String [] {
+                "Title 1", "Title 2", "Title 3", "Title 4", "Title 5", "Title 6", "Title 7", "Title 8", "Title 9", "Title 10", "Title 11", "Title 12", "Title 13", "Title 14", "Title 15", "Title 16", "Title 17", "Title 18", "Title 19", "Title 20", "Title 21", "Title 22", "Title 23", "Title 24", "Title 25", "Title 26", "Title 27", "Title 28", "Title 29", "Title 30"
+            }
+        ) {
+            boolean[] canEdit = new boolean [] {
+                false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false, false
+            };
+
+            public boolean isCellEditable(int rowIndex, int columnIndex) {
+                return canEdit [columnIndex];
+            }
+        });
+        jTable2.addMouseMotionListener(new java.awt.event.MouseMotionAdapter() {
+            public void mouseMoved(java.awt.event.MouseEvent evt) {
+                jTable2MouseMoved(evt);
+            }
+        });
+        jTable2.addMouseListener(new java.awt.event.MouseAdapter() {
+            public void mouseClicked(java.awt.event.MouseEvent evt) {
+                jTable2MouseClicked(evt);
+            }
+        });
+        jScrollPane3.setViewportView(jTable2);
+
+        paramsTextArea1.setColumns(20);
+        paramsTextArea1.setRows(5);
+        paramsTextArea1.setMaximumSize(new java.awt.Dimension(1000, 1000));
+        jScrollPane1.setViewportView(paramsTextArea1);
+
+        infoLabel.setFont(new java.awt.Font("Dialog", 1, 8)); // NOI18N
+        infoLabel.setText("jLabel2");
+        infoLabel.setAlignmentY(0.0F);
+
+        jLabel1.setFont(new java.awt.Font("DejaVu Sans", 0, 8)); // NOI18N
+        jLabel1.setText("<html>right-click to get completions.  Click update to see how it parses.</html>");
+        jLabel1.setVerticalAlignment(javax.swing.SwingConstants.TOP);
+
+        jButton1.setText("Update");
+        jButton1.addActionListener(new java.awt.event.ActionListener() {
+            public void actionPerformed(java.awt.event.ActionEvent evt) {
+                jButton1ActionPerformed(evt);
+            }
+        });
+
+        org.jdesktop.layout.GroupLayout jPanel1Layout = new org.jdesktop.layout.GroupLayout(jPanel1);
+        jPanel1.setLayout(jPanel1Layout);
+        jPanel1Layout.setHorizontalGroup(
+            jPanel1Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+            .add(jScrollPane3, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 0, Short.MAX_VALUE)
+            .add(org.jdesktop.layout.GroupLayout.TRAILING, jPanel1Layout.createSequentialGroup()
+                .add(jScrollPane1, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 241, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
+                .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
+                .add(jPanel1Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+                    .add(jPanel1Layout.createSequentialGroup()
+                        .add(jButton1)
+                        .add(0, 0, Short.MAX_VALUE))
+                    .add(infoLabel, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                    .add(jLabel1, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 545, Short.MAX_VALUE))
+                .addContainerGap())
+        );
+        jPanel1Layout.setVerticalGroup(
+            jPanel1Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+            .add(jPanel1Layout.createSequentialGroup()
+                .add(jPanel1Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
+                    .add(jPanel1Layout.createSequentialGroup()
+                        .add(jButton1)
+                        .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
+                        .add(jLabel1, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
+                        .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
+                        .add(infoLabel, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+                        .add(12, 12, 12))
+                    .add(jScrollPane1, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 0, Short.MAX_VALUE))
+                .add(12, 12, 12)
+                .add(jScrollPane3, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 68, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE))
+        );
+
+        jSplitPane2.setLeftComponent(jPanel1);
+
+        jScrollPane4.setHorizontalScrollBarPolicy(javax.swing.ScrollPaneConstants.HORIZONTAL_SCROLLBAR_ALWAYS);
+
+        jTable3.setModel(new javax.swing.table.DefaultTableModel(
             new Object [][] {
                 {null, null, null, null},
                 {null, null, null, null},
@@ -96,66 +231,127 @@ public class BinaryDataSourceEditorPanel extends javax.swing.JPanel implements D
                 "Title 1", "Title 2", "Title 3", "Title 4"
             }
         ));
-        jScrollPane2.setViewportView(jTable1);
+        jScrollPane4.setViewportView(jTable3);
 
-        jButton1.setText("Update");
-        jButton1.addActionListener(new java.awt.event.ActionListener() {
-            public void actionPerformed(java.awt.event.ActionEvent evt) {
-                jButton1ActionPerformed(evt);
-            }
-        });
-
-        paramsTextArea1.setColumns(20);
-        paramsTextArea1.setRows(5);
-        paramsTextArea1.setMaximumSize(new java.awt.Dimension(1000, 1000));
-        jScrollPane1.setViewportView(paramsTextArea1);
-
-        jLabel1.setFont(new java.awt.Font("DejaVu Sans", 0, 8)); // NOI18N
-        jLabel1.setText("<html>right-click to get completions.  Click update to see how it parses.</html>");
-        jLabel1.setVerticalAlignment(javax.swing.SwingConstants.TOP);
+        jSplitPane2.setRightComponent(jScrollPane4);
 
         org.jdesktop.layout.GroupLayout layout = new org.jdesktop.layout.GroupLayout(this);
         this.setLayout(layout);
         layout.setHorizontalGroup(
             layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
-            .add(jScrollPane2, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 403, Short.MAX_VALUE)
-            .add(layout.createSequentialGroup()
-                .add(jScrollPane1, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
-                .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
-                .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
-                    .add(jButton1)
-                    .add(jLabel1, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 117, Short.MAX_VALUE))
-                .addContainerGap())
+            .add(org.jdesktop.layout.GroupLayout.TRAILING, jSplitPane2, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 800, Short.MAX_VALUE)
         );
         layout.setVerticalGroup(
             layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
-            .add(layout.createSequentialGroup()
-                .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
-                    .add(layout.createSequentialGroup()
-                        .add(jButton1)
-                        .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
-                        .add(jLabel1, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 52, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE))
-                    .add(jScrollPane1, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE))
-                .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
-                .add(jScrollPane2, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 287, Short.MAX_VALUE))
+            .add(jSplitPane2, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 600, Short.MAX_VALUE)
         );
     }// </editor-fold>//GEN-END:initComponents
 
     private void jButton1ActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_jButton1ActionPerformed
         try {
-            String suri1 = getURI();
-            DataSource dss = DataSetURI.getDataSource(suri1);
-            QDataSet ds= dss.getDataSet( new NullProgressMonitor() );
-            TableModel model= new QDataSetTableModel(ds);
-            this.jTable1.setModel(model);
-
+            update();
         } catch (Exception ex) {
             logger.log(Level.SEVERE, ex.getMessage(), ex);
         }
 
     }//GEN-LAST:event_jButton1ActionPerformed
 
-	@Override
+    private void update() throws Exception {
+        String suri1 = getURI();
+        DataSource dss = DataSetURI.getDataSource(suri1);
+        QDataSet ds= dss.getDataSet( new NullProgressMonitor() );
+        TableModel model= new QDataSetTableModel(ds);
+        this.jTable3.setModel(model);
+        URISplit split = URISplit.parse(suri1);
+        Map<String,String> params= paramsTextArea1.getParams();
+        Map<String,String> newParams= new LinkedHashMap<>();
+        String byteOffset= params.get("byteOffset");
+        if ( byteOffset!=null ) newParams.put( "byteOffset", byteOffset );
+        newParams.put( "byteLength", "100" );
+        split.params= URISplit.formatParams(newParams);
+        if ( split.params!=null && split.params.length()==0 ) split.params= null;
+        String suriBytes= URISplit.format(split);
+        DataSource dss2 = DataSetURI.getDataSource(suriBytes);
+        final QDataSet ds2= dss2.getDataSet( new NullProgressMonitor() );
+        TableModel model2= new AbstractTableModel() {
+            @Override
+            public int getRowCount() {
+                return 1;
+            }
+
+            @Override
+            public int getColumnCount() {
+                return Math.min(120,ds2.length());
+            }
+
+            @Override
+            public Object getValueAt(int rowIndex, int columnIndex) {
+                int v= (int)ds2.value(columnIndex);
+                if ( v>=32 && v<=125 ) {
+                    return Character.toString((char)v);
+                } else {
+                    return String.format( "%2X", v );
+                }
+            }
+        };
+        this.jTable2.setModel(model2);                    
+        int n=jTable2.getColumnModel().getColumnCount();
+        for ( int i=0; i<n; i++ ) {
+            jTable2.getColumnModel().getColumn(i).setPreferredWidth( jTable2.getFont().getSize() * 3 );
+            jTable2.getColumnModel().getColumn(i).setHeaderValue( "b"+i );
+        }
+
+    }
+    private void jTable2MouseClicked(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_jTable2MouseClicked
+        jPopupMenu1.show( (Component)evt.getSource(), evt.getX(), evt.getY() );
+    }//GEN-LAST:event_jTable2MouseClicked
+
+    private void setByteOffsetMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_setByteOffsetMenuItemActionPerformed
+        int col= jTable2.getSelectedColumn();
+        int currentOffset= Integer.parseInt( getParam( "byteOffset","0" ) );
+        setParam( "byteOffset", String.valueOf( currentOffset + col ) );
+    }//GEN-LAST:event_setByteOffsetMenuItemActionPerformed
+
+    private void setRecOffsetMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_setRecOffsetMenuItemActionPerformed
+        int col= jTable2.getSelectedColumn();
+        setParam( "recOffset", String.valueOf( col ) );
+    }//GEN-LAST:event_setRecOffsetMenuItemActionPerformed
+
+    private void setDep0OffsetActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_setDep0OffsetActionPerformed
+        int col= jTable2.getSelectedColumn();
+        setParam( "dep0Offset", String.valueOf( col ) );
+    }//GEN-LAST:event_setDep0OffsetActionPerformed
+
+    private void jTable2MouseMoved(java.awt.event.MouseEvent evt) {//GEN-FIRST:event_jTable2MouseMoved
+        int col= jTable2.columnAtPoint(evt.getPoint());
+        jTable2.setToolTipText("col "+col);
+    }//GEN-LAST:event_jTable2MouseMoved
+
+    private String getParam( String param, String deft ) {
+        String suri1= getURI();
+        URISplit split= URISplit.parse(suri1);
+        Map<String,String> pp= URISplit.parseParams(split.params);
+        String o= pp.get(param);
+        if ( o==null ) {
+            return deft;
+        } else {
+            return o;
+        }
+    }
+    
+    private void setParam( String param, String val ) {
+        String suri1= getURI();
+        URISplit split= URISplit.parse(suri1);
+        Map<String,String> pp= URISplit.parseParams(split.params);
+        if ( val==null ) {
+            pp.remove(param);
+        } else {
+            pp.put( param, val );
+        }
+        paramsTextArea1.setParams( pp );
+    }
+    
+    @Override
     public JPanel getPanel() {
         return this;
     }
@@ -165,7 +361,8 @@ public class BinaryDataSourceEditorPanel extends javax.swing.JPanel implements D
         try {
             this.suri= uri;
             URISplit split = URISplit.parse(uri);
-            DataSetURI.getFile(new URL(split.file), new NullProgressMonitor());
+            File f= DataSetURI.getFile(new URL(split.file), new NullProgressMonitor());
+            infoLabel.setText(""+f.length()+" bytes");
             Map<String, String> params= URISplit.parseParams( split.params );
             paramsTextArea1.setParams(params);
             paramsTextArea1.setFactory( new BinaryDataSourceFactory(), new ArrayList<String>() );
@@ -191,12 +388,21 @@ public class BinaryDataSourceEditorPanel extends javax.swing.JPanel implements D
 
 
     // Variables declaration - do not modify//GEN-BEGIN:variables
+    public javax.swing.JLabel infoLabel;
     public javax.swing.JButton jButton1;
     public javax.swing.JLabel jLabel1;
+    public javax.swing.JPanel jPanel1;
+    public javax.swing.JPopupMenu jPopupMenu1;
     public javax.swing.JScrollPane jScrollPane1;
-    public javax.swing.JScrollPane jScrollPane2;
-    public javax.swing.JTable jTable1;
+    public javax.swing.JScrollPane jScrollPane3;
+    public javax.swing.JScrollPane jScrollPane4;
+    public javax.swing.JSplitPane jSplitPane2;
+    public javax.swing.JTable jTable2;
+    public javax.swing.JTable jTable3;
     public org.autoplot.datasource.ui.ParamsTextArea paramsTextArea1;
+    public javax.swing.JMenuItem setByteOffsetMenuItem;
+    public javax.swing.JMenuItem setDep0Offset;
+    public javax.swing.JMenuItem setRecOffsetMenuItem;
     // End of variables declaration//GEN-END:variables
 
 	@Override

@@ -81,9 +81,9 @@ public class WavDataSourceFormat implements DataSourceFormat {
         if ( extent.value(1)>limit ) {
             if ( ( extent.value(1)-extent.value(0) ) < typeOrdinals ) {
                 if ( extent.value(0)>0 ) {
-                    shift= typeOrdinals / 2;
+                    shift= typeOrdinals / 2.;
                 } else {
-                    shift= ( extent.value(1)+extent.value(0) ) / 2;
+                    shift= ( extent.value(1)+extent.value(0) ) / 2.;
                 }
             } else {
                 if ( !doscale ) throw new IllegalArgumentException("data extent is too great: "+extent);
@@ -92,7 +92,7 @@ public class WavDataSourceFormat implements DataSourceFormat {
 
         double scale= 1.0;
         if ( doscale ) {
-            shift= ( extent.value(1)+extent.value(0) ) / 2;
+            shift= ( extent.value(1)+extent.value(0) ) / 2.;
             if ( ( extent.value(1)-extent.value(0) )>0 ) {
                 scale= ( typeOrdinals - 1 ) / ( extent.value(1)-extent.value(0) );
             }
@@ -116,7 +116,7 @@ public class WavDataSourceFormat implements DataSourceFormat {
      * @return 
      */
     private ByteBuffer formatRank2Waveform(QDataSet data, ProgressMonitor mon, Map<String, String> params) {
-
+        logger.entering("WavDataSourceFormat", "formatRank2Waveform" );
         String type = params.get("type");
         boolean doscale= !"F".equals( params.get("scale") );
         
@@ -143,8 +143,12 @@ public class WavDataSourceFormat implements DataSourceFormat {
             }
         }
         
+        logger.finer("montonic check complete" );
         
-        QDataSet extent= Ops.extent(data);
+        QDataSet extent= Ops.extentSimple(data,null);
+        
+        logger.finer("extent check complete" );
+        
         int dep0Len = 0; //(dep0 == null ? 0 : 1);
         int typeSize = BufferDataSet.byteCount(type);
         int recSize = typeSize * (dep0Len + 1);
@@ -165,9 +169,9 @@ public class WavDataSourceFormat implements DataSourceFormat {
         if ( extent.value(1)>limit ) {
             if ( ( extent.value(1)-extent.value(0) ) < typeOrdinals ) {
                 if ( extent.value(0)>0 ) {
-                    shift= typeOrdinals / 2;
+                    shift= typeOrdinals / 2.;
                 } else {
-                    shift= ( extent.value(1)+extent.value(0) ) / 2;
+                    shift= ( extent.value(1)+extent.value(0) ) / 2.;
                 }
             } else {
                 if ( !doscale ) throw new IllegalArgumentException("data extent is too great: "+extent);
@@ -176,12 +180,14 @@ public class WavDataSourceFormat implements DataSourceFormat {
 
         double scale= 1.0;
         if ( doscale ) {
-            shift= ( extent.value(1)+extent.value(0) ) / 2;
+            shift= ( extent.value(1)+extent.value(0) ) / 2.;
             if ( ( extent.value(1)-extent.value(0) )>0 ) {
                 scale= ( typeOrdinals - 1 ) / ( extent.value(1)-extent.value(0) );
             }
         }
 
+        logger.finer("calculate scale and shift complete" );
+        
         QubeDataSetIterator it = new QubeDataSetIterator(data);
         QubeDataSetIterator it2= new QubeDataSetIterator(ddata);
         while (it.hasNext()) {
@@ -190,6 +196,7 @@ public class WavDataSourceFormat implements DataSourceFormat {
             it2.putValue( ddata, scale * ( it.getValue(data)-shift ) );
         }
 
+        logger.exiting("WavDataSourceFormat", "formatRank2Waveform" );
         return result;
     }
 
@@ -201,15 +208,14 @@ public class WavDataSourceFormat implements DataSourceFormat {
      * @return
      */
     private ByteBuffer formatRank2(QDataSet data, ProgressMonitor mon, Map<String, String> params) {
-
+        logger.entering("WavDataSourceFormat", "formatRank2" );
         String type = params.get("type");
         boolean doscale= !"F".equals( params.get("scale") );
-        boolean timetags= "T".equals("timetags");
+        //boolean timetags= "T".equals("timetags");
         
-        QDataSet extent= Ops.extent(data);
+        int channels= data.length(0);
         int dep0Len = 0;
         int typeSize = BufferDataSet.byteCount(type);
-        int channels= data.length(0);
         int recSize = typeSize * channels;
         int size = data.length() * recSize;
 
@@ -221,37 +227,45 @@ public class WavDataSourceFormat implements DataSourceFormat {
                 data.length(), data.length(0), 1, 1,
                 result, type);
 
-        QubeDataSetIterator it = new QubeDataSetIterator(data);
-
-        double shift= 0; // shift is essentially the D/C part.
         boolean unsigned= type.startsWith("u");
         long typeOrdinals= (int)Math.pow(2,8*typeSize);
-        int limit= (int)( typeOrdinals / ( unsigned ? 1 : 2 ) );
-        if ( extent.value(1)>limit ) {
-            if ( ( extent.value(1)-extent.value(0) ) < typeOrdinals ) {
-                if ( extent.value(0)>0 ) {
-                    shift= typeOrdinals / 2;
-                } else {
-                    shift= ( extent.value(1)+extent.value(0) ) / 2;
-                }
-            } else {
-                if ( !doscale ) throw new IllegalArgumentException("data extent is too great: "+extent);
-            }
-        }
+        
+        double[] shift= new double[channels];
         
         double scale= 1.0;
-        if ( doscale ) {
-            shift= 0; // TODO: this is inconsistent with other branches.
-            if ( ( extent.value(1)-extent.value(0) )>0 ) {
-                scale= ( typeOrdinals - 1 ) / ( extent.value(1)-extent.value(0) );
-            }
+        for ( int ich=0; ich<channels; ich++ ) {
+            shift[ich]= 0.;
         }
         
-        while (it.hasNext()) {
-            it.next();
-            it.putValue( ddata,  scale * ( it.getValue(data)-shift ) );
+        if ( doscale ) {
+            // remove the D/C component from each channel.
+            for ( int ich=0; ich<channels; ich++ ) {
+                QDataSet channelData= Ops.slice1( data, ich );
+                QDataSet extent= Ops.extentSimple(channelData,null);
+                double mean = ( extent.value(0) + extent.value(1) ) / 2.;
+                if ( unsigned ) {
+                    double targetMean= typeOrdinals / 2.;
+                    shift[ich]= ( targetMean - mean );
+                } else {
+                    shift[ich]= -mean;
+                }
+                double scale1= ( typeOrdinals - 1 ) / ( extent.value(1)-extent.value(0) );
+                scale= ich==0 ? scale1 : Math.min( scale, scale1 );
+                logger.log(Level.FINER, "scale for channel {0} complete", ich);
+            }
         }
 
+        QubeDataSetIterator it = new QubeDataSetIterator(data);
+        
+        int ich= 0;
+        while (it.hasNext()) {
+            it.next();
+            it.putValue( ddata,  scale * ( it.getValue(data) + shift[ich] ) );
+            ich= ( ich + 1 ) % channels;
+        }
+
+        logger.exiting("WavDataSourceFormat", "formatRank2" );
+        
         return result;
     }
 
@@ -319,8 +333,19 @@ public class WavDataSourceFormat implements DataSourceFormat {
             if ( u==null ) {
                 u= Units.dimensionless;
             }
-            UnitsConverter uc= u.getConverter( Units.seconds );
-            double periodSeconds= uc.convert( dep1.value(1) - dep1.value(0) );
+            UnitsConverter uc;
+            if ( UnitsUtil.isTimeLocation(u) ) {
+                uc= u.getOffsetUnits().getConverter( Units.seconds );
+            } else {
+                uc= u.getConverter( Units.seconds );
+            }
+            
+            double periodSeconds;
+            if ( dep1.rank()==1 ) {
+                periodSeconds= uc.convert( dep1.value(1) - dep1.value(0) );
+            } else {
+                periodSeconds= uc.convert( dep1.value(0,1) - dep1.value(0,0) );
+            }
 
             samplesPerSecond= (float) Math.round( 1/periodSeconds );
 
@@ -333,12 +358,17 @@ public class WavDataSourceFormat implements DataSourceFormat {
             if ( u==null ) {
                 u= Units.dimensionless;
             }
-            UnitsConverter uc= u.getConverter( Units.seconds );
+            UnitsConverter uc;
+            if ( UnitsUtil.isTimeLocation(u) ) {
+                uc= u.getOffsetUnits().getConverter( Units.seconds );
+            } else {
+                uc= u.getConverter( Units.seconds );
+            }
             double periodSeconds= uc.convert( dep1.value(1) - dep1.value(0) );
 
             samplesPerSecond= (float) Math.round( 1/periodSeconds );
             
-        } else if ( data.rank()==1 || ( data.rank()==2 && SemanticOps.isBundle(data) ) ) {
+        } else if ( data.rank()==1 || ( data.rank()==2 && ( SemanticOps.isBundle(data) || SemanticOps.isLegacyBundle(data) ) ) ) {
             if ( dep0!=null && dep0.length()>1 ) {
                 Units u= (Units) dep0.property( QDataSet.UNITS ) ;
                 if ( u==null ) {

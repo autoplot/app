@@ -1,8 +1,4 @@
-/*
- * To change this license header, choose License Headers in Project Properties.
- * To change this template file, choose Tools | Templates
- * and open the template in the editor.
- */
+
 package org.autoplot.dom;
 
 import java.awt.Color;
@@ -43,7 +39,40 @@ public class Annotation extends DomNode {
         this.text = text;
         propertyChangeSupport.firePropertyChange(PROP_TEXT, oldText, text);
     }
+    
+    private String url = "";
 
+    public static final String PROP_URL = "url";
+
+    public String getUrl() {
+        return url;
+    }
+
+    public void setUrl(String url) {
+        String oldUrl = this.url;
+        this.url = url;
+        propertyChangeSupport.firePropertyChange(PROP_URL, oldUrl, url);
+    }
+
+    private double scale = 1.0;
+
+    public static final String PROP_SCALE = "scale";
+
+    public double getScale() {
+        return scale;
+    }
+
+    /**
+     * set the amount to scale the image by, if using URL to point at an image, where 0.5 is half of the
+     * original image size.
+     * @param scale 
+     */
+    public void setScale(double scale) {
+        double oldScale = this.scale;
+        this.scale = scale;
+        propertyChangeSupport.firePropertyChange(PROP_SCALE, oldScale, scale);
+    }
+    
     private String fontSize = "1.4em";
 
     public static final String PROP_FONTSIZE = "fontSize";
@@ -142,6 +171,25 @@ public class Annotation extends DomNode {
         propertyChangeSupport.firePropertyChange(PROP_POINTATY, oldPointAtY, pointAtY);
     }
     
+    private String pointAtOffset="";
+
+    public static final String PROP_POINTATOFFSET = "pointAtOffset";
+
+    /**
+     * return the offset from the thing we point at, if any.  For example, "1em"
+     * means back off 1em from the target.
+     * @return 
+     */
+    public String getPointAtOffset() {
+        return pointAtOffset;
+    }
+
+    public void setPointAtOffset(String pointAtOffset) {
+        String oldPointAtOffset = this.pointAtOffset;
+        this.pointAtOffset = pointAtOffset;
+        propertyChangeSupport.firePropertyChange(PROP_POINTATOFFSET, oldPointAtOffset, pointAtOffset);
+    }
+
     private boolean showArrow = false;
 
     public static final String PROP_SHOWARROW = "showArrow";
@@ -170,6 +218,34 @@ public class Annotation extends DomNode {
         propertyChangeSupport.firePropertyChange(PROP_ANCHORTYPE, oldAnchorType, anchorType);
     }
     
+    private boolean splitAnchorType = false;
+
+    public static final String PROP_SPLITANCHORTYPE = "splitAnchorType";
+
+    public boolean isSplitAnchorType() {
+        return splitAnchorType;
+    }
+
+    public void setSplitAnchorType(boolean splitAnchorType) {
+        boolean oldSplitAnchorType = this.splitAnchorType;
+        this.splitAnchorType = splitAnchorType;
+        propertyChangeSupport.firePropertyChange(PROP_SPLITANCHORTYPE, oldSplitAnchorType, splitAnchorType);
+    }
+
+    private AnchorType verticalAnchorType = AnchorType.CANVAS;
+
+    public static final String PROP_VERTICALANCHORTYPE = "verticalAnchorType";
+
+    public AnchorType getVerticalAnchorType() {
+        return verticalAnchorType;
+    }
+
+    public void setVerticalAnchorType(AnchorType verticalAnchorType) {
+        AnchorType oldVerticalAnchorType = this.verticalAnchorType;
+        this.verticalAnchorType = verticalAnchorType;
+        propertyChangeSupport.firePropertyChange(PROP_VERTICALANCHORTYPE, oldVerticalAnchorType, verticalAnchorType);
+    }
+    
     private String anchorOffset= "1em,1em";
 
     public static final String PROP_ANCHOROFFSET = "anchorOffset";
@@ -184,6 +260,20 @@ public class Annotation extends DomNode {
         propertyChangeSupport.firePropertyChange(PROP_ANCHOROFFSET, oldAnchorOffset, anchorOffset);
     }
 
+    
+    private boolean glow = false;
+
+    public static final String PROP_GLOW = "glow";
+
+    public boolean isGlow() {
+        return glow;
+    }
+
+    public void setGlow(boolean glow) {
+        boolean oldGlow = this.glow;
+        this.glow = glow;
+        propertyChangeSupport.firePropertyChange(PROP_GLOW, oldGlow, glow);
+    }
 
     private String plotId = "";
 
@@ -317,21 +407,27 @@ public class Annotation extends DomNode {
         if ( !( n instanceof Annotation ) ) throw new IllegalArgumentException("node should be an Annotation");                                        
         Annotation that = (Annotation) n;
         if ( !exclude.contains( PROP_TEXT ) ) this.setText(that.getText());
+        if ( !exclude.contains( PROP_URL ) ) this.setUrl(that.getUrl());
         if ( !exclude.contains( PROP_FONTSIZE ) ) this.setFontSize(that.getFontSize());
+        if ( !exclude.contains( PROP_SCALE ) ) this.setScale(that.getScale() );
         if ( !exclude.contains( PROP_BORDERTYPE ) ) this.setBorderType(that.getBorderType() );
         if ( !exclude.contains( PROP_ANCHORPOSITION ) ) this.setAnchorPosition(that.getAnchorPosition() );
         if ( !exclude.contains( PROP_ANCHOROFFSET ) ) this.setAnchorOffset(that.getAnchorOffset() );
         if ( !exclude.contains( PROP_ANCHORTYPE ) ) this.setAnchorType(that.getAnchorType() );
+        if ( !exclude.contains( PROP_SPLITANCHORTYPE ) ) this.setSplitAnchorType( that.isSplitAnchorType() );
+        if ( !exclude.contains( PROP_VERTICALANCHORTYPE ) ) this.setVerticalAnchorType( that.getVerticalAnchorType() );
         if ( !exclude.contains( PROP_ANCHORBORDERTYPE ) ) this.setAnchorBorderType(that.getAnchorBorderType() );
         if ( !exclude.contains( PROP_XRANGE ) ) this.setXrange( that.getXrange() );
         if ( !exclude.contains( PROP_YRANGE ) ) this.setYrange( that.getYrange() );
         if ( !exclude.contains( PROP_POINTATX ) ) this.setPointAtX( that.getPointAtX() );
         if ( !exclude.contains( PROP_POINTATY ) ) this.setPointAtY( that.getPointAtY() );
+        if ( !exclude.contains( PROP_POINTATOFFSET ) ) this.setPointAtOffset( that.getPointAtOffset() );
         if ( !exclude.contains( PROP_SHOWARROW ) ) this.setShowArrow( that.isShowArrow() );
         if ( !exclude.contains( PROP_OVERRIDECOLORS ) ) this.setOverrideColors(that.isOverrideColors() );
         if ( !exclude.contains( PROP_TEXTCOLOR ) ) this.setTextColor(that.getTextColor() );
         if ( !exclude.contains( PROP_FOREGROUND ) ) this.setForeground(that.getForeground() );
         if ( !exclude.contains( PROP_BACKGROUND ) ) this.setBackground(that.getBackground() );
+        if ( !exclude.contains( PROP_GLOW ) ) this.setGlow(that.isGlow() );
         if ( !exclude.contains( PROP_PLOTID ) ) this.setPlotId(that.getPlotId());
         if ( !exclude.contains( PROP_ROWID ) ) this.setRowId(that.getRowId());
         if ( !exclude.contains( PROP_COLUMNID ) ) this.setColumnId(that.getColumnId());
@@ -354,6 +450,10 @@ public class Annotation extends DomNode {
 
         b=  that.text.equals(this.text) ;
         if ( !b ) result.add(new PropertyChangeDiff( PROP_TEXT, that.text, this.text ) );
+        b=  that.url.equals(this.url) ;
+        if ( !b ) result.add(new PropertyChangeDiff( PROP_URL, that.url, this.url ) );
+        b=  that.scale==this.scale;
+        if ( !b ) result.add(new PropertyChangeDiff( PROP_SCALE, that.scale, this.scale ) );
         b=  that.fontSize.equals(this.fontSize) ;
         if ( !b ) result.add(new PropertyChangeDiff( PROP_FONTSIZE, that.fontSize, this.fontSize ) );
         b=  that.borderType.equals(this.borderType) ;
@@ -364,6 +464,10 @@ public class Annotation extends DomNode {
         if ( !b ) result.add(new PropertyChangeDiff( PROP_ANCHOROFFSET, that.anchorOffset, this.anchorOffset ) );
         b=  that.anchorType.equals(this.anchorType) ;
         if ( !b ) result.add(new PropertyChangeDiff( PROP_ANCHORTYPE, that.anchorType, this.anchorType ) );
+        b=  that.splitAnchorType==this.splitAnchorType;
+        if ( !b ) result.add(new PropertyChangeDiff( PROP_SPLITANCHORTYPE, that.splitAnchorType, this.splitAnchorType ) );
+        b=  that.verticalAnchorType.equals( this.verticalAnchorType );
+        if ( !b ) result.add(new PropertyChangeDiff( PROP_VERTICALANCHORTYPE, that.verticalAnchorType, this.verticalAnchorType ) );
         b=  that.anchorBorderType.equals(this.anchorBorderType) ;
         if ( !b ) result.add(new PropertyChangeDiff( PROP_ANCHORBORDERTYPE, that.anchorBorderType, this.anchorBorderType ) );
         b=  that.xrange.equals(this.xrange) ;
@@ -374,6 +478,8 @@ public class Annotation extends DomNode {
         if ( !b ) result.add(new PropertyChangeDiff( PROP_POINTATX, that.pointAtX, this.pointAtX ) );
         b=  that.pointAtY.equals(this.pointAtY) ;
         if ( !b ) result.add(new PropertyChangeDiff( PROP_POINTATY, that.pointAtY, this.pointAtY ) );
+        b=  that.pointAtOffset.equals(this.pointAtOffset) ;
+        if ( !b ) result.add(new PropertyChangeDiff( PROP_POINTATOFFSET, that.pointAtOffset, this.pointAtOffset ) );
         b=  that.showArrow==this.showArrow;
         if ( !b ) result.add(new PropertyChangeDiff( PROP_SHOWARROW, that.showArrow, this.showArrow ) );
         b=  that.textColor.equals(this.textColor) ;
@@ -391,4 +497,20 @@ public class Annotation extends DomNode {
 
         return result;
     }
+    
+    @Override
+    public String toString() {
+        String t= this.getText();
+        if ( t==null ) {
+            t= "";
+        }
+        if ( t.length()>20 ) {
+            t= t.substring(0,20)+"...";
+        }
+        if ( t.length()==0 ) {
+            return super.toString();
+        } else {
+            return super.toString() + " ("+t+")";
+        }
+    }    
 }

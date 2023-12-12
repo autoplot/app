@@ -8,6 +8,7 @@ package org.autoplot.scriptconsole;
 import java.awt.Color;
 import java.awt.EventQueue;
 import java.awt.Font;
+import java.awt.Point;
 import java.awt.Toolkit;
 import java.awt.datatransfer.Clipboard;
 import java.awt.datatransfer.ClipboardOwner;
@@ -16,6 +17,8 @@ import java.awt.datatransfer.Transferable;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.awt.event.KeyEvent;
+import java.awt.event.MouseAdapter;
+import java.awt.event.MouseEvent;
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
 import java.io.BufferedWriter;
@@ -27,6 +30,8 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.io.PrintStream;
+import java.io.PrintWriter;
+import java.io.UnsupportedEncodingException;
 import java.text.DecimalFormat;
 import java.text.MessageFormat;
 import java.text.NumberFormat;
@@ -36,11 +41,13 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
+import java.util.Properties;
 import java.util.logging.ConsoleHandler;
 import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
 import javax.swing.AbstractAction;
@@ -68,6 +75,9 @@ import org.python.core.PyObject;
 import org.python.util.PythonInterpreter;
 import org.autoplot.GuiSupport;
 import org.autoplot.JythonUtil;
+import org.autoplot.datasource.AutoplotSettings;
+import org.autoplot.help.Util;
+import org.autoplot.jythonsupport.ui.EditorTextPane;
 import org.autoplot.util.TickleTimer;
 import org.xml.sax.SAXException;
 
@@ -100,40 +110,62 @@ public class LogConsole extends javax.swing.JPanel {
 
     /** Creates new form LogConsole */
     public LogConsole() {
-        initComponents();
-
-        commandLineTextPane1.addActionListener(new ActionListener() {
-            @Override
-            public void actionPerformed(ActionEvent e) {
-                LoggerManager.logGuiEvent(e);        
-                final String s = commandLineTextPane1.getText();
-                RequestProcessor.invokeLater(new Runnable() {
-                    @Override
-                    public void run() {
-                        try {
-                            String s1= JythonRefactory.fixImports(s);
-                            System.out.println("AP> " + s1);
-                            maybeInitializeInterpreter();
-                            try {
-                                PyObject po= interp.eval(s1);
-                                if ( !( po instanceof PyNone ) ) interp.exec("print '" + po.__str__() +"'" ); // JythonRefactory okay
-                            } catch (PyException ex ) {
-                                interp.exec(s1);// JythonRefactory okay
-                            }
-                            commandLineTextPane1.setText("");
-                        } catch (IOException ex) {
-                            logger.log(Level.SEVERE, ex.getMessage(), ex);
-                            commandLineTextPane1.setText("");
-                        } catch (PyException ex) {
-                            System.err.println(ex.toString());
-                            commandLineTextPane1.setText("");
-                        }
+        initComponents(); 
+        
+        String f= AutoplotSettings.settings().resolveProperty(AutoplotSettings.PROP_AUTOPLOTDATA );
+        File config= new File( new File(f), "config" );
+        Properties p= new Properties();
+        if ( config.exists() ) {
+            try {
+                File syntaxPropertiesFile= new File( config, "jsyntaxpane.properties" );
+                logger.log(Level.FINE, "Resetting editor colors using {0}", syntaxPropertiesFile );
+                if ( syntaxPropertiesFile.exists() ) {
+                    try ( FileInputStream in = new FileInputStream( syntaxPropertiesFile ) ) {
+                        p.load( in );
                     }
-                });
+                }
+            } catch (FileNotFoundException ex) {
+                logger.log(Level.SEVERE, null, ex);
+            } catch (IOException ex) {
+                logger.log(Level.SEVERE, null, ex);
             }
+            logTextArea.setBackground( Color.decode( p.getProperty("Background", "0xFFFFFF") ) );
+            String foreground= p.getProperty("Style.DEFAULT", "0x000000");
+            int i= foreground.indexOf(",");
+            if ( i>-1 ) {
+                foreground= foreground.substring(0,i);
+            }
+            logTextArea.setForeground( Color.decode( foreground ) );
+        }
+
+
+        commandLineTextPane1.addActionListener((ActionEvent e) -> {
+            LoggerManager.logGuiEvent(e);
+            final String s = commandLineTextPane1.getText();
+            RequestProcessor.invokeLater(() -> {
+                try {
+                    String s1= maybeRemovePrompts(s);
+                    s1= JythonRefactory.fixImports(s1);
+                    System.out.println("AP> " + s1);
+                    maybeInitializeInterpreter();
+                    try {
+                        PyObject po= interp.eval(s1);
+                        if ( !( po instanceof PyNone ) ) interp.exec("print '" + po.__str__() +"'" ); // JythonRefactory okay
+                    } catch (PyException ex ) {
+                        interp.exec(s1);// JythonRefactory okay
+                    }
+                    commandLineTextPane1.setText("");
+                } catch (IOException ex) {
+                    logger.log(Level.SEVERE, ex.getMessage(), ex);
+                    commandLineTextPane1.setText("");
+                } catch (PyException ex) {
+                    System.err.println(ex.toString());
+                    commandLineTextPane1.setText("");
+                }
+            });
         });
 
-
+        
         this.commandLineTextPane1.putClientProperty(JythonCompletionTask.CLIENT_PROPERTY_INTERPRETER_PROVIDER, new JythonInterpreterProvider() {
             @Override
             public PythonInterpreter createInterpreter() throws java.io.IOException {
@@ -141,6 +173,23 @@ public class LogConsole extends javax.swing.JPanel {
                 return interp;
             }
         });
+        
+        this.logTextArea.addMouseListener( new MouseAdapter() {
+            @Override
+            public void mouseClicked(MouseEvent e) {
+                if ( e.getButton()==MouseEvent.BUTTON1 && e.getClickCount()==2 && e.isShiftDown() ) {
+                    int caret= logTextArea.viewToModel( new Point( e.getX(), e.getY() ) );
+                    try {
+                        String word= org.das2.jythoncompletion.Utilities.getWordAt( logTextArea, caret );
+                        if ( word.startsWith("http:") || word.startsWith("https:") ) {
+                            Util.openBrowser(word);
+                        }
+                    } catch (BadLocationException ex) {
+                        Logger.getLogger(LogConsole.class.getName()).log(Level.SEVERE, null, ex);
+                    }
+                }
+            }
+        } );
 
         timer2 = new Timer(300, new ActionListener() {
             @Override
@@ -179,9 +228,30 @@ public class LogConsole extends javax.swing.JPanel {
         Toolkit tk= Toolkit.getDefaultToolkit();
         this.logTextArea.getInputMap().put( KeyStroke.getKeyStroke( KeyEvent.VK_EQUALS, tk.getMenuShortcutKeyMask() ), "biggerFont" );
         this.logTextArea.getInputMap().put( KeyStroke.getKeyStroke( KeyEvent.VK_MINUS, tk.getMenuShortcutKeyMask() ), "smallerFont" );
-
+        
     }
 
+    /**
+     * remove prompts which are sometimes copied into mouse buffers.
+     * This detects "AP> ", ">>> ", and "... ".
+     * @param s the text entered.
+     * @return the text without prefix.
+     */
+    public static String maybeRemovePrompts( String s ) {
+        String[] ss= s.split("\n",-2);
+        for ( int i=0; i<ss.length; i++ ) {
+            String s1= ss[i];
+            if ( s1.startsWith("AP> ") ) {
+                ss[i]= s1.substring(4);
+            } else if ( s1.startsWith(">>> ") ) {
+                ss[i]= s1.substring(4);
+            } else if ( s1.startsWith("... ") ) {
+                ss[i]= s1.substring(4);
+            }
+        }
+        return String.join( "\n", ss );
+    }
+    
     private void maybeInitializeInterpreter( ) throws IOException {
         if (interp == null) {
             String s = commandLineTextPane1.getText();
@@ -244,6 +314,8 @@ public class LogConsole extends javax.swing.JPanel {
         } else {
             searchTextPattern = null;
         }
+        logTextArea.setToolTipText(null);
+        apLabel.setToolTipText(null);
         update();
         firePropertyChange(PROP_SEARCHTEXT, oldSearchText, searchText);
     }
@@ -366,11 +438,38 @@ public class LogConsole extends javax.swing.JPanel {
                         rec.getThrown().printStackTrace();
                         // This is interesting--I've wondered where the single-line-message items have been coming from...
                     } else {
-                        // no message.  breakpoint here for debugging.
+                        // no message.  
                         int i=0;
                     }
+                    
+                    if ( consoleListeners.size()>0 && recMsg!=null ) {
+                        ActionEvent actionEvent= new ActionEvent( this, recMsg.hashCode(), recMsg );
+                        consoleListeners.forEach((al) -> {
+                            al.actionPerformed(actionEvent);
+                        });
+                    }
+                    
                     if ( searchTextPattern!=null && searchTextPattern.matcher(recMsg).find() ) {
-                        int i=0; // breakpoint here for debugging.  Set the "Highlite Lines Matching" field of the Log Console Settings dialog to the text where this should stop.
+                        // secret feature that the stack trace of the last highlited text will be 
+                        // shown as a tooltip of the "AP>" prompt.
+                        ByteArrayOutputStream baos= new ByteArrayOutputStream();
+                        try (PrintWriter pw = new PrintWriter(baos)) {
+                            new Exception().printStackTrace(pw);
+                        }
+                        try {
+                            String s= (baos.toString("US-ASCII"));
+                            String[] ss= s.split("\n");
+                            StringBuilder sb= new StringBuilder("<html><b>Stack trace at last highlite match:</b>");
+                            for ( String s1: ss ) {
+                                sb.append(s1).append("<br>");
+                            }
+                            sb.append("</html>");
+                            String msg= sb.toString();
+                            apLabel.setToolTipText(msg); // Shh! Secret feature...
+                        } catch (UnsupportedEncodingException ex) {
+                            logger.log( Level.WARNING, ex.getMessage(), ex );
+                        }
+                        LogConsoleUtil.checkBreakpoint(); // put a breakpoint in this code to stop.
                     }
                     LogRecord copy= new LogRecord( rec.getLevel(), recMsg ); //bug 3479791: just flatten this, so we don't have to format it each time
                     copy.setLoggerName(rec.getLoggerName());
@@ -448,9 +547,14 @@ public class LogConsole extends javax.swing.JPanel {
         System.setErr(new PrintStream(los, true));
     }
 
+    /**
+     * remove this hook for listening to stdout and stderr messages.
+     */
     public synchronized void undoLogConsoleMessages() {
-        System.setOut(oldStdOut);
-        System.setErr(oldStdErr);
+        if ( oldStdOut!=null ) 
+            System.setOut(oldStdOut);
+        if ( oldStdErr!=null )
+            System.setErr(oldStdErr);
     }
 
     /**
@@ -616,7 +720,7 @@ public class LogConsole extends javax.swing.JPanel {
         clearButton = new javax.swing.JButton();
         saveButton = new javax.swing.JButton();
         copyButton = new javax.swing.JButton();
-        jLabel2 = new javax.swing.JLabel();
+        apLabel = new javax.swing.JLabel();
         jScrollPane2 = new javax.swing.JScrollPane();
         commandLineTextPane1 = new org.autoplot.scriptconsole.CommandLineTextPane();
         jScrollPane1 = new javax.swing.JScrollPane();
@@ -674,7 +778,7 @@ public class LogConsole extends javax.swing.JPanel {
                 .add(copyButton))
         );
 
-        jLabel2.setText("AP>");
+        apLabel.setText("AP>");
 
         commandLineTextPane1.setToolTipText("enter jython commands here to control the application, for example \"plot(dataset([1,2,3]))\"");
         commandLineTextPane1.addFocusListener(new java.awt.event.FocusAdapter() {
@@ -707,7 +811,7 @@ public class LogConsole extends javax.swing.JPanel {
                         .add(jButton1))
                     .add(layout.createSequentialGroup()
                         .addContainerGap()
-                        .add(jLabel2)
+                        .add(apLabel)
                         .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
                         .add(jScrollPane2, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 484, Short.MAX_VALUE)))
                 .addContainerGap())
@@ -720,7 +824,7 @@ public class LogConsole extends javax.swing.JPanel {
                 .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
                     .add(layout.createSequentialGroup()
                         .add(8, 8, 8)
-                        .add(jLabel2))
+                        .add(apLabel))
                     .add(jScrollPane2, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE))
                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
                 .add(layout.createParallelGroup(org.jdesktop.layout.GroupLayout.TRAILING)
@@ -835,15 +939,25 @@ private void jButton1ActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRS
 
     // Variables declaration - do not modify//GEN-BEGIN:variables
     private javax.swing.JPanel actionsPanel;
+    private javax.swing.JLabel apLabel;
     private javax.swing.JButton clearButton;
     private org.autoplot.scriptconsole.CommandLineTextPane commandLineTextPane1;
     private javax.swing.JButton copyButton;
     private javax.swing.JButton jButton1;
-    private javax.swing.JLabel jLabel2;
     private javax.swing.JScrollPane jScrollPane1;
     private javax.swing.JScrollPane jScrollPane2;
     private javax.swing.JTextPane logTextArea;
     private javax.swing.JButton saveButton;
     // End of variables declaration//GEN-END:variables
 
+    private List<ActionListener> consoleListeners= new ArrayList<>();
+    
+    /**
+     * add method for listening to the console messages.  Note this
+     * may change!
+     * @param listener 
+     */
+    public void addConsoleListener( ActionListener listener ) {
+        this.consoleListeners.add( listener );
+    }
 }

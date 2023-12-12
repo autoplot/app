@@ -13,7 +13,9 @@ import java.awt.Color;
 import java.awt.Font;
 import java.awt.Graphics;
 import java.awt.event.KeyEvent;
+import java.util.logging.Level;
 import java.util.logging.Logger;
+import javax.swing.ImageIcon;
 import javax.swing.text.BadLocationException;
 import javax.swing.text.Document;
 import javax.swing.text.JTextComponent;
@@ -37,22 +39,29 @@ public class DefaultCompletionItem implements CompletionItem  {
     String link;
     int sortPriority;
     boolean referenceOnly= false;
+    ImageIcon icon= null;
     
-    final static Logger logger= Logger.getLogger( "jython.editor" );
+    final static Logger logger= Logger.getLogger( "jython.editor.completion" );
     
     /**
      * 
      * @param text used for sort and insert prefix.  Typically same as complete.
      * @param offset number of chars already typed.
      * @param complete complete.substring(offset) is inserted.
-     * @param label the human readable presentation of this, maybe with html.
+     * @param label the human readable presentation of this, maybe with html.  Note an arrow "->" will split the label to the left and right.
      * @param link handed over to DefaultDocumentationItem, if non null.  May be "inline:&lt;html&gt;..."
      * @param sortPriority 1 is default.
+     * @param icon the icon to show next to this completion.
      */
-    public DefaultCompletionItem( String text, int offset, String complete, String label, String link, int sortPriority ) {
+    public DefaultCompletionItem( String text, int offset, String complete, String label, String link, int sortPriority, ImageIcon icon) {
+        logger.log(Level.FINER, "DefaultCompletionItem {0}", text);
         if ( complete.length()<offset ) {
             throw new IllegalArgumentException("completion offset is less than length");
         }
+        //
+        //if ( label!=null && label.contains("plotx") ) {
+        //    System.err.println("here we stop for completions");
+        //}
         this.text= text;
         this.offset= offset;
         this.complete= complete;
@@ -60,6 +69,7 @@ public class DefaultCompletionItem implements CompletionItem  {
         this.label= label;
         this.link= link;
         this.sortPriority= sortPriority;
+        this.icon= icon;
     }
 
     public void setReferenceOnly( boolean ref ) {
@@ -75,8 +85,8 @@ public class DefaultCompletionItem implements CompletionItem  {
      * @param link  handed over to DefaultDocumentationItem, if non null.  May be "inline:&lt;html&gt;..."
      */
     public DefaultCompletionItem( String text, int offset, String complete, String label, String link ) {
-        //http://apps-pw.physics.uiowa.edu/hudson/job/autoplot-javadoc/ws/doc/org/autoplot/jythonsupport/Util.html#getCompletions(java.lang.String)
-        this(text, offset, complete, label, link, 1);
+        //http://apps-pw.physics.uiowa.edu/hudson/job/autoplot-javadoc2018/ws/doc/org/autoplot/jythonsupport/Util.html#getCompletions(java.lang.String)
+        this(text, offset, complete, label, link, 1, null);
     }
     
     public static DefaultCompletionItem error( String message ) {
@@ -160,7 +170,28 @@ public class DefaultCompletionItem implements CompletionItem  {
             right= label.substring(i2+2);
             left= label.substring(0,i2);
         }
-        CompletionUtilities.renderHtml(null,left,right,graphics,font, color,i,i0,b);
+        CompletionUtilities.renderHtml(icon,left,right,graphics,font, color,i,i0,b);
+    }
+    
+    /**
+     * return the first item which looks like a link from the documentation string.
+     * @param s the inline documentation string
+     * @return the link or null.
+     */
+    private String findLink( String s ) {
+        String find= "http://";
+        String[] ss= s.split(find,2);
+        if ( ss.length==1 ) {
+            find= "https://";
+            ss= s.split(find,2);
+        }
+        if ( ss.length==1 ) return null;
+        String[] ss2= ss[1].split("\\s",2);
+        //remove BR
+        ss2= ss2[0].split("<br>",2);
+        ss2= ss2[0].split("'",2);
+        ss2= ss2[0].split("\"",2);
+        return find + ss2[0];
     }
     
     @Override
@@ -168,11 +199,12 @@ public class DefaultCompletionItem implements CompletionItem  {
         if ( link==null ) {
             return null;
         } else if ( link.startsWith("inline:") ) {
-            final String flink= link;
+            final String fdoc= link.substring(7);
             return new CompletionTask() {
                 @Override
                 public void query(CompletionResultSet resultSet) {
-                    resultSet.setDocumentation( new DefaultDocumentationItem(null,flink.substring(7)) );
+                    String link= findLink(fdoc);
+                    resultSet.setDocumentation( new DefaultDocumentationItem(link,fdoc) );
                     resultSet.finish();
                 }
                 @Override

@@ -16,8 +16,12 @@ import java.awt.event.MouseEvent;
 import java.awt.event.MouseWheelEvent;
 import java.awt.event.MouseWheelListener;
 import java.awt.geom.AffineTransform;
+import java.awt.geom.NoninvertibleTransformException;
+import java.awt.geom.Point2D;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.text.ParseException;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -25,12 +29,13 @@ import javax.swing.AbstractAction;
 import javax.swing.JMenuItem;
 import javax.swing.JPopupMenu;
 import org.das2.qds.QDataSet;
+import org.python.core.PyException;
 
 /**
  * An implementation of PngWalkView to display a single image.
  * @author Ed Jackson
  */
-public class SinglePngWalkView extends PngWalkView {
+public final class SinglePngWalkView extends PngWalkView {
 
 //    private boolean sizeValid = false;
     private transient BufferedImage cacheImage;
@@ -44,21 +49,27 @@ public class SinglePngWalkView extends PngWalkView {
     transient ClickDigitizer clickDigitizer;
     int clickDigitizerSelect= -1;
     
+    long reportedExceptionTime= 0;
+    String reportedExceptionStr= "";
+    
+    private PngWalkTool viewer=null;
+    
     public SinglePngWalkView(WalkImageSequence s) {
+        this( s, null );
+    }    
+    
+    public SinglePngWalkView(WalkImageSequence s, PngWalkTool viewer ) {
         super(s);
         clickDigitizer= new ClickDigitizer( this );
         
         setShowCaptions(true);
         
-        addMouseWheelListener( new MouseWheelListener() {
-            @Override
-            public void mouseWheelMoved(MouseWheelEvent e) {
-                if ( ( e.getModifiersEx() & KeyEvent.CTRL_DOWN_MASK )==KeyEvent.CTRL_DOWN_MASK ) {
-                    affineTransform.scale( 1-(.04*e.getWheelRotation()), 1-(.04*e.getWheelRotation()) );
-                    repaint();
-                } else {
-                    delegate.mouseWheelMoved(e);
-                }
+        addMouseWheelListener((MouseWheelEvent e) -> {
+            if ( ( e.getModifiersEx() & KeyEvent.CTRL_DOWN_MASK )==KeyEvent.CTRL_DOWN_MASK ) {
+                affineTransform.scale( 1-(.04*e.getWheelRotation()), 1-(.04*e.getWheelRotation()) );
+                SinglePngWalkView.this.repaint();
+            } else {
+                delegate.mouseWheelMoved(e);
             }
         });
         
@@ -71,20 +82,29 @@ public class SinglePngWalkView extends PngWalkView {
                         @Override
                         public void actionPerformed(ActionEvent e) {
                             affineTransform= new AffineTransform();
-                            repaint();
+                            SinglePngWalkView.this.repaint();
                         }
                     } ) );
                     m.show(e.getComponent(),e.getX(), e.getY());
                     return;
                 }
                 mousePressPoint= e.getPoint();
+                Point p= getImagePosition( e.getX(), e.getY() );
+                
+                MouseAdapter ma= viewer!=null ? viewer.getImageMouseAdapter() : null;
+                if ( ma!=null ) {
+                    MouseEvent ep= new MouseEvent( e.getComponent(), e.getID(), e.getWhen(), e.getModifiers(), p.x, p.y, e.getClickCount(), e.isPopupTrigger(), e.getButton() );
+                    ep.setSource(SinglePngWalkView.this);
+                    ma.mousePressed( ep );
+                    SinglePngWalkView.this.repaint();
+                    return;
+                }
                 if ( ( e.getModifiersEx() & KeyEvent.CTRL_DOWN_MASK ) == KeyEvent.CTRL_DOWN_MASK ) {
                     return;
                 }
                 if ( e.getButton()!=MouseEvent.BUTTON1 ) {
                     return;
                 }
-                Point p= getImagePosition( e.getX(), e.getY() );
                 if ( p!=null ) try {
                     clickDigitizerSelect= clickDigitizer.maybeSelect(p);
                 } catch (IOException | ParseException ex) {
@@ -93,22 +113,25 @@ public class SinglePngWalkView extends PngWalkView {
                 if ( clickDigitizerSelect==-1 ) {
                     Rectangle lrect= imageLocation;
                     if ( imageLocation==null ) return;
+                    Point2D clickPos= new Point2D.Double(e.getX(),e.getY());
                     if ( !affineTransform.isIdentity() ) {
-                        seq.setStatus(  "digitizing is not supported with image zoom and pan, Reset Zoom with right-click." );
-                        return;
+                        try {
+                            clickPos= affineTransform.inverseTransform(clickPos,null);
+                        } catch (NoninvertibleTransformException ex) {
+                            Logger.getLogger(SinglePngWalkView.class.getName()).log(Level.SEVERE, null, ex);
+                        }
                     }
                     BufferedImage i = seq.currentImage().getImage();
                     if ( i==null ) return;
                     double factor = (double) lrect.getWidth() / (double) i.getWidth(null);
-                    int imageX= (int)( ( e.getX() - lrect.x ) / factor );
-                    int imageY= (int)( ( e.getY() - lrect.y ) / factor );                    
+                    int imageX= (int)( ( clickPos.getX() - lrect.x ) / factor );
+                    int imageY= (int)( ( clickPos.getY() - lrect.y ) / factor );                    
                     try {
                         clickDigitizer.doLookupMetadata( imageX, imageY, false );
                     } catch (IOException | ParseException ex) {
                         Logger.getLogger(SinglePngWalkView.class.getName()).log(Level.SEVERE, null, ex);
                     }
                 }
-                
             }
 
             @Override
@@ -120,27 +143,44 @@ public class SinglePngWalkView extends PngWalkView {
                         @Override
                         public void actionPerformed(ActionEvent e) {
                             affineTransform= new AffineTransform();
-                            repaint();
+                            SinglePngWalkView.this.repaint();
                         }
                     } ) );
                     m.show(e.getComponent(),e.getX(), e.getY());
                     return;
                 }
+                
+                Point p= getImagePosition( e.getX(), e.getY() );
+                MouseAdapter ma= viewer!=null ? viewer.getImageMouseAdapter() : null;
+                if ( ma!=null ) {
+                    MouseEvent ep= new MouseEvent( e.getComponent(), e.getID(), e.getWhen(), e.getModifiers(), p.x, p.y, e.getClickCount(), e.isPopupTrigger(), e.getButton() );
+                    ep.setSource(SinglePngWalkView.this);
+                    ma.mouseReleased( ep );
+                    SinglePngWalkView.this.repaint();
+                    return;
+                }
+                
                 if ( e.getButton()!=MouseEvent.BUTTON1 ) {
                     return;
                 }                
                 if ( clickDigitizerSelect==-1 ) {
                     Rectangle lrect= imageLocation;
                     if ( imageLocation==null ) return;
+                    
+                    Point2D clickPos= new Point2D.Double(e.getX(),e.getY());
                     if ( !affineTransform.isIdentity() ) {
-                        seq.setStatus(  "digitizing is not supported with image zoom and pan, Reset Zoom with right-click." );
-                        return;
+                        try {
+                            clickPos= affineTransform.inverseTransform(clickPos,null);
+                        } catch (NoninvertibleTransformException ex) {
+                            Logger.getLogger(SinglePngWalkView.class.getName()).log(Level.SEVERE, null, ex);
+                        }
                     }
                     BufferedImage i = seq.currentImage().getImage();
                     if ( i==null ) return;
                     double factor = (double) lrect.getWidth() / (double) i.getWidth(null);
-                    int imageX= (int)( ( e.getX() - lrect.x ) / factor );
-                    int imageY= (int)( ( e.getY() - lrect.y ) / factor );                    
+                    int imageX= (int)( ( clickPos.getX() - lrect.x ) / factor );
+                    int imageY= (int)( ( clickPos.getY() - lrect.y ) / factor );                    
+                    
                     try {
                         clickDigitizer.doLookupMetadata( imageX, imageY, true );
                     } catch (IOException | ParseException ex) {
@@ -161,19 +201,45 @@ public class SinglePngWalkView extends PngWalkView {
                         affineTransform.translate( (p.x-mousePressPoint.x) / affineTransform.getScaleX(),
                             ( p.y-mousePressPoint.y ) / affineTransform.getScaleY() );
                         mousePressPoint= p;
-                        repaint();
+                        SinglePngWalkView.this.repaint();
                     }
                 }
+                Point p= getImagePosition( e.getX(), e.getY() );
+                MouseAdapter ma= viewer!=null ? viewer.getImageMouseAdapter() : null;
+                if ( ma!=null ) {
+                    String img= seq.getSelectedName();
+                    MouseEvent ep= new MouseEvent( e.getComponent(), e.getID(), e.getWhen(), e.getModifiers(), p.x, p.y, e.getClickCount(), e.isPopupTrigger(), e.getButton() );
+                    ep.setSource(img);
+                    ma.mouseDragged(ep );
+                    SinglePngWalkView.this.repaint();
+                }
             }
-            
-            
             
         };
         addMouseListener( ma );
         addMouseMotionListener( ma );
         this.setPreferredSize( new Dimension(300,300) );  
+        
+        setViewer( viewer );
     }
     
+    /**
+     * return the digitizer for the images.
+     * @return the digitizer for the images.
+     */
+    public ClickDigitizer getClickDigitizer() {
+        return this.clickDigitizer;
+    }
+    
+    /**
+     * set the pngwalkTool using this view.
+     * @param viewer 
+     */
+    protected void setViewer( PngWalkTool viewer ) {
+        this.viewer= viewer;
+        this.clickDigitizer.setViewer(viewer);
+    }
+       
     /**
      * return the position in the image's coordinates.
      * @param x the x location in the component.
@@ -319,11 +385,34 @@ public class SinglePngWalkView extends PngWalkView {
                 Logger.getLogger(SinglePngWalkView.class.getName()).log(Level.SEVERE, null, ex);
             }
         }
+        
+        if ( viewer!=null && i!=null ) {
+            Rectangle lrect= imageLocation;
+            if ( imageLocation==null ) return;
+            int w= i.getWidth();
+            double factor = (double) lrect.getWidth() / (double) w;
+            AffineTransform at1= AffineTransform.getTranslateInstance( lrect.x, lrect.y );
+            at1.scale(factor, factor);
+            g2.transform(at1);
+            Color c0= g2.getColor();
+            viewer.decorators.forEach((p) -> {
+                try {
+                    p.paint(g2);
+                } catch ( Exception ex ) {
+                    long t= System.currentTimeMillis();
+                    if ( (t-reportedExceptionTime)>1000 ) {
+                        ByteArrayOutputStream baos= new ByteArrayOutputStream();
+                        ex.printStackTrace();
+                        ex.printStackTrace(new PrintStream(baos));
+                        reportedExceptionStr= baos.toString();
+                        reportedExceptionTime= t;   
+                    }
+                    g2.setColor(c0);
+                    g2.drawString(reportedExceptionStr, 0, 16 );
+                }
+            });
 
-        //if ( imageLocation!=null ) {
-        //    imageLocation= transformRect(imageLocation);
-        //    System.err.println("234: " + imageLocation);
-        //}
+        }
         
     }
 }

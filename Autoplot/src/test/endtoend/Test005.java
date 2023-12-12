@@ -1,18 +1,15 @@
-/*
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
- */
+
 package test.endtoend;
 
 import java.io.PrintWriter;
-import java.util.List;
+import org.autoplot.AutoplotUI;
+import org.autoplot.AutoplotUtil;
 import org.das2.datum.DatumRangeUtil;
-import org.das2.util.monitor.NullProgressMonitor;
 import static org.autoplot.ScriptContext.*;
 import org.autoplot.dom.Axis;
 import org.autoplot.dom.Column;
-import org.autoplot.datasource.DataSetURI;
-import org.autoplot.datasource.DataSetURI.CompletionResult;
+import org.das2.util.LoggerManager;
+import org.das2.util.filesystem.FileSystem;
 
 /**
  * Test Autoplot's demo bookmarks
@@ -30,8 +27,13 @@ public class Test005 {
     public static void main(String[] args)  {
         try {
 
+            LoggerManager.readConfiguration("/home/jbf/autoplot_data/config/logging.properties");
+            
             Column mc= getDocumentModel().getCanvases(0).getMarginColumn();
             System.err.println("margin column: "+ mc.getId() + " " + mc.getLeft() + " " + mc.getRight() );
+            
+            AutoplotUtil.disableCertificates();
+            System.err.println( AutoplotUI.SYSPROP_AUTOPLOT_DISABLE_CERTS + ": " + System.getProperty( AutoplotUI.SYSPROP_AUTOPLOT_DISABLE_CERTS ) );
             
             setCanvasSize(800, 600);
             getDocumentModel().getOptions().setAutolayout(false);
@@ -56,19 +58,25 @@ public class Test005 {
                 System.err.println("margin column: "+ mc.getId() + " " + mc.getLeft() + " " + mc.getRight() );
             }
 
-            xxx("demo2");
-
-            {
-                String suri = "http://virbo.org/ftp/LANL/LANL1991/SOPA+ESP/H0/LANL_1991_080_H0_SOPA_ESP_19920308_V01.cdf?";
-                List<CompletionResult> completionResult = DataSetURI.getCompletions(suri, suri.length(), new NullProgressMonitor());
-                try (PrintWriter out = new PrintWriter("test005_demo3.txt")) {
-                    for (CompletionResult l : completionResult) {
-                        out.println(l.completion);
-                    }
-                }
-            }
             xxx("demo3");
 
+            //OFFLINE MODE vvv
+            //https://satdat.ngdc.noaa.gov started sending 429 (Too many requests), so I'll test offline mode.
+            System.err.println("*** MANUALLY SETTING OFFLINE MODE ***");
+            FileSystem.settings().setOffline( true );
+            FileSystem.reset();
+            
+            plot("https://satdat.ngdc.noaa.gov/sem/goes/data/avg/$Y/$m/goes10/csv/g10_eps_5m_$Y$m$d_$(Y,end)$m$d.csv?column=field1&depend0=field0&skip=456&timerange=Dec+2004");
+            
+            Thread.sleep(300); // We shouldn't have to do this.
+            
+            writeToPng("test005_demo14.png");
+            xxx("demo14");
+            
+            FileSystem.settings().setOffline( false );
+            FileSystem.reset();
+            //OFFLINE MODE ^^^
+            
             //plot("http://cdaweb.gsfc.nasa.gov/opendap/hyrax/genesis/gim/3dl2_gim/2003/genesis_3dl2_gim_20030501_v01.cdf.dds?Proton_Density");
             //writeToPng("test005_demo1_r.png");
             //xxx("demo1 return");
@@ -85,7 +93,7 @@ public class Test005 {
             plot("http://autoplot.org/data/autoplot.xml");
             writeToPng("test005_demo6.png");
             xxx("demo6");
-            String omniSrc= "ftp://spdf.gsfc.nasa.gov/pub/data/omni/low_res_omni/";
+            String omniSrc= "https://cdaweb.gsfc.nasa.gov/pub/data/omni/low_res_omni/";
             //String omniSrc= "file:/home/jbf/ct/hudson/data.backup/dat/";
             plot( omniSrc + "/omni2_1963.dat");
             writeToPng("test005_demo7.png");
@@ -135,11 +143,7 @@ public class Test005 {
 
             //TODO: why does this not reset with the plot command below?  This only occurs in testing server.
             getDocumentModel().getDataSourceFilters(0).setFilters("");
-
-            plot("https://satdat.ngdc.noaa.gov/sem/goes/data/new_avg/$Y/$m/goes10/csv/g10_eps_5m_$Y$m$d_$(Y,end)$m$d.csv?column=field1&depend0=field0&skip=456&timerange=Dec+2004");
-            writeToPng("test005_demo14.png");
-            xxx("demo14");
-
+            
             System.exit(0);  // TODO: something is firing up the event thread
         } catch ( Exception ex) {
             ex.printStackTrace();

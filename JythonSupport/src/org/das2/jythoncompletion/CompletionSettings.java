@@ -24,12 +24,16 @@ public class CompletionSettings {
     private static final Logger logger= LoggerManager.getLogger( "jython.editor" );
     Preferences prefs= AutoplotSettings.settings().getPreferences( CompletionSettings.class );
 
-    private String docHome = "http://www-pw.physics.uiowa.edu/~jbf/autoplot/javadoc/"; // // see repeat code in loadPreferences
+    private String docHome = "http://www-pw.physics.uiowa.edu/~jbf/autoplot/javadoc2018/"; // // see repeat code in loadPreferences
     
     public static final String PROP_DOCHOME = "docHome";
 
     public String getDocHome() {
-        return docHome;
+        if ( !docHome.endsWith("/") ) {
+            return docHome+"/";
+        } else {
+            return docHome;
+        }
     }
 
     public void setDocHome(String docHome) {
@@ -68,6 +72,10 @@ public class CompletionSettings {
     protected boolean safeCompletions = true;
     public static final String PROP_SAFE_COMPLETIONS = "safeCompletions";
 
+    /**
+     * completions should be based on a refactored code which avoids slow commands like "getDataSet".
+     * @return 
+     */
     public boolean isSafeCompletions() {
         return safeCompletions;
     }
@@ -173,7 +181,7 @@ public class CompletionSettings {
     }
 
     public void loadPreferences() {
-        docHome= prefs.get( PROP_DOCHOME, "http://www-pw.physics.uiowa.edu/~jbf/autoplot/javadoc/" ) ;
+        docHome= prefs.get( PROP_DOCHOME, "http://www-pw.physics.uiowa.edu/~jbf/autoplot/javadoc2018/" ) ;
         tabIsCompletion= prefs.getBoolean( PROP_TAB_IS_COMPLETION, true );
         tabIsSpaces= prefs.getBoolean( PROP_TABISSPACES, false );
         showTabs= prefs.getBoolean( PROP_SHOWTABS, true );

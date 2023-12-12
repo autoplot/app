@@ -28,11 +28,14 @@ import org.autoplot.datasource.DataSourceEditorPanel;
 import org.autoplot.datasource.URISplit;
 import static org.autoplot.netCDF.NetCDFDataSourceFactory.checkMatlab;
 import ucar.ma2.DataType;
+import ucar.nc2.Attribute;
+import ucar.nc2.AttributeContainer;
 import ucar.nc2.Dimension;
 import ucar.nc2.NetcdfFile;
 import ucar.nc2.Structure;
 import ucar.nc2.Variable;
 import ucar.nc2.dataset.NetcdfDataset;
+import ucar.nc2.dataset.NetcdfDatasets;
 
 /**
  * Editor panel for HDF5 files.
@@ -41,7 +44,8 @@ import ucar.nc2.dataset.NetcdfDataset;
 public class HDF5DataSourceEditorPanel extends javax.swing.JPanel implements DataSourceEditorPanel {
 
     private String vapScheme;
-
+    Map<String,String> allParameterInfo;
+    
     /**
      * Creates new form HDF5DataSourceEditorPanel
      */
@@ -152,6 +156,11 @@ public class HDF5DataSourceEditorPanel extends javax.swing.JPanel implements Dat
         jSplitPane1.setRightComponent(advancedPanel);
 
         jTabbedPane1.setToolTipText("\"plot\" selects the dependent parameter for plotting.  \"x\" allows specification of an independent parameter upon which the \"plot\" parameter depends.");
+        jTabbedPane1.addChangeListener(new javax.swing.event.ChangeListener() {
+            public void stateChanged(javax.swing.event.ChangeEvent evt) {
+                jTabbedPane1StateChanged(evt);
+            }
+        });
 
         parameterTree.setRootVisible(false);
         parameterTree.addTreeSelectionListener(new javax.swing.event.TreeSelectionListener() {
@@ -192,7 +201,7 @@ public class HDF5DataSourceEditorPanel extends javax.swing.JPanel implements Dat
                 .addComponent(jScrollPane3, javax.swing.GroupLayout.DEFAULT_SIZE, 338, Short.MAX_VALUE))
         );
 
-        jTabbedPane1.addTab("x", jPanel1);
+        jTabbedPane1.addTab("X", jPanel1);
 
         jPanel3.setAlignmentX(0.0F);
 
@@ -225,7 +234,7 @@ public class HDF5DataSourceEditorPanel extends javax.swing.JPanel implements Dat
                 .addComponent(jScrollPane4, javax.swing.GroupLayout.DEFAULT_SIZE, 338, Short.MAX_VALUE))
         );
 
-        jTabbedPane1.addTab("y", jPanel3);
+        jTabbedPane1.addTab("Y", jPanel3);
 
         jSplitPane1.setLeftComponent(jTabbedPane1);
 
@@ -253,7 +262,8 @@ public class HDF5DataSourceEditorPanel extends javax.swing.JPanel implements Dat
     private void parameterTreeValueChanged(javax.swing.event.TreeSelectionEvent evt) {//GEN-FIRST:event_parameterTreeValueChanged
         TreePath tp= evt.getPath();
         parameter= String.valueOf(tp.getPathComponent(1));
-        String longName= parameters.get(parameter);
+//        String longName= parameters.get(parameter);
+        String longName= "<html>"+ parameters.get(parameter) + "<br><em>" + allParameterInfo.get(parameter) + "</em>";
         parameterInfoLabel.setText( longName );
 
         String dims= longName.substring(parameter.length());
@@ -273,13 +283,57 @@ public class HDF5DataSourceEditorPanel extends javax.swing.JPanel implements Dat
 
     private void xParameterTreeValueChanged(javax.swing.event.TreeSelectionEvent evt) {//GEN-FIRST:event_xParameterTreeValueChanged
         xCheckBox.setSelected(true);
+        updateMetadata(1);
     }//GEN-LAST:event_xParameterTreeValueChanged
 
     private void yParameterTreeValueChanged(javax.swing.event.TreeSelectionEvent evt) {//GEN-FIRST:event_yParameterTreeValueChanged
         yCheckBox.setSelected(true);
+        updateMetadata(2);
     }//GEN-LAST:event_yParameterTreeValueChanged
 
+    private void jTabbedPane1StateChanged(javax.swing.event.ChangeEvent evt) {//GEN-FIRST:event_jTabbedPane1StateChanged
+        int tab= jTabbedPane1.getSelectedIndex();
+        updateMetadata(tab);
+    }//GEN-LAST:event_jTabbedPane1StateChanged
 
+    /**
+     * make the info area reflect the current tab.
+     * @param tab 
+     */
+    private void updateMetadata( int tab ) {
+        String longName;
+        switch (tab) {
+            case 0:
+                if ( parameter!=null ) {
+                    longName= "<html>"+ parameters.get(parameter) + "<br><em>" + allParameterInfo.get(parameter) + "</em>";
+                    parameterInfoLabel.setText( longName );
+                }
+                break;
+            case 1:
+                TreePath tp= xParameterTree.getSelectionPath();
+                if ( tp!=null ) {
+                    String xparameter= String.valueOf(tp.getPathComponent(1));
+                    if ( xparameter!=null ) {
+                        longName="<html>"+ parameters.get(xparameter) + "<br><em>" + allParameterInfo.get(xparameter) + "</em>";
+                        parameterInfoLabel.setText( longName );
+                    } 
+                }
+                break;
+            case 2:
+                tp= yParameterTree.getSelectionPath();
+                if ( tp!=null ) {
+                    String yparameter= String.valueOf(tp.getPathComponent(1));
+                    if ( yparameter!=null ) {
+                        longName="<html>"+ parameters.get(yparameter) + "<br><em>" + allParameterInfo.get(yparameter) + "</em>";
+                        parameterInfoLabel.setText( longName );
+                    }
+                }
+                break;
+            default:
+                break;
+        }
+    }
+    
     // Variables declaration - do not modify//GEN-BEGIN:variables
     private javax.swing.JPanel advancedPanel;
     private javax.swing.JLabel jLabel5;
@@ -408,25 +462,32 @@ public class HDF5DataSourceEditorPanel extends javax.swing.JPanel implements Dat
             String resource= fileName;
             
             checkMatlab( resource );
-            NetcdfFile f= NetcdfFile.open( resource );
-            NetcdfDataset dataset= new NetcdfDataset( f );
+            //NetcdfFile f= NetcdfFile.open( resource );
             
-            vars= (List<Variable>)dataset.getVariables();
-            dataset.close();
+            try (NetcdfDataset dataset = NetcdfDatasets.openDataset( resource ) ) {
+                vars= (List<Variable>)dataset.getVariables();
+            }
             
+            allParameterInfo= new LinkedHashMap<>(vars.size());
+                    
             for (Variable v : vars) {
+                
                 if ( v.getDimensions().isEmpty() ) continue;
+                
+                String name= v.getFullName();
+                
                 if ( v instanceof Structure ) {
                     
                     for ( Variable v2: ((Structure) v).getVariables() ) {
                         if ( !v2.getDataType().isNumeric() ) continue;
-                        StringBuilder description= new StringBuilder( v2.getName()+"[" );
+                        String v2name = v2.getFullName();
+                        StringBuilder description= new StringBuilder( v2name+"[" );
                         for ( int k=0; k<v2.getDimensions().size(); k++ ) {
                             Dimension d= v2.getDimension(k);
                             if ( k>0 ) description.append(",");
                             try {
                                 String n= d.getName();
-                                if ( n!=null && !n.equals(v2.getName()) ) {
+                                if ( n!=null && !n.equals(v2name) ) {
                                     description.append(d.getName()).append("=");
                                 }
                                 description.append(d.getLength());
@@ -436,20 +497,23 @@ public class HDF5DataSourceEditorPanel extends javax.swing.JPanel implements Dat
                         }
                         description.append("]");
                         
-                        parameters.put( v2.getName(), description.toString() );
+                        parameters.put( v2name, description.toString() );
                     }
                     
                 } else {
                 
-                    boolean isFormattedTime= v.getDataType()==DataType.CHAR && v.getRank()==2 && v.getShape(1)>=14 && v.getShape(1)<=30;
-                    if ( !isFormattedTime && !v.getDataType().isNumeric() ) continue;
-                    StringBuilder description= new StringBuilder( v.getName()+"[" );
+                    boolean isFormattedStringsOrTime= v.getDataType()==DataType.CHAR && v.getRank()==2;
+                    if ( isFormattedStringsOrTime ) {
+                        logger.log(Level.FINE, "detected formatted time: {0}", name);
+                    }
+                    if ( !isFormattedStringsOrTime && !v.getDataType().isNumeric() ) continue;
+                    StringBuilder description= new StringBuilder( v.getFullName()+"[" );
                     for ( int k=0; k<v.getDimensions().size(); k++ ) {
                         Dimension d= v.getDimension(k);
                         if ( k>0 ) description.append(",");
                         try {
                             String n= d.getName();
-                            if ( n!=null && !n.equals(v.getName()) ) {
+                            if ( n!=null && !n.equals(name) ) {
                                 description.append(d.getName()).append("=");
                             }
                             description.append(d.getLength());
@@ -458,10 +522,24 @@ public class HDF5DataSourceEditorPanel extends javax.swing.JPanel implements Dat
                         }
                     }
                     description.append("]");
-
-                    parameters.put( v.getName(), description.toString() );
+                    
+                    // begin small kludge for CDAWeb.
+                    AttributeContainer ac= v.attributes();
+                    for ( Attribute a: ac ) {
+                        if ( a.getName().equals("CATDESC") ) {
+                            description.append("<br>").append(a.getStringValue());
+                        }
+                    }
+                    // end small kludge for CDAWeb.
+                    
+                    parameters.put( name, description.toString() );
                     
                 }
+                
+                StringBuilder info= new StringBuilder();
+                info.append(v.getDescription());
+                
+                allParameterInfo.put( name, info.toString() );
             }
 
             //String label= "Select Parameter (%d parameters):";
@@ -484,13 +562,15 @@ public class HDF5DataSourceEditorPanel extends javax.swing.JPanel implements Dat
             fillTree( this.parameterTree, parameters, param );
             
             xParameterTree.setModel( this.parameterTree.getModel() );
-            String sx= params.get( "x" );
+            String sx= params.get( "X" );
+            if ( sx==null ) sx= params.get( "x" );
             if ( sx!=null ) {
                 fillTree( this.xParameterTree, parameters, sx ); //TODO: tree is filled twice.
             }
             
             yParameterTree.setModel( this.parameterTree.getModel() );
-            String sy= params.get( "y" );
+            String sy= params.get( "Y" );
+            if ( sy==null ) sy= params.get( "y" );
             if ( sy!=null ) {
                 fillTree( this.yParameterTree, parameters, sy ); //TODO: tree is filled twice.
             }
@@ -597,7 +677,11 @@ public class HDF5DataSourceEditorPanel extends javax.swing.JPanel implements Dat
         }
             
         if ( whereCB.isSelected() ) {
-            params.put( "where", String.format( "%s%s(%s)", whereParamList.getSelectedItem(), whereOp.getSelectedItem(), whereTF.getText().replaceAll(" ","+") ) );
+            if ( whereParamList.getSelectedItem()!=null ) {
+                params.put( "where", String.format( "%s%s(%s)", whereParamList.getSelectedItem(), whereOp.getSelectedItem(), whereTF.getText().replaceAll(" ","+") ) );
+            } else {
+                params.remove("where");
+            }
         } else {
             params.remove("where");
         }

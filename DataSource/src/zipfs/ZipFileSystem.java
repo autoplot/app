@@ -10,6 +10,7 @@ import java.util.TreeMap;
 import java.util.logging.Level;
 import java.util.regex.Pattern;
 import java.util.zip.ZipEntry;
+import java.util.zip.ZipException;
 import java.util.zip.ZipFile;
 import org.das2.util.filesystem.FileObject;
 import org.das2.util.filesystem.FileSystem;
@@ -21,23 +22,23 @@ import org.das2.util.filesystem.FileSystem;
 public class ZipFileSystem extends FileSystem {
 
     private ZipFile zipFile;
-    private TreeMap<String, ZipFileObject> filemap = new TreeMap<String, ZipFileObject>();
+    private TreeMap<String, ZipFileObject> filemap = new TreeMap<>();
 
     protected ZipFileSystem(URI root) throws IOException {
         super(root);
         if ( !("file".equals(root.getScheme()) ) ) {
             throw new IllegalArgumentException("Cannot access non-local zip file: "+root);
         }
-        if ( !( root.toString().endsWith(".zip") || root.toString().endsWith(".ZIP") 
-                || root.toString().endsWith(".zip/") || root.toString().endsWith(".ZIP/") ) ) {
-            throw new IllegalArgumentException("expected zip file to end with zip: "+root.toString() );
-        }
 
         File f;
         f = new File(root);
 
         // This may throw ZipException, IOException, or SecurityException
-        zipFile = new ZipFile( f );
+        try {
+            zipFile = new ZipFile( f );
+        } catch ( ZipException ex ) {
+            throw new IllegalArgumentException("File is not a properly formatted zip file: "+f,ex);
+        }
 
         // First create the root FileObject, which has no corresponding ZipEntry
         filemap.put("/", new ZipFileObject(this, null, null));
@@ -65,6 +66,12 @@ public class ZipFileSystem extends FileSystem {
         ZipFileObject zfo = new ZipFileObject(this, entry, filemap.get(parentName),n);
         filemap.put(name, zfo);
         filemap.get(parentName).addChildObject(zfo);
+        if ( name.endsWith(".gz") ) {
+            n= name.substring(0,name.length()-3);
+            zfo = new ZipFileObject(this, entry, filemap.get(parentName), n);
+            filemap.put(n, zfo);
+            filemap.get(parentName).addChildObject(zfo);
+        }
     }
 
     // ZipFileObject will need this for opening streams
@@ -80,6 +87,8 @@ public class ZipFileSystem extends FileSystem {
             return filemap.get(f);
         } else if (filemap.containsKey(f+"/")) {  //maybe it's a folder with out trailing /
             return filemap.get(f+"/");
+        } else if ( filemap.containsKey(f+".gz") ) {
+            return filemap.get(f+".gz");
         } else {
             return new ZipFileObject( this, null, null, filename );
         }

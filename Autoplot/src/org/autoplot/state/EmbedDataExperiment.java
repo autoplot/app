@@ -34,6 +34,7 @@ import org.autoplot.dom.DataSourceFilter;
 import org.das2.qds.QDataSet;
 import org.autoplot.datasource.DataSetURI;
 import org.autoplot.datasource.URISplit;
+import org.autoplot.dom.Plot;
 import org.das2.qstream.SimpleStreamFormatter;
 import org.das2.qstream.StreamException;
 import org.das2.qstream.StreamTool;
@@ -154,36 +155,47 @@ public class EmbedDataExperiment {
         Set<URI> result= new HashSet();
         for ( DataSourceFilter dsf: dom.getDataSourceFilters() ) {
             String suri = dsf.getUri();
-            if ( suri.trim().length()==0 ) continue;
-            URISplit split= URISplit.parse(suri);
-            if ( split.resourceUri!=null ) {
-                URI uri= makeCanonical( split.resourceUri );
-                if ( hasNoResource( split ) ) { 
-                    continue;
-                }
-                if ( DataSetURI.isAggregating( uri.toString() ) ) {
-                    try {
-                        String [] rr= DataSetURI.unaggregate( uri.toString(), dom.getTimeRange() );
-                        for ( String r: rr ) {
-                            try {
-                                result.add( new URI( r ) );
-                            } catch (URISyntaxException ex) {
-                                logger.log(Level.SEVERE, ex.getMessage(), ex);
-                            }
+            maybeAddResource( suri, dom, result );
+        }
+        for ( Plot p: dom.getPlots() ) {
+            String s= p.getTicksURI();
+            maybeAddResource( s, dom, result );
+        }
+        String s= dom.getEventsListUri();
+        maybeAddResource( s, dom, result );
+        return result;
+    }
+
+    private static boolean maybeAddResource(String suri, Application dom, Set<URI> result) {
+        if ( suri.trim().length()==0 ) return false;
+        URISplit split= URISplit.parse(suri);
+        if (split.resourceUri!=null) {
+            URI uri= makeCanonical( split.resourceUri );
+            if (hasNoResource( split )) {
+                return false;
+            }
+            if ( DataSetURI.isAggregating( uri.toString() ) ) {
+                try {
+                    String [] rr= DataSetURI.unaggregate( uri.toString(), dom.getTimeRange() );
+                    for ( String r: rr ) {
+                        try {
+                            result.add( new URI( r ) );
+                        } catch (URISyntaxException ex) {
+                            logger.log(Level.SEVERE, ex.getMessage(), ex);
                         }
-                    } catch (FileSystem.FileSystemOfflineException ex) {
-                        logger.log(Level.SEVERE, ex.getMessage(), ex);
-                    } catch (UnknownHostException ex) {
-                        logger.log(Level.SEVERE, ex.getMessage(), ex);
-                    } catch (IOException ex) {
-                        logger.log(Level.SEVERE, ex.getMessage(), ex);
                     }
-                } else {
-                    result.add( uri );
+                } catch (FileSystem.FileSystemOfflineException ex) {
+                    logger.log(Level.SEVERE, ex.getMessage(), ex);
+                } catch (UnknownHostException ex) {
+                    logger.log(Level.SEVERE, ex.getMessage(), ex);
+                } catch (IOException ex) {
+                    logger.log(Level.SEVERE, ex.getMessage(), ex);
                 }
+            } else {
+                result.add( uri );
             }
         }
-        return result;
+        return true;
     }
     
     /**
@@ -210,6 +222,15 @@ public class EmbedDataExperiment {
     }
     
     /**
+     * return true if the URI is only resolved on the local machine.
+     * @param uri the uri
+     * @return true if the URI is only resolved on the local machine.
+     */
+    public static boolean isLocal( URI uri ) {
+        return uri.getScheme().equals("file");
+    }
+    
+    /**
      * save the application, but embed data file resources within the 
      * zip, along with the .vap.  The vap is saved with the name default.vap.
      * When the data source contains a dataset that was created internally (with
@@ -222,6 +243,22 @@ public class EmbedDataExperiment {
      * @throws IOException 
      */
     public static void save( Application dom3, File f ) throws FileNotFoundException, IOException {
+        save( dom3, f, false );
+    }    
+    /**
+     * save the application, but embed data file resources within the 
+     * zip, along with the .vap.  The vap is saved with the name default.vap.
+     * When the data source contains a dataset that was created internally (with
+     * the Jython plot command, for example), it will be formatted as a QStream and 
+     * embedded within the vap.
+     * 
+     * @param dom3 the state to save.
+     * @param f the zip file output name.
+     * @param onlyLocal if true, then don't embed data from remote references.
+     * @throws FileNotFoundException
+     * @throws IOException 
+     */
+    public static void save( Application dom3, File f, boolean onlyLocal ) throws FileNotFoundException, IOException {        
         // too bad I have to do this...  but it doesn't work otherwise...
         Application dom = dom3.getController().getApplicationModel().createState(false);
         QDataSet[] datasets= new QDataSet[dom.getDataSourceFilters().length];
@@ -233,6 +270,17 @@ public class EmbedDataExperiment {
         
         // try to find common path for local file references, so local references aren't embedded.
         Set<URI> uris= getResources(dom);
+        
+        if ( onlyLocal ) {
+            Set<URI> localUris= new HashSet<>();
+            for ( URI uri : uris ) {
+                if ( isLocal(uri) ) {
+                    localUris.add(uri);
+                }
+            }
+            uris= localUris;
+        }
+        
         String commonPath= null;
         for ( URI uri: uris ) {
             if ( uri.getScheme().equals("file") ) {
@@ -261,7 +309,7 @@ public class EmbedDataExperiment {
         ZipOutputStream out=null;
         try {
             out= new ZipOutputStream( fout );
-            for ( URI uri: getResources(dom) ) { // resolve aggregations, etc.
+            for ( URI uri: uris ) { // resolve aggregations, etc.
                 String name= makeRelativeName(commonPath,uri);
                 File file1= DataSetURI.getFile(uri,new NullProgressMonitor());
                 writeToZip( out, name, file1 );
@@ -303,6 +351,24 @@ public class EmbedDataExperiment {
                     nameGenCount++;
                 }
                 dsfCount++;
+            }
+            for ( Plot p: dom.getPlots() ) {
+                String uri = p.getTicksURI();
+                URISplit split= URISplit.parse(uri);
+                if ( uri.trim().length()>0 && !hasNoResource(split) ) {
+                    String name= makeRelativeName(commonPath,split.resourceUri);
+                    split.file= "%{PWD}/"+name;
+                    p.setTicksURI( URISplit.format(split) );
+                } 
+            }
+            {
+                String uri = dom.getEventsListUri();
+                URISplit split= URISplit.parse(uri);
+                if ( uri.trim().length()>0 && !hasNoResource(split) ) {
+                    String name= makeRelativeName(commonPath,split.resourceUri);
+                    split.file= "%{PWD}/"+name;
+                    dom.setEventsListUri( URISplit.format(split) );
+                } 
             }
             ZipEntry e= new ZipEntry("default.vap");
             out.putNextEntry(e);

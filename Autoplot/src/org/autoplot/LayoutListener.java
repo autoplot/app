@@ -9,6 +9,7 @@ import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
 import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
+import java.io.IOException;
 import java.util.logging.Logger;
 import javax.swing.Timer;
 import org.das2.graph.DasCanvas;
@@ -25,7 +26,7 @@ public class LayoutListener implements PropertyChangeListener {
 
     ApplicationModel model;  
     Timer t;
-    private static final Logger logger = org.das2.util.LoggerManager.getLogger("autoplot.dom");
+    private static final Logger logger = org.das2.util.LoggerManager.getLogger("autoplot.dom.layout.listener");
     public static final String PENDING_CHANGE_AUTOLAYOUT= "autolayout";
 
     public LayoutListener(ApplicationModel model) {
@@ -51,38 +52,59 @@ public class LayoutListener implements PropertyChangeListener {
         final DasCanvas dasCanvas= cc.getDasCanvas();
         
         if (model.dom.getOptions().isAutolayout() && dasCanvas.getWidth()>0 ) {
-            logger.log(Level.FINE, "property change: {0}", evt.getPropertyName());
+            logger.log(Level.FINER, "property change: {0}", evt.getPropertyName());
             if (evt.getSource() instanceof Component &&
                     ((Component) evt.getSource()).isVisible()) {
                 if (t == null) {
-                    logger.fine("create timer ");
+                    logger.finer("create timer ");
                     t = new Timer(100, new ActionListener() {
                         @Override
-                        public synchronized void actionPerformed(ActionEvent e) {
-                            if ( model.dom.getOptions().isAutolayout() ) { //bug 3034795 (now 411)
-                                logger.fine("do autolayout");
-                                ApplicationController applicationController= model.getDocumentModel().getController();
-                                cc.performingChange(LayoutListener.this,PENDING_CHANGE_AUTOLAYOUT);
-                                dasCanvas.performingChange(LayoutListener.this, PENDING_CHANGE_AUTOLAYOUT);
-                                LayoutUtil.autolayout( dasCanvas,
-                                        applicationController.getRow(), applicationController.getColumn() );
-                                dasCanvas.changePerformed(LayoutListener.this, PENDING_CHANGE_AUTOLAYOUT);
-                                cc.changePerformed(LayoutListener.this,PENDING_CHANGE_AUTOLAYOUT);
-                            } else {
-                                // the timer was tickled, but in the meantime the autolayout was set to false.
-                                dasCanvas.performingChange(LayoutListener.this, PENDING_CHANGE_AUTOLAYOUT);
-                                dasCanvas.changePerformed(LayoutListener.this, PENDING_CHANGE_AUTOLAYOUT);
-                                cc.performingChange(LayoutListener.this, PENDING_CHANGE_AUTOLAYOUT);
-                                cc.changePerformed(LayoutListener.this,PENDING_CHANGE_AUTOLAYOUT);
+                        public void actionPerformed(ActionEvent e) {
+                            synchronized ( LayoutListener.this ) {
+                                if ( model.dom.getOptions().isAutolayout() ) { //bug 3034795 (now 411)
+                                    logger.finer("do autolayout");
+                                    ApplicationController applicationController= model.getDocumentModel().getController();
+                                    cc.performingChange(LayoutListener.this,PENDING_CHANGE_AUTOLAYOUT);
+                                    dasCanvas.performingChange(LayoutListener.this, PENDING_CHANGE_AUTOLAYOUT);
+//                                    try {
+//                                        ScriptContext.save( String.format( "/tmp/ap/%09d.before.vap", System.currentTimeMillis() ) );
+//                                    } catch (IOException ex) {
+//                                        Logger.getLogger(LayoutListener.class.getName()).log(Level.SEVERE, null, ex);
+//                                    }
+//                                    System.err.println( "marginRowBefore: "+applicationController.getRow() );
+                                    LayoutUtil.autolayout( dasCanvas,
+                                            applicationController.getRow(), applicationController.getColumn() );
+//                                    System.err.println( "marginRowAfter: "+applicationController.getRow() );
+//                                    try {
+//                                        ScriptContext.save( String.format( "/tmp/ap/%09d._after.vap", System.currentTimeMillis() ) );
+//                                    } catch (IOException ex) {
+//                                        Logger.getLogger(LayoutListener.class.getName()).log(Level.SEVERE, null, ex);
+//                                    }
+                                    dasCanvas.changePerformed(LayoutListener.this, PENDING_CHANGE_AUTOLAYOUT);
+                                    cc.changePerformed(LayoutListener.this,PENDING_CHANGE_AUTOLAYOUT);
+                                } else {
+                                    // the timer was tickled, but in the meantime the autolayout was set to false.
+                                    dasCanvas.performingChange(LayoutListener.this, PENDING_CHANGE_AUTOLAYOUT);
+                                    dasCanvas.changePerformed(LayoutListener.this, PENDING_CHANGE_AUTOLAYOUT);
+                                    cc.performingChange(LayoutListener.this, PENDING_CHANGE_AUTOLAYOUT);
+                                    cc.changePerformed(LayoutListener.this,PENDING_CHANGE_AUTOLAYOUT);
+                                }
                             }
                         }
                     });
                     t.setRepeats(false);
                 }
-
-                cc.registerPendingChange(LayoutListener.this,PENDING_CHANGE_AUTOLAYOUT);
-                dasCanvas.registerPendingChange(this, PENDING_CHANGE_AUTOLAYOUT);
-                t.restart();
+                
+                synchronized ( LayoutListener.this ) {
+                    if ( dasCanvas.isPendingChanges(PENDING_CHANGE_AUTOLAYOUT) ) {
+                        logger.finer("autolayout is already pending");
+                    } else {
+                        cc.registerPendingChange(LayoutListener.this,PENDING_CHANGE_AUTOLAYOUT);
+                        dasCanvas.registerPendingChange(LayoutListener.this, PENDING_CHANGE_AUTOLAYOUT);
+                        t.restart();
+                    }
+                }
+                
 
             }
         }

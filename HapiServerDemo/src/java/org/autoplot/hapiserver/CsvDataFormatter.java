@@ -3,8 +3,9 @@ package org.autoplot.hapiserver;
 
 import java.io.IOException;
 import java.io.OutputStream;
-import java.text.DecimalFormat;
+import java.nio.charset.Charset;
 import java.text.ParseException;
+import java.util.Arrays;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.das2.datum.Datum;
@@ -12,9 +13,9 @@ import org.das2.datum.Units;
 import org.das2.datum.UnitsUtil;
 import org.das2.datum.format.DatumFormatter;
 import org.das2.datum.format.EnumerationDatumFormatter;
+import org.das2.datum.format.FormatStringFormatter;
 import org.das2.datum.format.TimeDatumFormatter;
 import org.das2.qds.DDataSet;
-import org.das2.util.NumberFormatUtil;
 import org.json.JSONObject;
 import org.das2.qds.DataSetUtil;
 import org.das2.qds.QDataSet;
@@ -33,49 +34,124 @@ public class CsvDataFormatter implements DataFormatter {
     
     boolean[] unitsFormatter;
     DatumFormatter[] datumFormatter;
+    
+    /**
+     * true if the field needs to be quoted.
+     */
     boolean[] quotes;
+    
+    /**
+     * the lengths of each field, for isotime and string types.
+     */
+    int[] lengths;
+    String[] fill;
     Units[] units;
+    
+    private static final Charset CHARSET_UTF8= Charset.forName("UTF-8");
+    
+    /**
+     * @see AsciiTableDataSourceFormat#getDataFormatter
+     * @param df format, such as %.2f or %d
+     * @param u the units to fall back on.
+     * @return the DatumFormatter.
+     */
+    private DatumFormatter getDataFormatter( String df, Units u ) {
+        try {
+            if ( !df.contains("%") ) df= "%"+df;
+            //TODO: would be nice if we could verify formatter.  I had %f5.2 instead of %5.2f and it wasn't telling me.
+            return new FormatStringFormatter( df, false );
+        } catch ( RuntimeException ex ) {
+            logger.log( Level.SEVERE, ex.getMessage(), ex);
+            return u.getDatumFormatterFactory().defaultFormatter();
+        }
+    }
+    
+    /**
+     * return the parameter number for the column.
+     * @param col
+     * @return 
+     */
+    int columnMap( int col ) {
+        return col;
+    }
     
     @Override
     public void initialize( JSONObject info, OutputStream out, QDataSet record) {
-        unitsFormatter= new boolean[record.length()];
-        datumFormatter= new DatumFormatter[record.length()];
-        quotes= new boolean[record.length()];
-        units= new Units[record.length()];
-        for ( int i=0; i<record.length(); i++ ) {
-            QDataSet field= record.slice(i);
-            Units u= (Units)field.property(QDataSet.UNITS);
-            units[i]= u;
-            if (  u!=null && UnitsUtil.isTimeLocation(u) ) {
-                unitsFormatter[i]= true;
-                datumFormatter[i]= TimeDatumFormatter.DEFAULT;
-                quotes[i]= false;
-            } else if ( u!=null && UnitsUtil.isNominalMeasurement(u) ) {
-                unitsFormatter[i]= true;
-                datumFormatter[i]= new EnumerationDatumFormatter();
-                quotes[i]= true;
-            } else {
-                unitsFormatter[i]= false;
-                final DecimalFormat format= NumberFormatUtil.getDecimalFormat( "0.###E00;-#");
-                datumFormatter[i]= new DatumFormatter() {
-                    @Override
-                    public String format(Datum datum) {
-                        return format.format( datum.doubleValue(datum.getUnits()) );
-                    }
-                };
-                quotes[i]= false;
-            }
-        }
-        if ( false ) {
-            System.err.println("===");
+        try {
+            unitsFormatter= new boolean[record.length()];
+            datumFormatter= new DatumFormatter[record.length()];
+            quotes= new boolean[record.length()];
+            lengths= new int[record.length()];
+            units= new Units[record.length()];
+            fill= new String[record.length()];
+            int[] lens= Util.getNumberOfElements(info);
+            JSONArray parameters= info.getJSONArray("parameters");
+            JSONObject parameter= parameters.getJSONObject(0);
+            int iparam=0;
+            int iele=0;
             for ( int i=0; i<record.length(); i++ ) {
-                System.err.println( String.format( "%4d %s", i,datumFormatter[i] ) );
+                QDataSet field= record.slice(i);
+                Units u= (Units)field.property(QDataSet.UNITS);
+                if ( u==null ) u= Units.dimensionless;
+                units[i]= u;
+                if ( UnitsUtil.isTimeLocation(u) ) {
+                    unitsFormatter[i]= true;
+                    datumFormatter[i]= TimeDatumFormatter.DEFAULT;
+                    quotes[i]= false;
+                    if ( parameter.has("length") ) {
+                        lengths[i]= parameter.getInt("length");
+                    } else {
+                        throw new IllegalStateException("isotime measurement needs length");
+                    }
+                    
+                } else if ( UnitsUtil.isNominalMeasurement(u) ) {
+                    unitsFormatter[i]= true;
+                    datumFormatter[i]= new EnumerationDatumFormatter();
+                    quotes[i]= true;
+                    if ( parameter.has("length") ) {
+                        lengths[i]= parameter.getInt("length");
+                    } else {
+                        throw new IllegalStateException("string measurement needs length");
+                    }
+                    
+                } else {
+                    String dfs= (String)field.property(QDataSet.FORMAT);
+                    if ( dfs!=null && dfs.trim().length()>0 ) {
+                        datumFormatter[i]= getDataFormatter( dfs, u );
+                    } else {
+                        datumFormatter[i]= u.getDatumFormatterFactory().defaultFormatter();
+                    }
+                    unitsFormatter[i]= false;
+                    quotes[i]= false;
+                    fill[i]= parameter.getString("fill");
+                }
+                iele++;
+                if ( iele==lens[iparam] ) {
+                    iparam++;
+                    iele=0;
+                    if ( iparam==parameters.length() ) {
+                        if ( i+1!=record.length() ) {
+                            throw new IllegalStateException("things have gone wrong");
+                        }
+                    } else {
+                        parameter= parameters.getJSONObject(iparam);
+                    }
+                }
             }
-            System.err.println("===");
+//            if ( false ) {
+//                System.err.println("===");
+//                for ( int i=0; i<record.length(); i++ ) {
+//                    System.err.println( String.format( "%4d %s", i,datumFormatter[i] ) );
+//                }
+//                System.err.println("===");
+//            }
+        } catch (JSONException ex) {
+            logger.log(Level.SEVERE, null, ex);
         }
         
     }
 
+    
     @Override
     public void sendRecord(OutputStream out, QDataSet record) throws IOException {
         int n= record.length();
@@ -85,9 +161,22 @@ public class CsvDataFormatter implements DataFormatter {
             fieldDatum= DataSetUtil.asDatum(field);
             if ( quotes[i] ) out.write('"');
             if ( fieldDatum.isFill() ) {
-                out.write( String.valueOf( field.value() ).getBytes() );
+                String f= fill[i];
+                if ( f==null ) {
+                    logger.log(Level.SEVERE, "fill is not defined for parameter formatted to column #{0}", i);
+                    throw new IllegalStateException("fill is not defined for parameter formatted to column #" + i);
+                }
+                out.write( f.getBytes() );
             } else {
-                out.write( datumFormatter[i].format( fieldDatum ).getBytes() );
+                String s=  datumFormatter[i].format( fieldDatum, units[i] );
+                if ( quotes[i] ) {
+                    s= s.replaceAll("\"", "\"\""); // See https://github.com/hapi-server/data-specification/issues/99
+                }
+                byte[] bytes= s.getBytes(CHARSET_UTF8);
+                if ( lengths[i]>0 && bytes.length>lengths[i] ) {
+                    bytes= Util.trimUTF8( bytes, lengths[i] );
+                }
+                out.write( bytes );
             }
             if ( quotes[i] ) out.write('"');
             if ( i<n-1 ) out.write(',');
@@ -191,7 +280,7 @@ public class CsvDataFormatter implements DataFormatter {
 "        \"message\": \"OK request successful\"\n" +
 "    },\n" +
 "    \"stopDate\": \"2017-08-23T16:00:00.000Z\",\n" +
-"    \"uri\": \"file:/home/jbf/public_html/1wire/data/$Y/$m/$d/0B000800408DD710.$Y$m$d.d2s\"\n" +
+"    \"x_uri\": \"file:/home/jbf/public_html/1wire/data/$Y/$m/$d/0B000800408DD710.$Y$m$d.d2s\"\n" +
 "}");
         CsvDataFormatter m= new CsvDataFormatter();
         QDataSet rec= m.initializeReader( info, "2017-08-22T22:22:03.000Z,7.318E01");

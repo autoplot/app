@@ -12,6 +12,7 @@ import java.net.MalformedURLException;
 import java.net.URI;
 import java.net.URL;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.logging.Level;
@@ -113,7 +114,7 @@ public class WGetFileSystem extends WebFileSystem {
     }
     
     @Override
-    protected void downloadFile(String filename, File f, File partfile, ProgressMonitor monitor) throws IOException {
+    protected Map<String,String> downloadFile(String filename, File f, File partfile, ProgressMonitor monitor) throws IOException {
         String[] cmd;
         if ( WGetFileSystemFactory.useCurl ) {
             cmd= new String[] { WGetFileSystemFactory.exe, "-o", partfile.toString(), getRootURL().toString() + filename };
@@ -160,6 +161,7 @@ public class WGetFileSystem extends WebFileSystem {
             logger.log(Level.WARNING, "unable to rename file {0} to {1}", new Object[]{partfile, f});
         }
         
+        return Collections.EMPTY_MAP;
     }
 
     @Override
@@ -204,20 +206,16 @@ public class WGetFileSystem extends WebFileSystem {
         }
         
         Map<String,DirectoryEntry> result;
-        if ( isListingCached(directory) ) {
+        if ( isListingCached(directory) ) {  // function checks timeout LISTING_TIMEOUT_MS
             logger.log(Level.FINE, "using cached listing for {0}", directory);
 
             File listing= listingFile(directory);
             
             URL[] list=null;
-            FileInputStream fin=null;
-            try {
-                fin= new FileInputStream(listing);
+            try (FileInputStream fin = new FileInputStream(listing)) {
                 list = HtmlUtil.getDirectoryListing(getURL(directory), fin );
             } catch (CancelledOperationException ex) {
                 throw new IllegalArgumentException(ex); // shouldn't happen since it's local
-            } finally {
-                if ( fin!=null ) fin.close();
             }
             
             assert list!=null;

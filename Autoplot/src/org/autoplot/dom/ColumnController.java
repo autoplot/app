@@ -12,6 +12,8 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import org.das2.DasNameException;
+import org.das2.graph.DasAxis;
 import org.das2.graph.DasCanvas;
 import org.das2.graph.DasColumn;
 import org.das2.graph.DasDevicePosition;
@@ -28,19 +30,19 @@ public class ColumnController extends DomNodeController {
     Column column;
     DasColumn dasColumn;
     Canvas canvas;
+    ApplicationController applicationController;
 
-    ColumnController( Column column ) {
+    ColumnController( ApplicationController applicationController, Column column ) {
         super(column);
         this.column= column;
+        this.applicationController= applicationController;
         column.controller= this;
     }
 
-    protected void createDasPeer( Canvas canvas, DasColumn parent ) {
-        DasCanvas c= canvas.controller.getDasCanvas();
-        dasColumn= DasColumn.create( c, parent, column.getLeft(), column.getRight() );
-        final List<String> minList= Arrays.asList( DasDevicePosition.PROP_MINIMUM, DasDevicePosition.PROP_EMMINIMUM, DasDevicePosition.PROP_PTMINIMUM );
-        final List<String> maxList= Arrays.asList( DasDevicePosition.PROP_MAXIMUM, DasDevicePosition.PROP_EMMAXIMUM, DasDevicePosition.PROP_PTMAXIMUM );
-        PropertyChangeListener list= new PropertyChangeListener() {
+    PropertyChangeListener dasColumnPosListener;
+    
+    PropertyChangeListener createDasColumnPosListener( final List<String> minList, final List<String> maxList ) {
+        dasColumnPosListener= new PropertyChangeListener( ) {
             @Override
             public void propertyChange(PropertyChangeEvent evt) {
                 LoggerManager.logPropertyChangeEvent(evt);  
@@ -51,8 +53,13 @@ public class ColumnController extends DomNodeController {
                 }
             }
         };
-        dasColumn.addPropertyChangeListener(list);
-        list= new PropertyChangeListener() {
+        return dasColumnPosListener;
+    }
+      
+    PropertyChangeListener columnPosListener;
+    
+    PropertyChangeListener createColomnPosListener( ) {
+        columnPosListener= new PropertyChangeListener() {
             @Override            
             public void propertyChange(PropertyChangeEvent evt) {
                 LoggerManager.logPropertyChangeEvent(evt);  
@@ -71,8 +78,20 @@ public class ColumnController extends DomNodeController {
                 }
             }
         };
-        column.addPropertyChangeListener(Column.PROP_LEFT,list);
-        column.addPropertyChangeListener(Column.PROP_RIGHT,list);
+        return columnPosListener;
+    }
+    
+    protected void createDasPeer( Canvas canvas, DasColumn parent ) {
+        DasCanvas c= canvas.controller.getDasCanvas();
+        dasColumn= DasColumn.create( c, parent, column.getLeft(), column.getRight() );
+        try {
+            if ( this.column.getId().length()>0 ) dasColumn.setDasName( this.column.getId() );
+        } catch (DasNameException ex) {
+            logger.log(Level.SEVERE, null, ex);
+        }                
+        applicationController.bind( column, Column.PROP_LEFT, dasColumn, DasDevicePosition.PROP_MINLAYOUT );
+        applicationController.bind( column, Column.PROP_RIGHT, dasColumn, DasDevicePosition.PROP_MAXLAYOUT );
+        
         this.canvas= canvas;
     }
 
@@ -89,6 +108,16 @@ public class ColumnController extends DomNodeController {
         s1= DasDevicePosition.formatFormatStr( DasDevicePosition.parseLayoutStr(ss[1]) );
         if ( !this.column.right.equals(s1) ) return false;
         return true;
+    }
+    
+    public void removeBindings() {
+        applicationController.unbind(column);
+    }
+    
+    public void removeReferences() {
+        //column= null;
+        //dasColumn= null;
+        //canvas= null;
     }
     
     public DasColumn getDasColumn() {

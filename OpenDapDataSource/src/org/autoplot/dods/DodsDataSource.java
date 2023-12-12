@@ -30,6 +30,8 @@ import java.util.Collections;
 import org.das2.util.monitor.CancelledOperationException;
 import org.das2.datum.Units;
 import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.StringTokenizer;
 import java.util.logging.Level;
@@ -46,6 +48,7 @@ import org.das2.qds.MutablePropertyDataSet;
 import org.autoplot.datasource.DataSetURI;
 import org.autoplot.datasource.DataSourceUtil;
 import org.autoplot.datasource.URISplit;
+import org.das2.qds.ops.Ops;
 import org.das2.qds.util.TransposeRankNDataSet;
 
 /**
@@ -116,7 +119,7 @@ public class DodsDataSource extends AbstractDataSource {
     public DodsDataSource(URI uri) throws IOException {
 
         super(uri);
-        logger.entering( "org.virbo.dods.DodsDataSource", "DodsDataSource {0}", uri );
+        logger.entering( "org.autoplot.dods.DodsDataSource", "DodsDataSource {0}", uri );
 
         // remove the .dds (or .html) extension.
         String surl = uri.getRawSchemeSpecificPart();
@@ -156,7 +159,7 @@ public class DodsDataSource extends AbstractDataSource {
         } catch (MalformedURLException ex) {
             throw new RuntimeException(ex);
         }
-        logger.exiting( "org.virbo.dods.DodsDataSource", "DodsDataSource {0}", uri );
+        logger.exiting( "org.autoplot.dods.DodsDataSource", "DodsDataSource {0}", uri );
     }
 
     private String getIstpConstraint(DodsAdapter da, Map meta, MyDDSParser parser, String variable) throws DDSException {
@@ -266,7 +269,7 @@ public class DodsDataSource extends AbstractDataSource {
     public QDataSet getDataSet(ProgressMonitor mon) throws FileNotFoundException, MalformedURLException, 
         IOException, ParseException, DDSException, CancelledOperationException, DASException, InvalidParameterException, DAP2Exception {
 
-        logger.entering( "org.virbo.dods.DodsDataSource", "getDataSet" );
+        logger.entering( "org.autoplot.dods.DodsDataSource", "getDataSet" );
         mon.setTaskSize(-1);
         mon.started();
 
@@ -356,20 +359,27 @@ public class DodsDataSource extends AbstractDataSource {
             val= metadata.get("title");
             if ( val!=null ) {
                 ds.putProperty( QDataSet.TITLE, String.valueOf(val) );
+            } else {
+                val= metadata.get("long_name");
+                ds.putProperty( QDataSet.TITLE, String.valueOf(val) );
             }
-            
+               
             String sunits = (String) metadata.get("units");
-            if (sunits != null) {
-                if (sunits.contains("since")) {
-                    Units u;
-                    try {
-                        u = Units.lookupTimeUnits(sunits);
-                        ds.putProperty(QDataSet.UNITS, u);
-                    } catch (java.text.ParseException ex) {
-                        logger.log(Level.SEVERE, null, ex);
-                    }
+            ds= DodsAdapter.checkTimeUnits( sunits, ds );
+            
+            // check depends
+            for ( int i= 0; i<ds.rank(); i++ ) {
+                QDataSet dep= (QDataSet) ds.property( "DEPEND_"+i );
+                if ( dep!=null ) {
+                    String n=(String)dep.property(QDataSet.NAME);
+                    adapter.setVariable(n);
+                    Map<String,Object> m= getMetaData(n);
+                    //adapter.loadDataset(mon, m);
+                    adapter.setDependName( i,null );
+                    dep= adapter.getDataSet(m);
+                    ds.putProperty( "DEPEND_"+i, dep );
                 }
-            }            
+            }
             
             if (isIstp ) {
                 assert interpretedMetadata!=null;
@@ -381,7 +391,26 @@ public class DodsDataSource extends AbstractDataSource {
 
             try {
                 AttributeTable at = das.getAttributeTable(variable);
-                ds.putProperty(QDataSet.METADATA,at);
+                Map<String,Object> meta= new LinkedHashMap<>();
+                Enumeration en= at.getNames();
+                while ( en.hasMoreElements() ) {
+                    String n= String.valueOf(en.nextElement());
+                    Attribute a= at.getAttribute(n);
+                    Iterator i= a.getValuesIterator();
+                    if ( i.hasNext() ) {
+                        Object o= i.next();
+                        meta.put( n, o );
+                        if ( n.equals("_FillValue") ) {
+                            try {
+                                double d= Double.parseDouble(String.valueOf(o));
+                                ds.putProperty( QDataSet.FILL_VALUE, d );
+                            } catch ( NumberFormatException ex ) {
+                                logger.fine("unable to parse fill value");
+                            }
+                        }
+                    }
+                }
+                ds.putProperty(QDataSet.METADATA,meta);
             } catch ( NoSuchAttributeException ex ) {
                 logger.log(Level.WARNING,ex.getMessage(),ex);
             }
@@ -395,7 +424,7 @@ public class DodsDataSource extends AbstractDataSource {
             return ds;
             
         } finally {
-            logger.exiting( "org.virbo.dods.DodsDataSource", "getDataSet" );
+            logger.exiting( "org.autoplot.dods.DodsDataSource", "getDataSet" );
             mon.finished();
 
         }

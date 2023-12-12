@@ -1,18 +1,21 @@
 
 package test.endtoend;
 
+import java.awt.Color;
 import java.awt.image.BufferedImage;
 import java.io.BufferedReader;
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.FileOutputStream;
-import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.PrintStream;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.io.PrintWriter;
+import java.net.URISyntaxException;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.security.MessageDigest;
@@ -20,6 +23,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map.Entry;
 import javax.imageio.ImageIO;
+import org.autoplot.AutoplotUtil;
 import org.das2.util.filesystem.HtmlUtil;
 import org.das2.util.monitor.CancelledOperationException;
 import org.das2.util.monitor.NullProgressMonitor;
@@ -31,11 +35,20 @@ import org.das2.qds.ops.Ops;
 import static org.autoplot.ScriptContext.*;
 import org.autoplot.bookmarks.Bookmark;
 import org.autoplot.bookmarks.BookmarksException;
+import org.autoplot.datasource.AutoplotSettings;
 import org.autoplot.dom.Application;
 import org.autoplot.dom.DataSourceFilter;
 import org.autoplot.state.StatePersistence;
 import org.autoplot.datasource.DataSetURI;
+import org.autoplot.datasource.DataSourceUtil;
 import org.autoplot.datasource.URISplit;
+import org.das2.datum.Units;
+import org.das2.datum.UnitsUtil;
+import org.das2.qds.SemanticOps;
+import org.das2.system.DefaultMonitorFactory;
+import org.das2.system.MonitorFactory;
+import org.das2.util.LoggerManager;
+import org.das2.util.monitor.ProgressMonitor;
 import org.xml.sax.SAXException;
 
 /**
@@ -69,24 +82,59 @@ public class Test140 {
          return name;
       }
     }
+    
+    private static void listAllPendingTasks() {
+        MonitorFactory mf= getDocumentModel().getController().getMonitorFactory();
+        if ( mf instanceof DefaultMonitorFactory ) {
+            DefaultMonitorFactory dmf= (DefaultMonitorFactory)mf;
+            DefaultMonitorFactory.MonitorEntry[] mes= dmf.getMonitors();
+            for ( DefaultMonitorFactory.MonitorEntry me: mes ) {
+                ProgressMonitor m= me.getMonitor();
+                if ( !( m.isCancelled() || m.isFinished() ) ) {
+                    System.err.println( m );  // sometimes we can catch one!
+                }
+            }
+        }
+    }    
+    
     /**
-     *
+     * 
      * @param uri the URI to load
      * @param iid the index of the test.
      * @param doTest if true, then expect a match, otherwise an ex prefix is used to indicate there should not be a match
+     * @param isPublic
+     * @return
+     * @throws Exception 
+     */
+    private static String do1( String uri, int iid, boolean doTest, boolean isPublic ) throws Exception {
+        return do1( uri, "", iid, doTest, isPublic );
+    }
+    
+    /**
+     *
+     * @param uri the URI to load
+     * @param shortId empty or the short unique name for the test
+     * @param iid the index of the test.
+     * @param doTest if true, then expect a match, otherwise an ex prefix is used to indicate there should not be a match
+     * @param isPublic if true, the URI can be printed in public logs and the image available on the web.
      * @return the ID of a product to test against a reference.
      * @throws Exception
      */
-    private static String do1( String uri, int iid, boolean doTest, boolean isPublic ) throws Exception {
+    private static String do1( String uri, String shortId, int iid, boolean doTest, boolean isPublic ) throws Exception {
 
-        System.err.printf( "== %03d ==\n", iid );
+        System.err.printf( "== %03d %03d %s ==\n", testid, iid, shortId );
         if ( isPublic ) {
             System.err.printf( "uri: %s\n", uri );
         } else {
             System.err.printf( "uri: (uri is not public)\n" );
         }
 
-        String label= String.format( "test%03d_%03d", testid, iid );
+        String label;
+        if ( shortId.length()>0 ) {
+            label= String.format( "test%03d_%s", testid, shortId );
+        } else {
+            label= String.format( "test%03d_%03d", testid, iid );
+        }
 
         double tsec,psec;
         long t0= System.currentTimeMillis();
@@ -117,6 +165,8 @@ public class Test140 {
             } else {
                 throw new IllegalArgumentException("a dataset from the vap was null: "+uri );
             }
+            psec= (System.currentTimeMillis()-t0)/1000.;
+            
         } else if ( uri.startsWith("script:") ) {
             System.err.println("skipping script");
         } else if ( uri.startsWith("bookmarks:") ) {
@@ -129,11 +179,14 @@ public class Test140 {
             if ( ds!=null ) {
                 if ( isPublic ) {
 
-                    MutablePropertyDataSet hist= (MutablePropertyDataSet) Ops.autoHistogram(ds);
-                    hist.putProperty( QDataSet.TITLE, uri );
+                    Units u= SemanticOps.getUnits(ds);
+                    if ( !UnitsUtil.isNominalMeasurement(u) ) {
+                        MutablePropertyDataSet hist= (MutablePropertyDataSet) Ops.autoHistogram(ds);
+                        hist.putProperty( QDataSet.TITLE, uri );
 
-                    hist.putProperty( QDataSet.LABEL, label );
-                    formatDataSet( hist, label+".qds");
+                        hist.putProperty( QDataSet.LABEL, label );
+                        formatDataSet( hist, label+".qds");        
+                    }
 
                     QDataSet dep0= (QDataSet) ds.property( QDataSet.DEPEND_0 );
                     if ( dep0!=null ) {
@@ -148,10 +201,14 @@ public class Test140 {
                     System.err.println("TODO Turkey: Make a hash of the .qds of the data");
                 }
 
+                listAllPendingTasks();
+                
+                reset();
                 plot( ds );
                 setCanvasSize( 450, 300 );
-                ScriptContext.getDocumentModel().getCanvases(0).getMarginColumn().setLeft("5.0em");
-                ScriptContext.getDocumentModel().getCanvases(0).getMarginColumn().setRight("100.00%-10.0em");
+                getDocumentModel().getOptions().setCanvasFont("sans-10");
+                getDocumentModel().getCanvases(0).getMarginColumn().setLeft("5.0em");
+                getDocumentModel().getCanvases(0).getMarginColumn().setRight("100.00%-10.0em");
                 
                 int i= uri.lastIndexOf("/");
 
@@ -182,22 +239,27 @@ public class Test140 {
         String result;
 
         String name;
-        if ( doTest ) {            
-            String id= URLEncoder.encode( uri, "US-ASCII" );
-            id= id.replaceAll("%3A", "" );
-            id= id.replaceAll("%2F%2F", "_" );
-            id= id.replaceAll("%[0-9A-F][0-9A-F]","_");
-            //id= id.replaceAll("%2F","_");
-            //id= id.replaceAll("%3F","_");
-            //id= id.replaceAll("%26","_");
-            //id= id.replaceAll("%7E","_"); // twiddle
-            //id= id.replaceAll("%2B","_"); // colon
-            //id= id.replaceAll("=","_");
-            if ( id.length()>150 ) { // ext4 filename length limits...
-                id= id.substring(0,150) + "..." + String.format( "%016d", id.hashCode() );
-            }
-            if ( !isPublic ) {
-                id= String.format("%08x",id.hashCode());
+        if ( doTest ) {
+            String id;
+            if ( shortId.length()==0 ) {
+                id= URLEncoder.encode( uri, "US-ASCII" );
+                id= id.replaceAll("%3A", "" );
+                id= id.replaceAll("%2F%2F", "_" );
+                id= id.replaceAll("%[0-9A-F][0-9A-F]","_");
+                //id= id.replaceAll("%2F","_");
+                //id= id.replaceAll("%3F","_");
+                //id= id.replaceAll("%26","_");
+                //id= id.replaceAll("%7E","_"); // twiddle
+                //id= id.replaceAll("%2B","_"); // colon
+                //id= id.replaceAll("=","_");
+                if ( id.length()>150 ) { // ext4 filename length limits...
+                    id= id.substring(0,150) + "..." + String.format( "%016d", id.hashCode() );
+                }
+                if ( !isPublic ) {
+                    id= String.format("%08x",id.hashCode());
+                }
+            } else {
+                id = shortId;
             }
             name= String.format( "test%03d_%s", testid, id );
             result= name;
@@ -211,10 +273,10 @@ public class Test140 {
         if ( isPublic ) {
             writeToPng( name1 );
         } else {
-            writeToPng( "/home/jbf/ct/hudson/privateArtifacts/"+name1 );
-            int width= getApplicationModel().getDocumentModel().getController().getCanvas().getWidth();
-            int height= getApplicationModel().getDocumentModel().getController().getCanvas().getHeight();
-            BufferedImage image = getApplicationModel().getDocumentModel().getController().getCanvas().getController().getDasCanvas().getImage( width, height );
+            writeToPng( "/home/jbf/ct/hudson/private/test/"+name1 );
+            int width= getApplicationModel().getDom().getController().getCanvas().getWidth();
+            int height= getApplicationModel().getDom().getController().getCanvas().getHeight();
+            BufferedImage image = getApplicationModel().getDom().getController().getCanvas().getController().getDasCanvas().getImage( width, height );
             ByteArrayOutputStream outputStream = new ByteArrayOutputStream();
             ImageIO.write(image, "png", outputStream);
             byte[] data = outputStream.toByteArray();
@@ -233,13 +295,15 @@ public class Test140 {
             System.err.printf( "Read in %9.3f seconds (%s): %s\n", tsec, label, uri );
             System.err.printf( "Plot in %9.3f seconds (%s): %s\n", psec, label, uri );
         } else {
-            System.err.printf( "wrote to file: %s\n", "/home/jbf/ct/hudson/privateArtifacts/"+name1  );
+            System.err.printf( "wrote to file: %s\n", "/home/jbf/ct/hudson/private/test/"+name1  );
             System.err.printf( "Read in %9.3f seconds (%s): %s\n", tsec, label, "(uri is not public)" );
             System.err.printf( "Plot in %9.3f seconds (%s): %s\n", psec, label, "(uri is not public)" );            
         }
 
         if ( uri.endsWith(".vap") || uri.contains(".vap?timerange=") ) {
             reset();
+            ScriptContext.getDocumentModel().getOptions().setColor( Color.BLACK );
+            ScriptContext.getDocumentModel().getOptions().setBackground( Color.WHITE );
         }
         
         return result;
@@ -285,19 +349,25 @@ public class Test140 {
     private static int doHtml( URL url, int iid, Map<String,Exception> exceptions, Map<String,Integer> exceptionNumbers ) throws IOException, CancelledOperationException {
         try (InputStream in = url.openStream()) {
             URL[] urls= HtmlUtil.getDirectoryListing(url,in,false);
-            List<URL> result= new ArrayList();
+            List<URL> result= new ArrayList<>();
+            List<String> sresult= new ArrayList<>();
             for ( URL url1: urls ) {
                 if ( url1.getFile().endsWith(".vap") || url1.getFile().contains("autoplot.jnlp?") ) {
-                    result.add(url1);
+                    String s= url1.toString();
+                    if ( s.startsWith("http://autoplot.org/autoplot.jnlp?") ) {
+                        s= s.substring(34);
+                    }
+                    s= s.replaceAll(" ","+");
+                    s= DataSourceUtil.unescape(s);
+                    sresult.add(s);
                 }
             }
-            for ( URL url1 : result ) {
-                String uri= url1.toString();
+            for ( String suri : sresult ) {
                 try {
-                    do1(url1.toString(), iid, true, true );
+                    do1(suri, iid, true, true );
                 } catch (Exception ex) {
-                    exceptions.put( uri, ex );
-                    exceptionNumbers.put( uri, iid );
+                    exceptions.put( suri, ex );
+                    exceptionNumbers.put( suri, iid );
                 } finally {
                     iid++;
                 }
@@ -305,18 +375,44 @@ public class Test140 {
             return iid;        
         }
     }
+
+    /**
+     * return true if it is a URI or false if it isn't (and is presumably a test name).
+     * @param s
+     * @return 
+     */
+    private static boolean isURI( String s ) {
+        try {
+            DataSetURI.getURIValid(s);
+            URISplit split= URISplit.parse(s);
+            if ( split.vapScheme==null && split.scheme==null ) {
+                return false;
+            }
+        } catch ( URISyntaxException | IllegalArgumentException ex ) {
+            return false;
+        }
+        return true;
+    }
     
     /**
-     * list of URIs.  # comments.
+     * list of URIs, ignoring empty lines and everything following hash (#) comments.
+     * If two items are on the line and the first item is "x", the artifacts are 
+     * kept private.  If two items are on the line and the first item is not "x", 
+     * then this shortId is the string identifier for the artifact.  It three items which 
+     * are "shortId" "x" and "uri", then this is a private artifact.
+     * 
+     * @param historyFileUri the URI for the history file.
      * @param f
      * @param iid
      * @param exceptions
      * @return
      * @throws IOException 
      */
-    private static int doHistory( File f, int iid, Map<String,Exception> exceptions, Map<String,Integer> exceptionNumbers ) throws IOException {
-        try (BufferedReader read = new BufferedReader( new FileReader(f) )) {
+    private static int doHistory( String historyFileUri, File f, int iid, Map<String,Exception> exceptions, Map<String,Integer> exceptionNumbers ) throws IOException {
+        String pwd= URISplit.parse(historyFileUri).path;
+        try (BufferedReader read = new BufferedReader( new InputStreamReader( new FileInputStream(f), "UTF-8" ) )) {
             String s= read.readLine();
+            System.err.println(">> doHistory " +s);
             while ( s!=null ) {
                 int i= s.indexOf('#');
                 if ( i>-1 ) {
@@ -328,20 +424,36 @@ public class Test140 {
                     //    System.err.println("Here at doHistory #"+iid+": "+s);
                     //}
                     String[] ss= s.split("\t");
+                    if ( ss.length==1 && !isURI(s) ) {
+                        ss= s.split("\\s");
+                    }
                     String uri= ss[ss.length-1].trim();
+                    
+                    String shortId= "";
                     
                     // private URIs should be <id>TAB<URI> or <character>SPACE<URI>
                     boolean publc= true;
                     if ( ss.length>1 ) {
                         boolean isPrivate= ss[ss.length-2].trim().startsWith("x");
                         publc= !isPrivate;
+                        if ( isPrivate ) {
+                            if ( ss.length>2 ) {
+                                shortId= ss[0];
+                            }
+                        } else {
+                            shortId= ss[0];
+                        }
                     }
                     if ( uri.startsWith("x ") ) {
                         uri= uri.substring(2).trim();
                         publc= false;
                     }
+                    if ( uri.startsWith("%{PWD}") ) {
+                        uri= pwd + uri.substring(6);
+                    }
+                    
                     try {
-                        do1(uri, iid, true, publc );
+                        do1(uri, shortId, iid, true, publc );
                     } catch ( Exception ex ) {
                         exceptions.put( uri, ex );
                         exceptionNumbers.put( uri, iid );
@@ -354,7 +466,7 @@ public class Test140 {
             return iid;
         }
     }
-
+    
     /**
      * Test the list of URIs in each the URL, making a trivial way to test
      * new lists of URIs.
@@ -366,6 +478,19 @@ public class Test140 {
     public static void main( String[] args ) throws Exception {
         //Logger l= LoggerManager.getLogger("apdss");
         //l.setLevel( Level.ALL );
+        
+        //LoggerManager.readConfiguration( AutoplotSettings.settings().resolveProperty(AutoplotSettings.PROP_AUTOPLOTDATA) + "config/logging.properties" );
+        //Logger.getLogger("autoplot.dom.canvas").info("info level");
+        //Logger.getLogger("autoplot.dom.canvas").finer("finer level");
+        
+        System.err.println("disable certificate checking");
+        AutoplotUtil.disableCertificates();
+        
+        System.err.println("home (prefs): " + System.getProperty("user.home") );
+        System.err.println("autoplot_data: "+AutoplotSettings.settings().resolveProperty(AutoplotSettings.PROP_AUTOPLOTDATA));
+        System.err.println("fscache: "+AutoplotSettings.settings().resolveProperty(AutoplotSettings.PROP_FSCACHE));
+        System.err.println("reading logger configuration from System.getProperty(\"java.util.logging.config.file\"): " + System.getProperty("java.util.logging.config.file") );
+        LoggerManager.readConfiguration();
         
         if ( args.length==0 ) {
             //args= new String[] { "140", "http://www-pw.physics.uiowa.edu/~jbf/autoplot/test140.txt", "http://www.sarahandjeremy.net/~jbf/temperatures2012.xml" };
@@ -380,7 +505,8 @@ public class Test140 {
             //args= new String[] { "147", "http://autoplot.org//developer.listOfUris" };
             //args= new String[] { "148", "http://www-pw.physics.uiowa.edu/~jbf/pdsppi/examples/pdsppi.xml" };
             //args= new String[] { "149", "http://sarahandjeremy.net/~jbf/" };
-            args= new String[] { "099", "/home/jbf/ct/hudson/test099.txt" };
+            //args= new String[] { "099", "/home/jbf/ct/hudson/test099.txt" };
+            args= new String[] { "000", "/home/jbf/ct/autoplot/git/dev/bugs/sf/1682/testuris.txt" };
         }
         testid= Integer.parseInt( args[0] );
         int iid= 0;
@@ -401,7 +527,7 @@ public class Test140 {
                 iid= doBookmarks(ff,iid,exceptions,exceptionNumbers);
             } else if ( uri.endsWith(".txt") ) {
                 File ff= DataSetURI.getFile( uri, new NullProgressMonitor() );
-                iid= doHistory(ff,iid,exceptions,exceptionNumbers);
+                iid= doHistory( uri, ff,iid,exceptions,exceptionNumbers);
             } else {
                 iid= doHtml( new URL(uri),iid,exceptions,exceptionNumbers );
             }

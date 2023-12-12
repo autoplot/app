@@ -145,7 +145,7 @@ public class Application extends DomNode {
     public ApplicationController getController() {
         return controller;
     }
-    /*** end properties *****************************/
+    
     protected Options options = new Options();
 
     public Options getOptions() {
@@ -155,7 +155,7 @@ public class Application extends DomNode {
     public void setOptions(Options options) {
         this.options = options;
     }
-
+    
     protected DatumRange timeRange = DEFAULT_TIME_RANGE;
     /**
      * all time axes should hang off of this.
@@ -397,7 +397,7 @@ public class Application extends DomNode {
         for ( int i=0; i<Math.min(this.canvases.size(),that.canvases.size()); i++ ) {
             Canvas thisCanvas= this.canvases.get(i);
             Canvas thatCanvas= that.canvases.get(i);
-            result.addAll( DomUtil.childDiffs( "Canvases["+i+"]", thatCanvas.diffs( thisCanvas ) ) );
+            result.addAll( DomUtil.childDiffs( "canvases["+i+"]", thatCanvas.diffs( thisCanvas ) ) );
         }
 
         for ( int i=0; i<Math.min(this.plots.size(),that.plots.size()); i++ ) {

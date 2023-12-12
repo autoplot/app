@@ -6,7 +6,7 @@
  * To change this template, choose Tools | Template Manager
  * and open the template in the editor.
  */
-package org.autoplot;
+package org.autoplot; 
 
 import java.awt.Component;
 import java.awt.Graphics2D;
@@ -18,7 +18,6 @@ import java.util.logging.Level;
 import org.das2.datum.Datum;
 import org.das2.datum.DatumRange;
 import org.das2.datum.DatumRangeUtil;
-import org.das2.datum.InconvertibleUnitsException;
 import org.das2.datum.Units;
 import org.das2.datum.UnitsUtil;
 import org.das2.graph.DasColumn;
@@ -62,11 +61,20 @@ import java.lang.reflect.Method;
 import java.net.InetAddress;
 import java.net.URL;
 import java.net.UnknownHostException;
+import java.security.KeyManagementException;
+import java.security.NoSuchAlgorithmException;
+import java.security.cert.X509Certificate;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.Properties;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.HttpsURLConnection;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSession;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
 import javax.swing.AbstractAction;
 import javax.swing.JButton;
 import javax.swing.JComponent;
@@ -86,13 +94,7 @@ import javax.swing.border.TitledBorder;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
-import static org.autoplot.AutoplotUI.getProcessId;
-import org.das2.datum.DomainDivider;
-import org.das2.datum.DomainDividerUtil;
 import org.das2.datum.EnumerationUnits;
-import org.das2.datum.TimeLocationUnits;
-import org.das2.datum.TimeUtil;
-import org.das2.datum.UnitsConverter;
 import org.das2.graph.ContoursRenderer;
 import org.das2.graph.DasCanvas;
 import org.das2.graph.DasColorBar;
@@ -102,7 +104,7 @@ import org.das2.graph.DasRow;
 import org.das2.graph.DefaultPlotSymbol;
 import org.das2.graph.DigitalRenderer;
 import org.das2.graph.EventsRenderer;
-import org.das2.graph.ImageVectorDataSetRenderer;
+import org.das2.graph.HugeScatterRenderer;
 import org.das2.graph.PitchAngleDistributionRenderer;
 import org.das2.graph.PsymConnector;
 import org.das2.graph.RGBImageRenderer;
@@ -115,7 +117,6 @@ import org.das2.graph.TickCurveRenderer;
 import org.das2.graph.VectorPlotRenderer;
 import org.das2.system.RequestProcessor;
 import org.das2.util.ExceptionHandler;
-import org.das2.util.LoggerManager;
 import org.das2.util.filesystem.FileSystem;
 import org.das2.util.filesystem.LocalFileSystem;
 import org.das2.util.filesystem.WebFileSystem;
@@ -129,14 +130,9 @@ import org.autoplot.dom.Plot;
 import org.autoplot.dom.PlotElement;
 import org.autoplot.dom.PlotElementController;
 import org.das2.qds.DDataSet;
-import org.das2.qds.DRank0DataSet;
 import org.das2.qds.DataSetAnnotations;
 import org.das2.qds.QDataSet;
-import org.das2.qds.DataSetOps;
 import org.das2.qds.DataSetUtil;
-import org.das2.qds.JoinDataSet;
-import org.das2.qds.QubeDataSetIterator;
-import org.das2.qds.RankZeroDataSet;
 import org.das2.qds.SemanticOps;
 import org.das2.qds.examples.Schemes;
 import org.autoplot.datasource.AutoplotSettings;
@@ -145,10 +141,10 @@ import org.autoplot.datasource.ReferenceCache;
 import org.autoplot.datasource.URISplit;
 import org.autoplot.datasource.WindowManager;
 import org.autoplot.datasource.capability.Caching;
+import org.autoplot.dom.BindingModel;
+import org.autoplot.dom.PlotController;
 import org.das2.graph.BoundsRenderer;
 import org.das2.graph.PolarPlotRenderer;
-import org.das2.qds.ops.Ops;
-import org.das2.qds.util.AutoHistogram;
 import org.das2.util.AboutUtil;
 import org.w3c.dom.Document;
 import org.xml.sax.InputSource;
@@ -673,6 +669,15 @@ public class AutoplotUtil {
                 w.println("# turn off certificate checks.");
                 w.println("#noCheckCertificate=true");
                 w.println("");
+                w.println("# use huge scatter for large data sets.");
+                w.println("#useHugeScatter=true");
+                w.println("");
+                w.println("# HAPI cache location.");
+                w.println("#HAPI_DATA=${HOME}/hapi_data");
+                w.println("");
+                w.println("# Enable HAPI Caching.");
+                w.println("#hapiServerCache=true");
+                w.println("");
                 w.close();
             } catch ( IOException ex ) {
                 logger.log(Level.WARNING, "write initial {0} failed.  {1}", new Object[] { propFile, ex } );
@@ -680,26 +685,17 @@ public class AutoplotUtil {
         } else {
             logger.log( Level.FINER, "loading %s", propFile );
             Properties props= new Properties();
-            InputStream in=null;
-            try {
-                in = new FileInputStream(propFile);
+            try ( InputStream in=new FileInputStream(propFile) ) {
                 props.load( in );
-                in.close();
                 for ( Entry p: props.entrySet()) {
                     logger.log( Level.FINEST, "%s=%s", new Object[] { p.getKey(), p.getValue() } );
-                    System.setProperty( (String)p.getKey(), (String)p.getValue() );
+                    if ( System.getProperty( (String)p.getKey() )==null ) { // command line should override.
+                        System.setProperty( (String)p.getKey(), (String)p.getValue() );
+                    }
                 }
             } catch (IOException ex) {
                 logger.log(Level.SEVERE, ex.getMessage(), ex);
-            } finally {
-                if ( in!=null ) {
-                    try {
-                        in.close();
-                    } catch (IOException ex) {
-                        logger.log(Level.SEVERE, ex.getMessage(), ex);
-                    }
-                }
-            }
+            } 
         }
     }
 
@@ -771,30 +767,63 @@ public class AutoplotUtil {
         Plot plot= dom.getController().getPlot();
         return resetZoomY( dom, plot );
     }
-    
+
+    /**
+     * @param dom
+     * @param plot
+     * @return 
+     * @see PlotController#resetZoom(boolean, boolean, boolean) 
+     */
     public static boolean resetZoomY( Application dom, Plot plot ) {
         boolean result= true;
         Axis axis= plot.getYaxis();
 
         List<PlotElement> pes= DomUtil.getPlotElementsFor( dom, plot );
 
+        boolean alsoBindings= true; // See https://sourceforge.net/p/autoplot/bugs/2149/
+        if ( alsoBindings ) {
+            List<BindingModel> plots= DomUtil.findBindings( dom, plot.getYaxis(), Axis.PROP_RANGE );
+            for ( BindingModel b : plots ) {
+                Plot other;
+                if ( b.getDstId().equals( plot.getYaxis().getId() ) ) {
+                    Axis oa= (Axis)DomUtil.getElementById( dom, b.getSrcId() );
+                    other= (Plot)DomUtil.getPlotForAxis( dom, oa );
+                } else {
+                    Axis oa= (Axis)DomUtil.getElementById( dom, b.getDstId() );
+                    other= (Plot)DomUtil.getPlotForAxis( dom, oa );
+                }
+                pes.addAll( DomUtil.getPlotElementsFor( dom, other ) );
+            }
+        }
+        
         DatumRange range= null;
         for ( PlotElement pe: pes ) {
             if ( pe.isActive()==false ) continue;
             QDataSet ds= pe.getController().getDataSet();
             if ( ds!=null ) {
                 ds= SemanticOps.trim( ds, plot.getXaxis().getRange(), null );
-                PlotElement pcopy1= (PlotElement)pe.copy();
-                PlotElementController.doAutoranging(pcopy1, Collections.singletonMap( QDataSet.SCALE_TYPE, (Object)( axis.isLog() ? "log" : "linear" ) ), ds, true ); // :) cast to Object!
-                if ( range==null ) {
-                    range= pcopy1.getPlotDefaults().getYaxis().getRange();
+                if ( ds.rank()>0 && ds.length()==0 ) break;
+                if ( ds.rank()==0 || ( ds.rank()==1 && ds.length()==1 ) ) {
+                    if ( ds.rank()==1 ) ds= ds.slice(0);
+                    if ( range==null ) {
+                        range= new DatumRange( DataSetUtil.asDatum(ds),DataSetUtil.asDatum(ds) );
+                    } else {
+                        range= DatumRangeUtil.union( range, DataSetUtil.asDatum(ds) );
+                    }
                 } else {
-                    range= DatumRangeUtil.union( range, pcopy1.getPlotDefaults().getYaxis().getRange() );
+                    PlotElement pcopy1= (PlotElement)pe.copy();
+                    PlotElementController.doAutoranging(pcopy1, Collections.singletonMap( QDataSet.SCALE_TYPE, (Object)( axis.isLog() ? "log" : "linear" ) ), ds, true ); // :) cast to Object!
+                    if ( range==null ) {
+                        range= pcopy1.getPlotDefaults().getYaxis().getRange();
+                    } else {
+                        range= DatumRangeUtil.union( range, pcopy1.getPlotDefaults().getYaxis().getRange() );
+                    }
                 }
             }
         }
-        if ( range!=null ) axis.setRange(range);
-
+        if ( range!=null ) axis.getController().setRangeAutomatically( range, axis.isLog() );
+        PlotController.doHints( axis, axis.getAutoRangeHints() );
+        
         return result;
     }
 
@@ -803,20 +832,59 @@ public class AutoplotUtil {
         return resetZoomX( dom, plot );
     } 
     
+    /**
+     * @see PlotController#resetZoom(boolean, boolean, boolean) 
+     * @param dom
+     * @param plot
+     * @return 
+     */
     public static boolean resetZoomX( Application dom, Plot plot ) {
         boolean result= true;
         Axis axis= plot.getXaxis();
 
         List<PlotElement> pes= DomUtil.getPlotElementsFor( dom, plot );
 
+        boolean alsoBindings= true; // See https://sourceforge.net/p/autoplot/bugs/2149/
+        if ( alsoBindings ) {
+            List<BindingModel> plots= DomUtil.findBindings( dom, plot.getXaxis(), Axis.PROP_RANGE );
+            for ( BindingModel b : plots ) {
+                Plot other;
+                if ( b.getDstId().equals( plot.getXaxis().getId() ) ) {
+                    Object oo= DomUtil.getElementById( dom, b.getSrcId() );
+                    if ( oo instanceof Axis ) {
+                        Axis oa= (Axis)DomUtil.getElementById( dom, b.getSrcId() );
+                        other= (Plot)DomUtil.getPlotForAxis( dom, oa );
+                    } else {
+                        // TODO: look for bindings through Application.timeRange.
+                        continue;
+                    }
+                } else {
+                    Object oo= DomUtil.getElementById( dom, b.getDstId() );
+                    if ( oo instanceof Axis ) {
+                        Axis oa= (Axis)oo;
+                        other= (Plot)DomUtil.getPlotForAxis( dom, oa );
+                    } else {
+                        // TODO: look for bindings through Application.timeRange.
+                        continue;
+                    }
+                }
+                pes.addAll( DomUtil.getPlotElementsFor( dom, other ) );
+            }
+        }
+                
         DatumRange range= null;
         for ( PlotElement pe: pes ) {
             if ( pe.isActive()==false ) continue;
             QDataSet ds= pe.getController().getDataSet();
             if ( ds!=null ) {
                 ds= SemanticOps.trim( ds, null, plot.getYaxis().getRange() );
+                if ( ds.length()==0 ) break;
                 PlotElement pcopy1= (PlotElement)pe.copy(); // TODO: something ain't right below...
-                PlotElementController.doAutoranging(pcopy1, Collections.singletonMap( QDataSet.SCALE_TYPE, (Object)( axis.isLog() ? "log" : "linear" ) ), ds, true ); // :) cast to Object!
+                PlotElementController.doAutoranging(
+                        pcopy1, 
+                        Collections.singletonMap( QDataSet.SCALE_TYPE, (Object)( axis.isLog() ? "log" : "linear" ) ), 
+                        ds, 
+                        true ); // :) cast to Object!
                 if ( range==null ) {
                     range= pcopy1.getPlotDefaults().getXaxis().getRange();
                 } else {
@@ -824,8 +892,9 @@ public class AutoplotUtil {
                 }
             }
         }
-        if ( range!=null ) axis.setRange(range);
-
+        if ( range!=null ) axis.getController().setRangeAutomatically( range, axis.isLog() );
+        PlotController.doHints( axis, axis.getAutoRangeHints() );
+        
         return result;
     }
 
@@ -834,13 +903,35 @@ public class AutoplotUtil {
         return resetZoomZ( dom, plot );
     }
 
+    /**
+     * @see PlotController#resetZoom(boolean, boolean, boolean) 
+     * @param dom
+     * @param plot
+     * @return 
+     */
     public static boolean resetZoomZ( Application dom, Plot plot ) {
 
         boolean result= true;
         Axis axis= plot.getZaxis();
 
         List<PlotElement> pes= DomUtil.getPlotElementsFor( dom, plot );
-
+        
+        boolean alsoBindings= true; // See https://sourceforge.net/p/autoplot/bugs/2149/
+        if ( alsoBindings ) {
+            List<BindingModel> plots= DomUtil.findBindings( dom, plot.getZaxis(), Axis.PROP_RANGE );
+            for ( BindingModel b : plots ) {
+                Plot other;
+                if ( b.getDstId().equals( plot.getZaxis().getId() ) ) {
+                    Axis oa= (Axis)DomUtil.getElementById( dom, b.getSrcId() );
+                    other= (Plot)DomUtil.getPlotForAxis( dom, oa );
+                } else {
+                    Axis oa= (Axis)DomUtil.getElementById( dom, b.getDstId() );
+                    other= (Plot)DomUtil.getPlotForAxis( dom, oa );
+                }
+                pes.addAll( DomUtil.getPlotElementsFor( dom, other ) );
+            }
+        }
+        
         DatumRange range= null;
         for ( PlotElement pe: pes ) {
             if ( pe.isActive()==false ) continue;
@@ -848,17 +939,19 @@ public class AutoplotUtil {
             QDataSet ds= pe.getController().getDataSet();
             if ( ds!=null ) {
                 ds= SemanticOps.trim( ds, plot.getXaxis().getRange(), plot.getYaxis().getRange() );
-                PlotElement pcopy1= (PlotElement)pe.copy();
-                PlotElementController.doAutoranging(pcopy1, Collections.singletonMap( QDataSet.SCALE_TYPE, (Object)( axis.isLog() ? "log" : "linear" ) ), ds, true ); // :) cast to Object!
-                if ( range==null ) {
-                    range= pcopy1.getPlotDefaults().getZaxis().getRange();
-                } else {
-                    range= DatumRangeUtil.union( range, pcopy1.getPlotDefaults().getZaxis().getRange() );
+                if ( ds.length()==0 ) break;
+                    PlotElement pcopy1= (PlotElement)pe.copy();
+                    PlotElementController.doAutoranging(pcopy1, Collections.singletonMap( QDataSet.SCALE_TYPE, (Object)( axis.isLog() ? "log" : "linear" ) ), ds, true ); // :) cast to Object!
+                    if ( range==null ) {
+                        range= pcopy1.getPlotDefaults().getZaxis().getRange();
+                    } else {
+                        range= DatumRangeUtil.union( range, pcopy1.getPlotDefaults().getZaxis().getRange() );
+                    }
                 }
             }
-        }
-        if ( range!=null ) axis.setRange(range);
-
+        if ( range!=null ) axis.getController().setRangeAutomatically( range, axis.isLog() );
+        PlotController.doHints( axis, axis.getAutoRangeHints() );
+        
         return result;
     }
 
@@ -1061,18 +1154,24 @@ public class AutoplotUtil {
         if ( nn ) {
             specPref = RenderType.nnSpectrogram;
         }
+        
+        boolean useHugeScatter= "true".equals( System.getProperty("useHugeScatter","true") );
 
         String srenderType= (String) fillds.property(QDataSet.RENDER_TYPE);
         if ( srenderType!=null ) {
             if ( srenderType.equals("time_series") ) { //TODO: CDAWeb time_series will be fixed to "series" once it can automatically reduce data.
-                if (fillds.length() > SERIES_SIZE_LIMIT) {
+                if ( useHugeScatter && fillds.length() > SERIES_SIZE_LIMIT) {
                     spec = RenderType.hugeScatter;
                 } else {
                     spec = RenderType.series;
                 }
                 return spec;
             } else if ( srenderType.equals("waveform" ) ) {
-                spec = RenderType.hugeScatter;
+                if ( useHugeScatter ) {
+                    spec = RenderType.hugeScatter;
+                } else {
+                    spec = RenderType.series;
+                }
                 return spec;
             }
             try {
@@ -1105,7 +1204,8 @@ public class AutoplotUtil {
         QDataSet dep1 = (QDataSet) fillds.property(QDataSet.DEPEND_1);
         QDataSet plane0 = (QDataSet) fillds.property(QDataSet.PLANE_0);
         QDataSet bundle1= (QDataSet) fillds.property(QDataSet.BUNDLE_1);
-
+        QDataSet dep0= (QDataSet) fillds.property(QDataSet.DEPEND_0);
+        
         if ( fillds.property( QDataSet.JOIN_0 )!=null ) {
             if ( fillds.length()==0 ) {
                 return RenderType.series;
@@ -1117,7 +1217,11 @@ public class AutoplotUtil {
 
         if ( fillds.rank()==2 ) {
             if ( SemanticOps.isRank2Waveform(fillds) ) {
-                return RenderType.hugeScatter;
+                if ( useHugeScatter ) {
+                    return RenderType.hugeScatter;
+                } else {
+                    return RenderType.series;
+                }
             }
         }
 
@@ -1126,7 +1230,7 @@ public class AutoplotUtil {
 //                spec = specPref; // favor spectrograms when we have a BUNDLE_1 and DEPEND_1.
 //            } else if ( bundle1!=null || (dep1 != null && isVectorOrBundleIndex(dep1) ) ) {
             if ( ( bundle1!=null && bundle1.length()<30 ) || (dep1 != null && isVectorOrBundleIndex(dep1) ) ) {
-                if (fillds.length() > SERIES_SIZE_LIMIT) {
+                if ( useHugeScatter && fillds.length() > SERIES_SIZE_LIMIT) {
                     spec = RenderType.hugeScatter;
                 } else {
                     spec = RenderType.series;
@@ -1134,10 +1238,12 @@ public class AutoplotUtil {
                 if ( bundle1!=null ) {
                     if ( bundle1.length()==3 && bundle1.property(QDataSet.DEPEND_0,2)!=null ) { // bad kludge
                         spec= RenderType.colorScatter;
-                    } else if (bundle1.length() == 3 && bundle1.property(QDataSet.DEPENDNAME_0, 2) != null) { // bad kludge
+                    } else if ( dep0==null && bundle1.length() == 3 && bundle1.property(QDataSet.DEPENDNAME_0, 2) != null) { // bad kludge
                         spec= RenderType.colorScatter;
-                    } else if ( bundle1.length()==3 && fillds.property(QDataSet.DEPEND_0)==null && bundle1.property(QDataSet.CONTEXT_0,2)!=null ) {  // this is more consistent with PlotElementController code.
+                    } else if ( Schemes.isXYZScatter(fillds) && fillds.property(QDataSet.DEPEND_0)==null && !Schemes.isEventsList(fillds) ) { 
                         spec= RenderType.colorScatter;
+                    } else if ( Schemes.isXYScatter(fillds) && fillds.property(QDataSet.DEPEND_0)==null ) { 
+                        spec= RenderType.scatter;
                     } else if ( bundle1.length()==3 || bundle1.length()==4 || bundle1.length()==5 ) {
                         if ( Schemes.isEventsList(fillds) ) {
                             spec= RenderType.eventsBar;
@@ -1145,8 +1251,6 @@ public class AutoplotUtil {
                             Units u3= (Units) bundle1.property(QDataSet.UNITS,bundle1.length()-1);
                             if ( UnitsUtil.isOrdinalMeasurement(u3) ) {
                                 spec= RenderType.digital;
-                            } else {
-                                spec = RenderType.series;
                             }
                         }
                     } else {
@@ -1157,24 +1261,28 @@ public class AutoplotUtil {
                     }
                 }
             } else {
+                int[] dims= DataSetUtil.qubeDims(fillds);
                 if ( dep1==null && fillds.rank()==2 && fillds.length()>3 && fillds.length(0)<4 ) { // Vector quantities without labels. [3x3] is a left a matrix.
                     spec = RenderType.series;
+                } else if ( fillds.rank()==2 && dims!=null && dims[0]==2 && dims[1]==2 ) {
+                    spec = RenderType.bounds;
+                } else if ( fillds.rank()==3 && dims!=null && dims[1]==2 && dims[2]==2 ) {
+                    spec = RenderType.bounds;
                 } else {
                     spec = specPref;
                 }
             }
-        } else if ( fillds.rank()==0 || fillds.rank()==1 && SemanticOps.isBundle(fillds) ) {
+        } else if ( fillds.rank()==0 || fillds.rank()==1 && ( SemanticOps.isBundle(fillds) || Schemes.isComplexNumbers(fillds) ) ) {
             spec= RenderType.digital;
 
         } else if ( SemanticOps.getUnits(fillds) instanceof EnumerationUnits ) {
-            QDataSet dep0= (QDataSet) fillds.property(QDataSet.DEPEND_0);
             if ( dep0==null ) {
                 spec= RenderType.digital;
             } else {
                 spec= RenderType.eventsBar;
             }
         } else {
-            if (fillds.length() > SERIES_SIZE_LIMIT) {
+            if ( useHugeScatter && fillds.length() > SERIES_SIZE_LIMIT) {
                 spec = RenderType.hugeScatter;
             } else {
                 spec = RenderType.series;
@@ -1288,10 +1396,10 @@ public class AutoplotUtil {
             result.setRebinner( nn );
             return result;
         } else if (renderType == RenderType.hugeScatter) {
-            if (recyclable != null && recyclable instanceof ImageVectorDataSetRenderer) {
+            if (recyclable != null && recyclable instanceof HugeScatterRenderer) {
                 return recyclable;
             } else {
-                ImageVectorDataSetRenderer result = new ImageVectorDataSetRenderer(null);
+                HugeScatterRenderer result = new HugeScatterRenderer(null);
                 result.setEnvelope(1); 
                 result.setDataSetLoader(null);
                 return result;
@@ -1620,16 +1728,25 @@ public class AutoplotUtil {
         return fallback;
     }
     
-    public static String getAboutAutoplotHtml() throws IOException {
+    /**
+     * return an HTML page showing the current system environment.
+     * @param model
+     * @return string containing HTML
+     * @throws IOException 
+     */
+    public static String getAboutAutoplotHtml( ApplicationModel model) throws IOException {
         StringBuilder buffy = new StringBuilder();
 
         buffy.append("<html>\n");
         URL aboutHtml = AutoplotUI.class.getResource("aboutAutoplot.html");
 
+        String releaseTag= AboutUtil.getReleaseTag();
+        
         if ( aboutHtml!=null ) {
             try (BufferedReader reader = new BufferedReader(new InputStreamReader(aboutHtml.openStream()))) {
                 String s = reader.readLine();
                 while (s != null) {
+                    s= s.replaceAll( "\\#\\{tag\\}", releaseTag );
                     buffy.append(s);
                     s = reader.readLine();
                 }
@@ -1650,7 +1767,7 @@ public class AutoplotUtil {
         buffy.append( "<h2>Open Source Components:</h2>");
         buffy.append( "Autoplot uses many open-source components, such as: <br>");
         buffy.append( "jsyntaxpane, Jython, Netbeans (Jython completion), OpenDAP, CDF, FITS, NetCDF, " 
-                + "POI HSSF (Excel), Batik (SVG), iText (PDF), JSON, JavaCSV, JPG Metadata Extractor, das2, JDiskHog");        
+                + "POI HSSF (Excel), Batik (SVG), iText (PDF), JSON, JavaCSV, JPG Metadata Extractor, Imgscalr, utils4j, JDiskHog, and Das2.");        
 
         buffy.append("<h2>Runtime Information:</h2>");
 
@@ -1698,19 +1815,43 @@ public class AutoplotUtil {
             }
         }
 
-
+        String autoplotData= AutoplotSettings.settings().resolveProperty( AutoplotSettings.PROP_AUTOPLOTDATA );
+        String fscache= AutoplotSettings.settings().resolveProperty( AutoplotSettings.PROP_FSCACHE );
+        
+        String sandbox;
+        if ( model.isSandboxed() ) {
+            SecurityManager sm= System.getSecurityManager();
+            if ( sm!=null ) {
+                if ( sm==Sandbox.getSandboxManager() ) {
+                    sandbox= "true";
+                } else {
+                    sandbox= "true, but not sandbox security manager.";
+                }
+            } else {
+                sandbox= "true, BUT NO SECURITY MANAGER IS PRESENT";
+            }
+        } else {
+            sandbox= "false";
+        }
+                        
         String aboutContent = "<ul>" +
             "<li>Java version: " + javaVersion + " " + javaVersionWarning + 
             memWarning +    
+            "<li>Java home: "+ System.getProperty("java.home") +            
             "<li>max memory (MB): " + mem + " (memory available to process)" +
             "<li>total memory (MB): " + tmem + " (amount allocated to the process)" +
             "<li>free memory (MB): " + fmem + " (amount available before more must be allocated)" + 
             "<li>native memory limit (MB): " + nmem + " (amount of native memory available to the process)" +
+            "<li>sandbox: " + sandbox +
+            "<li>noCheckCertificates: " + ( HttpsURLConnection.getDefaultHostnameVerifier()==allHostsValid ) +
             "<li>arch: " + arch +
+            "<li>release type: " + System.getProperty( AutoplotUI.SYSPROP_AUTOPLOT_RELEASE_TYPE,"???") +
             "<li>" + bits + " bit Java " + bitsWarning  +
             "<li>hostname: "+ host +
             "<li>pid: " + pid +
             "<li>pwd: " + pwd +
+            "<li>autoplotData: "+ autoplotData +
+            "<li>fscache: "+ fscache +
             "</ul>";
         buffy.append( aboutContent );
 
@@ -1718,4 +1859,99 @@ public class AutoplotUtil {
         return buffy.toString();
 
     }
+    
+    private static final TrustManager[] trustAllCerts = new TrustManager[]{
+        new X509TrustManager() {
+            @Override
+            public java.security.cert.X509Certificate[] getAcceptedIssuers() {
+                return new java.security.cert.X509Certificate[0];
+            }
+            @Override
+            public void checkClientTrusted(X509Certificate[] certs, String authType) {  }
+            @Override
+            public void checkServerTrusted(X509Certificate[] certs, String authType) {  }
+            @Override
+            public String toString() {
+                return "AutoplotTrustAllTrustManager";
+            }
+        }
+    };
+    
+    // Create all-trusting host name verifier
+    private static final HostnameVerifier allHostsValid = new HostnameVerifier() {
+        @Override
+        public boolean verify(String hostname, SSLSession session) {
+            return true;
+        }
+        @Override
+        public String toString() {
+            return "AutoplotTrustAllHostnamesHostnameManager";
+        }
+    };
+            
+    /**
+     * disable certificate checking.  A TrustManager and HostnameVerifier which trusts all
+     * names and certs is installed.
+     */
+    public static void disableCertificates() {
+        logger.info("disabling HTTP certificate checks.");
+        try {
+            System.setProperty(AutoplotUI.SYSPROP_AUTOPLOT_DISABLE_CERTS, String.valueOf(true) );
+            SSLContext sc = SSLContext.getInstance("SSL");
+            sc.init(null, trustAllCerts, new java.security.SecureRandom());
+            HttpsURLConnection.setDefaultSSLSocketFactory(sc.getSocketFactory());
+            HttpsURLConnection.setDefaultHostnameVerifier(allHostsValid);
+            
+        } catch (NoSuchAlgorithmException | KeyManagementException ex) {
+            logger.log(Level.SEVERE, null, ex);
+        }
+    }
+
+    public static void maybeInitializeEditorColors() {
+        File config= new File( new File( AutoplotSettings.settings().resolveProperty( AutoplotSettings.PROP_AUTOPLOTDATA ) ), "config" );
+        if ( !config.exists() ) {
+            if ( !config.mkdirs() ) {
+                logger.log(Level.WARNING, "mkdir {0} failed", config);
+                return;
+            }
+        }
+        File propFile= new File( config, "jsyntaxpane.properties" );
+        if ( !propFile.exists() ) {
+            try (PrintWriter w = new PrintWriter( new FileWriter( propFile ) )) {                                
+                w.println("TokenMarker.Color = 0xffeeaa");
+                w.println("PairMarker.Color = 0xffbb77");
+                w.println("LineNumbers.Foreground = 0x333300");
+                w.println("LineNumbers.Background = 0xeeeeff");
+                w.println("LineNumbers.CurrentBack = 0xccccee");
+                w.println("CaretColor = 0x000000");
+                w.println("Background = 0xFFFFFF");
+                w.println("SelectionColor = 0x556677");
+                w.println("# These are the various Attributes for each TokenType.");
+                w.println("# The keys of this map are the TokenType Strings, and the values are:");
+                w.println("# color (hex, or integer), Font.Style attribute");
+                w.println("# Style is one of: 0 = plain, 1=bold, 2=italic, 3=bold/italic");
+                w.println("Style.OPERATOR = 0x000000, 0");
+                w.println("Style.DELIMITER = 0x000000, 1");
+                w.println("Style.KEYWORD = 0x3333ee, 0");
+                w.println("Style.KEYWORD2 = 0x3333ee, 3");
+                w.println("Style.TYPE = 0x000000, 2");
+                w.println("Style.TYPE2 = 0x000000, 1");
+                w.println("Style.TYPE3 = 0x000000, 3");
+                w.println("Style.STRING = 0xcc6600, 0");
+                w.println("Style.STRING2 = 0xcc6600, 1");
+                w.println("Style.NUMBER = 0x999933, 1");
+                w.println("Style.REGEX = 0xcc6600, 0");
+                w.println("Style.IDENTIFIER = 0x000000, 0");
+                w.println("Style.COMMENT = 0x339933, 2");
+                w.println("Style.COMMENT2 = 0x339933, 3");
+                w.println("Style.DEFAULT = 0x000000, 0");
+                w.println("Style.WARNING = 0xCC0000, 0");
+                w.println("Style.ERROR = 0xCC0000, 3");
+                w.close();
+            } catch ( IOException ex ) {
+                logger.log(Level.WARNING, "write initial {0} failed.  {1}", new Object[] { propFile, ex } );
+            }
+        }
+    }
+
 }

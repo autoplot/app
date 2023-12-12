@@ -2,8 +2,11 @@
 package org.autoplot.dom;
 
 import java.awt.Color;
+import java.awt.Font;
+import java.awt.Rectangle;
 import java.beans.IndexedPropertyDescriptor;
 import java.beans.IntrospectionException;
+import java.beans.PropertyChangeSupport;
 import java.beans.PropertyDescriptor;
 import java.beans.PropertyEditor;
 import java.io.ByteArrayOutputStream;
@@ -11,9 +14,12 @@ import java.io.IOException;
 import java.lang.reflect.Array;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
@@ -32,6 +38,11 @@ import org.das2.util.LoggerManager;
 import org.jdesktop.beansbinding.Converter;
 import org.autoplot.dom.ChangesSupport.DomLock;
 import org.autoplot.state.StatePersistence;
+import org.das2.components.propertyeditor.Displayable;
+import org.das2.graph.DasColumn;
+import org.das2.graph.DasDevicePosition;
+import org.das2.qds.QDataSet;
+import org.das2.util.ColorUtil;
 
 /**
  * operations for the DOM, such as search-for-node and child properties
@@ -93,6 +104,75 @@ public class DomUtil {
         return result;
     }
 
+    /**
+     * move the plot element within the dom below the plot element.
+     * @param dom the dom (with no controllers)
+     * @param referenceId the plot element which is the reference
+     * @param pId the plot element to move
+     */
+    public static void moveToJustBelow( Application dom, String referenceId, String pId ) {
+        PlotElement reference= (PlotElement) getElementById( dom, referenceId );
+        PlotElement p= (PlotElement) getElementById( dom, pId );
+        
+        if ( reference==p ) throw new IllegalArgumentException("reference and p are the same plot element");
+        if ( !reference.getPlotId().equals(p.getPlotId()) ) throw new IllegalArgumentException("reference and p must be in the same plot");
+            
+        List<PlotElement> newPes= new ArrayList( Arrays.asList(dom.getPlotElements()) );
+            
+        // find the topmost element of plot.
+        int top;
+        for ( top=newPes.size()-1; top>=0; top-- ) {
+            if ( newPes.get(top)==reference ) break;
+        }
+
+        int ploc;
+        for ( ploc=0; ploc<newPes.size(); ploc++ ) {
+            if ( newPes.get(ploc)==p ) break;
+        }
+
+        newPes.remove(p);
+        newPes.add( top-1, p );
+
+        dom.setPlotElements(newPes.toArray( new PlotElement[newPes.size()] ));
+
+    }
+    
+    /**
+     * move the plot element within the dom below the plot element.
+     * @param dom the dom (with no controllers)
+     * @param referenceId the plot element which is the reference
+     * @param pId the plot element to move
+     */
+    public static void moveToJustAbove( Application dom, String referenceId, String pId ) {
+        PlotElement reference= (PlotElement) getElementById( dom, referenceId );
+        PlotElement p= (PlotElement) getElementById( dom, pId );
+        if ( reference==p ) throw new IllegalArgumentException("reference and p are the same plot element");
+        if ( !reference.getPlotId().equals(p.getPlotId()) ) throw new IllegalArgumentException("reference and p must be in the same plot");
+            
+        List<PlotElement> newPes= new ArrayList( Arrays.asList(dom.getPlotElements()) );
+            
+        // find the topmost element of plot.
+        int top;
+        for ( top=newPes.size()-1; top>=0; top-- ) {
+            if ( newPes.get(top)==reference ) break;
+        }
+
+        int ploc;
+        for ( ploc=0; ploc<newPes.size(); ploc++ ) {
+            if ( newPes.get(ploc)==p ) break;
+        }
+
+        newPes.remove(p);
+        if ( ploc<top ) {
+            newPes.add( top, p );
+        } else {
+            newPes.add( top+1, p );
+        }
+
+        dom.setPlotElements(newPes.toArray( new PlotElement[newPes.size()] ));
+
+    }
+    
     /**
      * Either sets or gets the property at the expression.
      * Expressions like:
@@ -202,16 +282,19 @@ public class DomUtil {
     }
 
     /**
-     * return the list of nodes (Plots) that is this row.
+     * return the list of nodes (Plots or Annotations) that use this row.
+     * @param dom
+     * @param rowId the row id.
+     * @return list of nodes
      */
-    static List<DomNode> rowUsages(Application app, String rowId) {
+    static List<DomNode> rowUsages(Application dom, String rowId) {
         List<DomNode> result = new ArrayList<>();
-        for (Plot p : app.getPlots()) {
+        for (Plot p : dom.getPlots()) {
             if (p.getRowId().equals(rowId)) {
                 result.add(p);
             }
         }
-        for (Annotation a : app.getAnnotations()) {
+        for (Annotation a : dom.getAnnotations()) {
             if (a.getRowId().equals(rowId)) {
                 result.add(a);
             }
@@ -219,6 +302,27 @@ public class DomUtil {
         return result;
     }
 
+    /**
+     * return the list of nodes (Plots or Annotations) that use this column.
+     * @param dom
+     * @param columnId the column id.
+     * @return list of nodes
+     */
+    static List<DomNode> columnUsages(Application dom, String columnId) {
+        List<DomNode> result = new ArrayList<>();
+        for (Plot p : dom.getPlots()) {
+            if (p.getColumnId().equals(columnId)) {
+                result.add(p);
+            }
+        }
+        for (Annotation a : dom.getAnnotations()) {
+            if (a.getColumnId().equals(columnId)) {
+                result.add(a);
+            }
+        }
+        return result;
+    }
+    
     private static DatumRange round(DatumRange range) {
         Datum w = range.width();
         Datum w0 = DatumUtil.asOrderOneUnits(w);
@@ -408,6 +512,25 @@ public class DomUtil {
     }
     
     /**
+     * return null or the plot using the axis.
+     * @param app the application
+     * @param oa the axis
+     * @return null or the plot using the axis
+     */
+    public static Plot getPlotForAxis( Application app, Axis oa ) {
+        for ( Plot p: app.getPlots() ) {
+            if ( p.getXaxis()==oa ) {
+                return p;
+            } else if ( p.getYaxis()==oa ) {
+                return p;
+            } else if ( p.getZaxis()==oa ) {
+                return p;                
+            }
+        }
+        return null;
+    }
+    
+    /**
      * find the nodes matching this regex.
      * @param root the node to start at.
      * @param regex the regular expression.
@@ -482,20 +605,75 @@ public class DomUtil {
      * @return the index or -1.
      */
     public static int indexOf(List<Object> nodes, Object node) {
+        if ( node==null ) throw new NullPointerException("node is null");
         boolean isDomNode = node instanceof DomNode;
         if (!isDomNode) {
             return nodes.indexOf(node);
         } else {
+            String findId= ((DomNode) node).id;
             for (int i = 0; i < nodes.size(); i++) {
                 DomNode n1 = (DomNode) nodes.get(i);
                 if (n1 == node) return i;
                 String id = n1.getId();
-                if (!id.equals("") && id.equals(((DomNode) node).id)) {
+                if (!id.equals("") && id.equals(findId)) {
                     return i;
                 }
             }
         }
         return -1;
+    }
+        
+    /**
+     * delete the data source filter.
+     * @param application
+     * @param dsf the data source filter to remove.
+     * @see org.autoplot.dom.ApplicationController#deleteDataSourceFilter(org.autoplot.dom.DataSourceFilter) 
+     */
+    public static void deleteDataSourceFilter( Application application, DataSourceFilter dsf ) {
+        if (!application.dataSourceFilters.contains(dsf)) {
+            logger.fine("dsf wasn't part of the application");
+            return;
+        }
+        if (application.dataSourceFilters.size() < 2) {
+            throw new IllegalArgumentException("last plot cannot be deleted");
+        }
+        
+        List<DomNode> plotElements = dataSourceUsages( application, dsf.id );
+        if (plotElements.size() > 0) {
+            throw new IllegalArgumentException("application plot elements use dsf");
+        }
+
+        for ( DataSourceFilter dsf1: application.getDataSourceFilters() ) {
+            String uri= dsf1.getUri();
+            if ( uri.startsWith("vap+internal:") ) {
+                if ( uri.contains(dsf.id) ) {
+                    throw new IllegalArgumentException("dsf is used as parent of "+dsf1.getId() );
+                }
+            }
+        }
+        
+        ArrayList<DataSourceFilter> alsoRemove= new ArrayList<>();
+        
+        // look for orphaned parents
+        if ( dsf.getUri().startsWith("vap+internal:") ) {
+            List<DataSourceFilter> parents= getParentsFor(application, dsf.getUri() );
+            for (DataSourceFilter pdf : parents) {
+                if ( pdf==null ) continue;
+                String dsfId = pdf.getId();
+                List<DomNode> usages = DomUtil.dataSourceUsages(application, dsfId);
+                usages.remove(dsf);
+                if (usages.isEmpty()) {
+                    alsoRemove.add(pdf);
+                }
+            }
+        }
+
+        List<DataSourceFilter> dsfs = new ArrayList<>(Arrays.asList(application.getDataSourceFilters()));
+        dsfs.remove(dsf);
+        dsfs.removeAll(alsoRemove);
+
+        application.setDataSourceFilters(dsfs.toArray(new DataSourceFilter[dsfs.size()]));
+
     }
 
     /**
@@ -551,8 +729,12 @@ public class DomUtil {
             node2List.add(idx, nodes1[idx]);
         }
 
-        //TODO: handle resort with Action.Move
+        if ( node1List.size()!=node2List.size() ) {
+            logger.warning("2057: bug where two nodes have the duplicate ID detected.");
+        }
         
+        //TODO: handle resort with Action.Move
+         
         if (isDomNode) {
             for (int i = 0; i < node1List.size(); i++) {
                 result.addAll(childDiffs(property + "[" + i + "]", getDiffs((DomNode)node1List.get(i), (DomNode)node2List.get(i))));
@@ -575,16 +757,17 @@ public class DomUtil {
     }
 
     /**
-     *return the list of diffs that will make node2 look like node1.
-     * @param node1
-     * @param node2
+     * return the list of diffs that will make node2 look like node1.  This
+     * assumes that the two nodes are not modified by another thread.
+     * @param node1 a node
+     * @param node2 a node
      * @param exclude if non-null, exclude these properties.
      * @return
      */
     public static List<Diff> getDiffs(DomNode node1, DomNode node2, List<String> exclude) {
         String[] props = BeansUtil.getPropertyNames(node1.getClass());
         PropertyDescriptor[] pds = BeansUtil.getPropertyDescriptors(node1.getClass());
-
+        
         List<Diff> diffs = new ArrayList<>();
         for (int i = 0; i < props.length; i++) {
             if (props[i].equals("controller")) continue;
@@ -616,7 +799,6 @@ public class DomUtil {
      *
      * @param node1
      * @param node2
-     * @return
      */
     public static void syncTo(DomNode node1, DomNode node2) {
         List<Diff> diffs = node2.diffs(node1);
@@ -672,7 +854,7 @@ public class DomUtil {
     public static final Converter AUTO_TO_COLOR= new Converter() {
         @Override
         public Object convertForward(Object value) {
-            boolean b= ((Boolean)value).booleanValue();
+            boolean b= ((Boolean)value);
             return b ? Color.WHITE : Color.LIGHT_GRAY;
         }
 
@@ -702,7 +884,10 @@ public class DomUtil {
     }
     
     /**
-     * return the parent DataSourceFilters for uris like vap+internal:data_1
+     * return the parent DataSourceFilters for uris like vap+internal:data_1,data_2
+     * Note this was the only way to combine 
+     * data before the "Data Mashup Tool" was introduced, and the Mashup tool
+     * is probably a better way to do this.
      * @param dom the dom
      * @param uri the uri, like vap+internal:data_1,data_2
      * @return the DataSourceFilters
@@ -718,11 +903,22 @@ public class DomUtil {
         return result;
     }
 
+    private static void checkIds( HashSet<String> ids, DomNode[] n, List<String> problems ) {
+        for (DomNode n1 : n) {
+            if (ids.contains(n1.id)) {
+                problems.add("multiple nodes have the same id: " + n1.id);
+            }
+            ids.add(n1.id);
+        }
+    }
+    
     /**
      * returns true if the dom is valid, throws a runtime exception otherwise
      * @param application the dom
      * @param problems descriptions of the problems will be inserted here
      * @return true if the dom is valid, throws a runtime exception otherwise
+     * @see #deleteDuplicateIds(org.autoplot.dom.Application) 
+     * @see #checkUniqueIdsAndReferences(org.autoplot.dom.Application, java.util.List) 
      */
     public static boolean validateDom( Application application, List<String> problems ) {
 
@@ -774,6 +970,12 @@ public class DomUtil {
                 if ( getElementById(application, p.getColumnId() )==null )
                     problems.add("unable to find column "+p.getColumnId()+" for plot  "+p.getId());
             }
+            
+            HashSet<String> ids= new HashSet<>();
+            checkIds( ids, application.getPlots(), problems );
+            checkIds( ids, application.getPlotElements(), problems );
+            checkIds( ids, application.getDataSourceFilters(), problems );
+            checkIds( ids, application.getAnnotations(), problems );
 
         } finally {
             if ( lock!=null ) {
@@ -845,6 +1047,10 @@ public class DomUtil {
             }
         }
         for ( DataSourceFilter dsf: application.getDataSourceFilters() ) {
+            if ( dsf==null ) {
+                logger.finer("found dsf that is null, which is done sometimes to mark as done.  Ignoring.");
+                continue;
+            }
             String uri= dsf.getUri();
             if ( uri.startsWith("vap+internal:") ) {
                 String[] ss=  uri.substring(13).split(",");
@@ -911,6 +1117,159 @@ public class DomUtil {
         return template;
     }
 
+    /**
+     * convert the layout to the pixel position if the top of the row.  Note
+     * this is not trivial, because the parent must be considered as well.
+     * @param dom the layout containing the row, and canvases[0] is used.
+     * @param row the row
+     * @param position a string like "100%-1em+1px"
+     * @return the position in pixels
+     */
+    public static int getRowPositionPixels( Application dom, Row row, String position  ) {
+        Canvas c= dom.getCanvases(0);
+        Font f= Font.decode(c.getFont());
+        double em= f.getSize2D();
+        String parent= row.getParent();
+        double dpos;
+        if ( parent.length()>0 ) {
+            DomNode n= getElementById( dom, parent );
+            Row parentRow= (Row) n;
+            int pmin= getRowPositionPixels( dom, parentRow, parentRow.getTop() );
+            int pmax= getRowPositionPixels( dom, parentRow, parentRow.getBottom() );
+            dpos= pmin + DasColumn.parseLayoutStr( position, em, pmax-pmin, -1 );
+        } else {
+            dpos= DasColumn.parseLayoutStr( position, em, c.getHeight(), -1 );
+        }
+        return (int)dpos;
+    }
+    
+    /**
+     * convert the layout to the pixel position if the left side of the column.  The one
+     * and only canvas is used for the width.  Note
+     * this is not trivial, because the parent must be considered as well.
+     * @param dom the layout containing the column, and canvases[0] is used.
+     * @param col the column
+     * @param  position a string like "100%-5em"
+     * @return the position in pixels.
+     */
+    public static int getColumnPositionPixels( Application dom, Column col, String position ) {
+        Canvas c= dom.getCanvases(0);
+        Font f= Font.decode(c.getFont());
+        String parent= col.getParent();
+        double dpos;
+        if ( parent.length()>0 ) {
+            DomNode n= getElementById( dom, parent );
+            Column parentColumn= (Column) n; // there was a bug where addPlots(3,3) would use a row for the parent, not the column.
+            int pmin= getColumnPositionPixels( dom, parentColumn, parentColumn.getLeft() );
+            int pmax= getColumnPositionPixels( dom, parentColumn, parentColumn.getRight() );
+            dpos= pmin + DasColumn.parseLayoutStr( position, f.getSize2D(), pmax-pmin, -1 );
+        } else {
+            dpos= DasColumn.parseLayoutStr( position, f.getSize2D(), c.getWidth(), -1 );
+        }
+        return (int)dpos;
+    }
+    
+    /**
+     * return the bounds for the plot, including the space needed for the title but not the space
+     * needed for the axes.  This is not intuitively difficult to do, but since one Row is generally
+     * relative to another row, this is not trivial.
+     * @param dom the layout containing the plot
+     * @param p the plot
+     * @return the bounds 
+     * @see #getRowPositionPixels(org.autoplot.dom.Application, org.autoplot.dom.Row, java.lang.String) 
+     * @see #getColumnPositionPixels(org.autoplot.dom.Application, org.autoplot.dom.Column, java.lang.String) 
+     */
+    public static Rectangle getBoundsForPlot( Application dom, Plot p ) {
+        Row row= (Row)getElementById( dom, p.getRowId() );
+        Column col= (Column)getElementById( dom, p.getColumnId() );
+        int c0= (int)getColumnPositionPixels( dom, col, col.getLeft() );
+        int c1= (int)getColumnPositionPixels( dom, col, col.getRight() );
+        int r0= (int)getRowPositionPixels( dom, row, row.getTop() );
+        int titleHeightLines= p.getTitle().trim().split("\n|\\<br\\>|\\!c",2).length;
+        int ems= Font.decode(dom.getCanvases(0).font).getSize(); //TODO: verify this is ems
+        r0= r0-titleHeightLines*ems;
+        int r1= (int)getRowPositionPixels( dom, row, row.getBottom() );
+        return new Rectangle( c0, r0, c1-c0, r1-r0 );
+    }
+    
+    /**
+     * return the bounds for the xaxis, including the space needed for the label.  The ephemeris (TCAs)
+     * lines needed is not known, so five lines are assumed.  
+     * @param dom the layout containing the plot
+     * @param p the plot
+     * @return the bounds 
+     * @see #getRowPositionPixels(org.autoplot.dom.Application, org.autoplot.dom.Row, java.lang.String) 
+     * @see #getColumnPositionPixels(org.autoplot.dom.Application, org.autoplot.dom.Column, java.lang.String) 
+     */
+    public static Rectangle getBoundsForXAxis( Application dom, Plot p ) {
+        Axis xaxis= p.getXaxis();
+        int emToPix= Font.decode(dom.getCanvases(0).font).getSize(); 
+        Row row= (Row)getElementById( dom, p.getRowId() );
+        Column col= (Column)getElementById( dom, p.getColumnId() );
+        int c0= (int)getColumnPositionPixels( dom, col, col.getLeft() );
+        int c1= (int)getColumnPositionPixels( dom, col, col.getRight() );
+        int r1= (int)getRowPositionPixels( dom, row, row.getBottom() );
+        int r0= r1;
+        
+        double[] tickLenEmPx;
+        try {
+            tickLenEmPx = DasDevicePosition.parseLayoutStr(dom.getOptions().getTicklen());
+        } catch (ParseException ex) {
+            tickLenEmPx= new double[] { 0,0,0 };
+        }
+        // make independent from row layout for initialization, ignoring normalized length.
+        int tickLen = Math.max( 0, (int) ( Math.round( tickLenEmPx[1]*emToPix + tickLenEmPx[2] ) ) ); 
+        
+        int axisLines;
+        if ( xaxis.isVisible() ) {
+            if ( xaxis.isDrawTickLabels() ) { 
+                axisLines= 1;
+                String label= xaxis.getLabel().trim();
+                if ( label.length()>0 ) axisLines += ( 1 + label.split("\n|\\<br\\>|\\!c",2).length ); // 1 is for odd gap.
+                if ( p.getTicksURI().trim().length()>0 ) {
+                    if ( p.getEphemerisLineCount()>-1 ) {
+                        axisLines+= p.getEphemerisLineCount();
+                    } else if ( p.getEphemerisLabels().trim().length()>0 ) {
+                        axisLines+= p.getEphemerisLabels().split(";").length;
+                    } else {
+                        int nominalNumberOfTicksLines= 5;
+                        axisLines+= nominalNumberOfTicksLines;
+                    }
+                }
+            } else {
+                axisLines= 0;
+            }
+            r1= r1 + axisLines*emToPix + tickLen;
+        }
+        return new Rectangle( c0, r0, c1-c0, r1-r0 );
+    }
+        
+    /**
+     * return the bounds for the colorbar zaxis, including the space needed for the label.
+     * @param dom the layout containing the plot
+     * @param p the plot
+     * @return the bounds 
+     * @see #getRowPositionPixels(org.autoplot.dom.Application, org.autoplot.dom.Row, java.lang.String) 
+     * @see #getColumnPositionPixels(org.autoplot.dom.Application, org.autoplot.dom.Column, java.lang.String) 
+     */
+    public static Rectangle getBoundsForZAxis( Application dom, Plot p ) {
+        Axis zaxis= p.getZaxis();
+        Row row= (Row)getElementById( dom, p.getRowId() );
+        Column col= (Column)getElementById( dom, p.getColumnId() );
+        int c0= (int)getColumnPositionPixels( dom, col, col.getRight() );
+        int c1= c0;
+        int r0= (int)getRowPositionPixels( dom, row, row.getTop() );
+        int r1= (int)getRowPositionPixels( dom, row, row.getBottom() );
+        int axisLines= 5 + zaxis.getLabel().trim().split("\n|\\<br\\>|\\!c",2).length;
+        if ( p.getTicksURI().trim().length()>0 ) {
+            int nominalNumberOfTicksLines= 5;
+            axisLines+= nominalNumberOfTicksLines;
+        }
+        int ems= Font.decode(dom.getCanvases(0).font).getSize(); //TODO: verify this is ems
+        c1= c1+axisLines*ems;
+        return new Rectangle( c0, r0, c1-c0, r1-r0 );
+    }
+            
     /**
      * Find the binding, if it exists.  All bindingImpls are symmetric, so the src and dst order is ignored in this
      * search.
@@ -980,6 +1339,27 @@ public class DomUtil {
     }
 
     /**
+     * print a list of who is listening to the property
+     * @param o the dom node or dom node controller.
+     * @param prop the property name.
+     */
+    public static void findListeners( Object o, String prop ) {
+        if ( o instanceof DomNode ) {
+            PropertyChangeSupport pcs= ((DomNode)o).propertyChangeSupport;
+            if ( pcs instanceof DebugPropertyChangeSupport ) { 
+                ((DebugPropertyChangeSupport)pcs).printListeners(prop);
+            }
+        } else if ( o instanceof DomNodeController ) {
+            PropertyChangeSupport pcs= ((DomNodeController)o).propertyChangeSupport;
+            if ( pcs instanceof DebugPropertyChangeSupport ) { 
+                ((DebugPropertyChangeSupport)pcs).printListeners(prop);
+            }
+        } else {
+            System.err.println( "Not supported: "+o );
+        }
+    }
+    
+    /**
      * Look through the state property values for references to ${PWD}
      * and replace them with sval.
      * @param state the domNode, typically starting from the Application root.
@@ -1040,7 +1420,7 @@ public class DomUtil {
      * @param domPlot
      * @return 
      */
-    static String getPlotAsString(Application application, Plot domPlot) {
+    public static String getPlotAsString(Application application, Plot domPlot) {
         Application newApp= new Application();
         newApp.setPlots( new Plot[] { domPlot } );
         List<PlotElement> pes= getPlotElementsFor( application, domPlot );
@@ -1078,5 +1458,321 @@ public class DomUtil {
         }
         return dsfs;
     }
+    
+    private static ArrayList<String> vapToJython( ArrayList<String> jython, String nodeAddress, PropertyChangeDiff pcd ) {
+        
+        String propertyName= pcd.propertyName;
+        if ( propertyName.endsWith("scale") ) {
+            return jython;
+        } else if ( propertyName.endsWith("autoLabel") ) {
+            return jython;
+        } else if ( propertyName.startsWith("options") ) {
+            return jython;
+        }
+                        
+        Object o= pcd.newVal;
+        String s;
+        if ( o instanceof String ) {
+            s= "'"+o+"'";
+        } else if ( o instanceof Boolean ) {
+            s= o.toString();
+            s= String.valueOf( Character.toUpperCase(s.charAt(0)) ) + s.substring(1);
+        } else if ( o instanceof Color ) {
+            Color c= (Color)o;
+            s= "color('"+ColorUtil.nameForColor(c)+"')";
+        } else if ( o instanceof DatumRange ) {
+            s= "datumRange('"+o+"')";
+        } else if ( o instanceof Datum ) {
+            s= "datum('"+o+"')";
+        } else if ( o instanceof Enum ) {
+            String sclaz= ((Enum) o).getDeclaringClass().getCanonicalName();
+            jython.add( "import " + sclaz );
+            s= "" + sclaz + "."+ o;
+            //s= String.valueOf( Character.toUpperCase(s.charAt(0)) ) + s.substring(1);
+        } else if ( o instanceof Displayable ) {
+            String sclaz= ((Displayable) o).getClass().getCanonicalName();
+            jython.add( "import " + sclaz );
+            s= "" + sclaz + "."+ o.toString().toUpperCase();
+            //s= String.valueOf( Character.toUpperCase(s.charAt(0)) ) + s.substring(1);
+        } else {
+            s= String.valueOf(o);
+        }
+        jython.add( nodeAddress + "." + pcd.propertyName + " = " + s );
 
+        return jython;
+    }
+    
+    private static ArrayList<String> vapToJython( String nodeAddress, DomNode src, DomNode dst ) {
+        ArrayList<String> jython= new ArrayList<>();
+        
+        List<Diff> diffs= dst.diffs(src);
+        for ( Diff d: diffs ) {
+            if ( d instanceof PropertyChangeDiff ) {
+                jython = vapToJython( jython, nodeAddress, (PropertyChangeDiff)d );
+//            } else if ( d instanceof )
+            } else  {
+                throw new IllegalArgumentException("only property change diffs!");
+            }
+        }
+        return jython;
+    }
+    
+    /**
+     * Ivar requested a vap-to-Jython converter.
+     * @param app0
+     * @param app
+     * @return 
+     */
+    public static String[] vapToJython( Application app0, Application app ) {
+        ArrayList<String> jython= new ArrayList<>();
+        List<Diff> diffs= app0.diffs(app);
+        for ( Diff d: diffs ) {
+            if ( d instanceof PropertyChangeDiff ) {
+                PropertyChangeDiff pcd= (PropertyChangeDiff)d;
+                jython = vapToJython( jython, "dom", pcd );
+                
+            } else if ( d instanceof ArrayNodeDiff ) {
+                ArrayNodeDiff and= (ArrayNodeDiff)d;
+                if ( null!=and.action ) switch (and.action) {
+                    case Insert:
+                        if ( and.node instanceof Annotation ) {
+                            jython.add( "from org.autoplot.dom import Annotation" );
+                            jython.add( "dom.controller.addAnnotation(Annotation())" );
+                            jython.addAll( vapToJython( "dom.annotations["+and.index+"]", new Annotation(), (DomNode)and.node ) );
+                        } else if ( and.node instanceof Plot ) {
+                            jython.add( "from org.autoplot.dom import Plot" );
+                            jython.add( "dom.controller.addPlot(Plot())" );
+                            jython.addAll( vapToJython( "dom.plots["+and.index+"]", new Plot(), (DomNode)and.node ) );
+                        } else if ( and.node instanceof Row ) {
+                        } else if ( and.node instanceof Column ) {
+                        } else if ( and.node instanceof DataSourceFilter ) {
+                            jython.add( "from org.autoplot.dom import DataSourceFilter" );
+                            jython.add( "dom.controller.addDataSourceFilter()" );
+                            jython.addAll( vapToJython( "dom.dataSourceFilters["+and.index+"]", new DataSourceFilter(), (DomNode)and.node ) );
+                        } else if ( and.node instanceof PlotElement ) {
+                            jython.add( "from org.autoplot.dom import PlotElement" );
+                            jython.add( "dom.controller.addPlotElement(None,None)" );
+                            jython.addAll( vapToJython( "dom.plotElements["+and.index+"]", new PlotElement(), (DomNode)and.node ) );
+                        } else if ( and.node instanceof BindingModel ) {
+                            BindingModel bm= (BindingModel)and.node;
+                            jython.add( "bind( dom.getElementById('" + bm.srcId +"'), '" + bm.srcProperty + "' ,dom.getElementById('" +  bm.dstId + "'), '"+ bm.dstProperty + "' )" );
+                        } else {
+                            jython.add( "insert " + d.toString());
+                        }
+                        break;
+                    case Delete:
+                        jython.add( "delete " + d.toString());
+                        break;
+                    case Move:
+                        jython.add( "move " + d.toString());
+                        break;
+                    default:
+                        break;
+                }
+            } else { 
+                jython.add( d.toString());
+            }
+        }
+        return jython.toArray( new String[jython.size()] );
+    }
+
+    /**
+     * print a one-line representation of the layout, showing canvas dimensions,
+     * font size, margin row and column, and the first row.
+     * @param c
+     * @return 
+     */
+    public static String layoutToString( Canvas c ) {
+        Row arow= c.getRows(0);
+        return String.format( "\u2610 %dx%d %dpt %s %s %s",
+                c.width,
+                c.height,
+                Font.decode(c.font).getSize(), 
+                "||" + c.marginColumn.getLeft()+","+c.marginColumn.getRight(), 
+                "=" + c.marginRow.getTop()+","+c.marginRow.getBottom(), 
+                "=" + arow.getTop() + "," + arow.getBottom() );
+    }
+
+    /**
+     * if there are duplicate ids, we can delete them to at least make the vap valid.
+     * @param state 
+     */
+    public static void deleteDuplicateIds(Application state) {
+        HashSet<String> s;
+        
+        if ( state.controller!=null ) {
+            throw new IllegalArgumentException("application can not have a controller.");
+        }
+        
+        s = new HashSet<>();
+        List<Annotation> ann= new ArrayList<>();
+        for ( Annotation a: state.getAnnotations() ) {
+            if ( !s.contains(a.id) ) {
+                ann.add(a);
+            }
+        }
+        state.setAnnotations(ann.toArray(new Annotation[ann.size()]));
+        
+        s = new HashSet<>();
+        List<DataSourceFilter> ff= new ArrayList<>();
+        for ( DataSourceFilter a: state.getDataSourceFilters() ) {
+            if ( !s.contains(a.id) ) {
+                ff.add(a);
+            }
+            s.add(a.id);
+        }
+        state.setDataSourceFilters(ff.toArray(new DataSourceFilter[ff.size()]));
+
+        s = new HashSet<>();
+        List<PlotElement> pes= new ArrayList<>();
+        for ( PlotElement a: state.getPlotElements() ) {
+            if ( !s.contains(a.id) ) {
+                pes.add(a);
+            }
+            s.add(a.id);
+        }
+        state.setPlotElements(pes.toArray(new PlotElement[pes.size()]));
+        
+        s = new HashSet<>();
+        List<Plot> ps= new ArrayList<>();
+        for ( Plot a: state.getPlots() ) {
+            if ( !s.contains(a.id) ) {
+                ps.add(a);
+            }
+            s.add(a.id);
+        }
+        state.setPlots(ps.toArray(new Plot[ps.size()]));
+
+    }
+    
+          
+    /**
+     * detect where ids are not unique
+     * @param dom
+     * @param problems
+     * @return 
+     * @see #deleteDuplicateIds which will make the vap valid, at least.
+     * @see #validateDom(org.autoplot.dom.Application, java.util.List) 
+     */
+    public static List<String> checkUniqueIdsAndReferences( Application dom, List<String> problems ) {
+        // check that all ids within the .vap are unique
+        Map<String,DomNode> ids= new HashMap<>();
+        for ( DomNode n: dom.dataSourceFilters ) {
+            DomNode n1= ids.get(n.id);
+            if ( n1!=null ) {
+                problems.add( "DataSourceFilter id is already taken by "+n1+"." );
+            } else {
+                ids.put( n.id, n );
+            }
+        }
+        List<Column> cc= new ArrayList( dom.getCanvases(0).columns );
+        cc.add( dom.getCanvases(0).marginColumn );
+        for ( Column n: cc ) {
+            DomNode n1= ids.get(n.id);
+            if ( n1!=null ) {
+                problems.add( "Column id is already taken by "+n1+"." );
+            } else {
+                ids.put( n.id, n );
+            }
+            if ( n.getParent().equals(dom.getCanvases(0).marginRow.id) ) {
+                problems.add( "Column parent is a row: "+n.id+"." );
+            }
+        }
+        List<Row> rr= new ArrayList( dom.getCanvases(0).rows );
+        rr.add( dom.getCanvases(0).marginRow );
+        for ( Row n: rr ) {
+            DomNode n1= ids.get(n.id);
+            if ( n1!=null ) {
+                problems.add( "Row id is already taken by "+n1+"." );
+            } else {
+                ids.put( n.id, n );
+            }
+        }        
+        for ( Plot n: dom.plots ) {
+            DomNode n1= ids.get(n.id);
+            if ( n1!=null ) {
+                problems.add( "Plot id is already taken by "+n1+"." );
+            } else {
+                ids.put( n.id, n );
+            }
+            if ( ids.get( n.getRowId() )==null ) {
+                problems.add( "PlotElement refers to row '"+n.getRowId()+"' which is not found: "+n );
+            }
+            if ( ids.get( n.getColumnId() )==null ) {
+                problems.add( "PlotElement refers to column '"+n.getColumnId()+"' which is not found: "+n );
+            }
+        }
+        for ( PlotElement pe: dom.plotElements ) {
+            DomNode n1= ids.get(pe.id);
+            if ( n1!=null ) {
+                problems.add( "PlotElement id is already taken by "+n1+"." );
+            } else {
+                ids.put( pe.id, pe );
+            }
+            if ( ids.get(pe.plotId)==null ) {
+                problems.add( "PlotElement refers to plot '"+pe.plotId+"' which is not found: "+pe );
+            }
+            if ( ids.get(pe.dataSourceFilterId)==null ) {
+                problems.add( "PlotElement refers to dataSourceFilter '"+pe.dataSourceFilterId+"' which is not found: "+pe );
+            }
+        }        
+        for ( Connector c: dom.connectors ) {
+            DomNode n1= ids.get(c.id);
+            if ( n1!=null ) {
+                problems.add( "Connector id is already taken by "+n1+"." );
+            } else {
+                ids.put( c.id, c );
+            }
+            if ( ids.get(c.plotA)==null ) {
+                problems.add( "Connector refers to plot '"+c.plotA +"' which is not found: "+c );
+            }
+            if ( ids.get(c.plotB)==null ) {
+                problems.add( "Connector refers to plot '"+c.plotB +"' which is not found: "+c );
+            }            
+        }
+        for ( Annotation a: dom.annotations ) {
+            DomNode n1= ids.get(a.id);
+            if ( n1!=null ) {
+                problems.add( "Annotation id is already taken by "+n1+"." );
+            } else {
+                ids.put( a.id, a );
+            }
+            if ( a.getPlotId().length()>0 && ids.get(a.getPlotId())==null ) {
+                problems.add( "Annotation refers to plot '"+a.getPlotId() +"' which is not found: "+a );
+            }
+            if ( a.getColumnId().trim().length()>0 && ids.get(a.getColumnId())==null ) {
+                problems.add( "Annotation refers to column '"+a.getColumnId() +"' which is not found: "+a );
+            }
+            if ( a.getRowId().trim().length()>0 && ids.get(a.getRowId())==null ) {
+                problems.add( "Annotation refers to row '"+a.getRowId() +"' which is not found: "+a );
+            }
+        }
+        return problems;
+    }
+
+    /**
+     * copy over "vap+internal:" data, where data is found in the controller but no URI represents it.
+     * This is to support https://sourceforge.net/p/autoplot/bugs/2332/, where we now copy over any data
+     * we find as well.
+     * @param srcdom the src dom with controllers and possibly internal data.
+     * @param dstdom the dst dom with controllers.
+     */
+    public static void copyOverInternalData(Application srcdom, Application dstdom) {
+        DataSourceFilter[] srcdsfs= srcdom.getDataSourceFilters();
+        DataSourceFilter[] dstdsfs= dstdom.getDataSourceFilters();
+        if ( srcdsfs.length!=dstdsfs.length ) {
+            throw new IllegalArgumentException("src and dest doms must be the same length.");
+        }
+        if ( dstdsfs.length>0 && dstdsfs[0].getController()==null ) {
+            logger.warning("destination does not have controllers, internal data in src will be ignored.");
+            return;
+        }
+        for ( int i=0; i<srcdsfs.length; i++ ) {
+            if ( srcdsfs[i].getUri().equals("vap+internal:") && srcdsfs[i].getController()!=null ) {
+                QDataSet ds= srcdsfs[i].getController().getFillDataSet();
+                dstdsfs[i].getController().setDataSetInternal(ds);
+            }
+        }
+        
+    }
 }

@@ -72,6 +72,7 @@ import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JPopupMenu;
 import javax.swing.JRadioButton;
+import javax.swing.JRootPane;
 import javax.swing.JScrollPane;
 import javax.swing.JSeparator;
 import javax.swing.JTextField;
@@ -79,6 +80,7 @@ import javax.swing.JTextPane;
 import javax.swing.KeyStroke;
 import javax.swing.SwingUtilities;
 import javax.swing.Timer;
+import javax.swing.filechooser.FileFilter;
 import javax.swing.text.DefaultEditorKit;
 import org.das2.components.DasProgressPanel;
 import org.das2.datum.DatumRange;
@@ -98,6 +100,8 @@ import org.autoplot.datasource.capability.TimeSeriesBrowse;
 import org.autoplot.datasource.ui.PromptComboBoxEditor;
 import org.autoplot.datasource.ui.PromptTextField;
 import org.das2.qds.ops.Ops;
+import org.das2.util.filesystem.Glob;
+import org.das2.util.monitor.AlertNullProgressMonitor;
 
 /**
  * Swing component for selecting dataset URIs.  This provides hooks for completions.
@@ -110,6 +114,7 @@ public class DataSetSelector extends javax.swing.JPanel {
     
     public static final Icon BUSY_ICON= new javax.swing.ImageIcon( DataSetSelector.class.getResource("/org/autoplot/aggregator/spinner_16.gif"));
     public static final Icon FILEMAG_ICON= new javax.swing.ImageIcon( DataSetSelector.class.getResource("/org/autoplot/datasource/fileMag.png"));
+    public static final Icon FILEMAG_BUSY_ICON= new javax.swing.ImageIcon( DataSetSelector.class.getResource("/resources/fileMagGray.png"));
     
     private Map<Object,Object> pendingChanges= new HashMap(); // lockObject->Client
     
@@ -138,12 +143,12 @@ public class DataSetSelector extends javax.swing.JPanel {
     /** Creates new form DataSetSelector */
     public DataSetSelector() {
         initComponents(); // of the 58milliseconds it takes to create the GUI, 52 are spent in here.
-        dataSetSelector.setEditor( new PromptComboBoxEditor("Enter data location") );
+        dataSetSelectorComboBox.setEditor( new PromptComboBoxEditor("Enter data location") );
         plotItButton.setActionCommand("doplot");
         inspectButton.setActionCommand("inspect");
         
-        editor = ((JTextField) dataSetSelector.getEditor().getEditorComponent());        
-        dataSetSelector.addActionListener( new ActionListener() {
+        editor = ((JTextField) dataSetSelectorComboBox.getEditor().getEditorComponent());        
+        dataSetSelectorComboBox.addActionListener( new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent ev) {
                 keyModifiers= ev.getModifiers();
@@ -276,19 +281,21 @@ public class DataSetSelector extends javax.swing.JPanel {
     }
 
     private ProgressMonitor getMonitor(String label, String desc) {
+        Window window= SwingUtilities.getWindowAncestor( this );
+        return getMonitor( label, desc, window );
+    }
+    
+    private ProgressMonitor getMonitor(String label, String desc, Window window ) {
         if (monitorFactory == null) {
             ProgressMonitor mon= DasApplication.getDefaultApplication().getMonitorFactory().getMonitor(label, desc);
-//            if ( mon instanceof DasProgressPanel ) {  //TODO: make sure the progress bar is in the same window.
-//                Window w= SwingUtilities.getWindowAncestor(((DasProgressPanel)mon).getComponent());
-//                if ( w instanceof JFrame ) {
-//                    w.setLocationRelativeTo(this);
-//                }
-//            }
+            DasProgressPanel.maybeCenter( mon, window );
             return mon;
         } else {
-            return monitorFactory.getMonitor(label, desc);
+            ProgressMonitor mon= monitorFactory.getMonitor(label, desc);
+            DasProgressPanel.maybeCenter( mon, window );
+            return mon;
         }
-    }
+    }    
 
     public void setMonitorFactory(MonitorFactory factory) {
         this.monitorFactory = factory;
@@ -388,7 +395,9 @@ public class DataSetSelector extends javax.swing.JPanel {
 
         try {
 
-            if (file.endsWith("/") || file.contains("/?") || ( file.endsWith(".zip") || file.contains(".zip?") || file.endsWith(".ZIP") || surl.contains(".ZIP?") ) ) { 
+            if (file.endsWith("/") || file.contains("/?") 
+                || ( file.endsWith(".zip") || file.contains(".zip?") || file.endsWith(".ZIP") || surl.contains(".ZIP?") )
+                || ( file.endsWith(".tgz") || file.contains(".tgz?") || file.endsWith(".tar") || surl.contains(".tar?") || file.endsWith(".tar.gz") || surl.contains(".tar.gz?") ) ) { 
                 //TODO: vap+cdaweb:file:///?ds=APOLLO12_SWS_1HR&id=NSpectra_1  should not reject if empty file?
                 int carotpos = editor.getCaretPosition();
                 setMessage("busy: getting filesystem completions.");
@@ -400,8 +409,8 @@ public class DataSetSelector extends javax.swing.JPanel {
                 carotpos = surl.lastIndexOf('/', carotpos - 1);
                 if (carotpos != -1) {
                     String sval= surl.substring(0, carotpos + 1);
-                    dataSetSelector.getEditor().setItem(sval);
-                    dataSetSelector.setSelectedItem(sval);
+                    dataSetSelectorComboBox.getEditor().setItem(sval);
+                    dataSetSelectorComboBox.setSelectedItem(sval);
                     editor.setCaretPosition(carotpos+1);
                     setTextInternal(sval);
                     maybePlotImmediately();
@@ -414,7 +423,7 @@ public class DataSetSelector extends javax.swing.JPanel {
                         setMessage("error: URI cannot be formed from \""+surl+"\"");
                         return;
                     }
-                    DataSourceFactory f = DataSetURI.getDataSourceFactory(uri, getMonitor());
+                    DataSourceFactory f = DataSetURI.getDataSourceFactory(uri, getMonitor( "get factory", "get factory" ) );
                     if (f == null) {
                         SourceTypesBrowser browser= new SourceTypesBrowser();
                         URI resourceURI= DataSetURI.getResourceURI(surl);
@@ -437,6 +446,9 @@ public class DataSetSelector extends javax.swing.JPanel {
 
                     }
                     
+                    // dascat: When we first open the catalog we don't know if any particular
+                    // source will have the time series browse property until we load the source
+                    // description itself. --cwp
                     TimeSeriesBrowse tsb= f.getCapability( TimeSeriesBrowse.class ); // https://sourceforge.net/p/autoplot/bugs/1518/
                     if ( false ) { // TODO: experiment more with this code
                     if ( tsb!=null ) {
@@ -465,7 +477,11 @@ public class DataSetSelector extends javax.swing.JPanel {
                     if ( tsbProblem.length()>0 ) logger.warning(tsbProblem);
                     
                     setMessage("busy: checking to see if uri looks acceptable");
-                    ProgressMonitor mon= getMonitor();
+                    
+                    Window w= SwingUtilities.getWindowAncestor(this);
+                    ProgressMonitor mon= getMonitor( "check URI", "check if URI is acceptable", w );
+                    
+                    //TODO: line up with parent.
                     List<String> problems= new ArrayList();
                     if (f.reject(surl, problems,mon)) { // This is the often-seen code that replaces the timerange in a URI. +#+#+
                         if ( tsb!=null ) {
@@ -632,7 +648,7 @@ public class DataSetSelector extends javax.swing.JPanel {
         }
         r.add(value);
 
-        while ( r.size()>MAX_RECENT ) {
+        while ( r.size()>MAX_RECENT ) { // Note: this has no effect. TODO: why?
             r.remove(0);
         }
 
@@ -756,7 +772,7 @@ public class DataSetSelector extends javax.swing.JPanel {
      * @param problems we're entering this GUI because of problems with the URI, so mark these problems.  See DataSourceFactory.reject.
      */
     public void browseSourceType( final List<String> problems ) {
-        String surl = ((String) dataSetSelector.getEditor().getItem()).trim();
+        String surl = ((String) dataSetSelectorComboBox.getEditor().getItem()).trim();
 
         logger.log(Level.FINE, "browseSourceType {0}", surl);
         
@@ -783,7 +799,8 @@ public class DataSetSelector extends javax.swing.JPanel {
                 //JOptionPane.showMessageDialog( this, "<html>Unable to create editor for URI:<br>"+surl );
                 //return;
                 edit= null;
-                wasRejected= true;                
+                wasRejected= true;          
+                logger.log(Level.FINE, "wasRejected= true" );
             }
             if ( edit!=null ) {
                 try {
@@ -795,24 +812,15 @@ public class DataSetSelector extends javax.swing.JPanel {
             } else {
                 URISplit split= URISplit.parse(surl);
                 if ( !".vap".equals(split.ext) ) { 
-                    if ( split.ext!=null ) {
-                        //experiment with GUI based on completions.
-                        edit= new CompletionsDataSourceEditor();
-                    }
+                    edit= new CompletionsDataSourceEditor();
                 } else {
-                    if ( split.path.startsWith("file:") ) { //TODO: I believe this is now dead code which will not be reached because of .vap browse trigger.
-                        String result= DataSetSelectorSupport.browseLocalVap(this, surl);
-                        if (result != null ) {
-                            this.setValue(result);
-                            this.maybePlot(false);
-                        }
-                        setCursor( Cursor.getDefaultCursor() );
-                        return;
-                    } else {
-                        JOptionPane.showMessageDialog( DataSetSelector.this, "Unable to inspect .vap files" );
-                        setCursor( Cursor.getDefaultCursor() );
-                        return;
+                    String result= DataSetSelectorSupport.browseLocalVap(this, surl);
+                    if (result != null ) {
+                        this.setValue(result);
+                        this.maybePlot(false);
                     }
+                    setCursor( Cursor.getDefaultCursor() );
+                    return;
                 }
             }
             
@@ -835,6 +843,9 @@ public class DataSetSelector extends javax.swing.JPanel {
                 setCursor( Cursor.getDefaultCursor() );
                 return;
             }
+            
+            inspectButton.setIcon( FILEMAG_BUSY_ICON );
+            inspectButton.setEnabled( false );
             
             Runnable run= new Runnable() {
                 @Override
@@ -872,21 +883,46 @@ public class DataSetSelector extends javax.swing.JPanel {
                     
                     boolean proceed;
                     try {
-                        proceed = fedit.prepare(surl, window, getMonitor("download file", "downloading file and preparing editor"));
-                        if ( !proceed ) return;
+                        ProgressMonitor mon= getMonitor("download file", "downloading file and preparing editor",window);
+                        proceed = fedit.prepare(surl, window, mon );
+                        if ( !proceed ) {
+                            logger.finer("proceed=false");
+                            clearBusyIcon();
+                            setCursor( Cursor.getDefaultCursor() );
+                            return;
+                        }
                     } catch ( java.io.InterruptedIOException ex ) {
                         setMessage( "download cancelled" );  //TODO: check FTP
+                        logger.finer("download cancelled");
+                        clearBusyIcon();
+                        setCursor( Cursor.getDefaultCursor() );
                         return;
                     } catch (Exception ex) {
+                        logger.log(Level.FINER, "exception in prepare: {0}", ex.getMessage());
+                        clearBusyIcon();
+                        setCursor( Cursor.getDefaultCursor() );
                         if ( !maybeHandleException(ex) ) {
                             throw new RuntimeException(ex);
-                        }
+                        }                        
                         return;
-                    } finally {
-                        setCursor( Cursor.getDefaultCursor() );
                     }
 
-                    fedit.setURI(surl);
+                    try {
+                        fedit.setURI(surl);
+                    } catch ( Exception e ) {
+                        e.printStackTrace();
+                    }
+                    
+                    setCursor( Cursor.getDefaultCursor() );
+                    
+                    if ( surl.startsWith("vap+inline" ) ) {
+                        // tiny kludge for Autoplot
+                        if ( fedit.getClass().getName().equals("org.autoplot.inline.InlineDataSourceEditorPanel") ) {
+                            if ( window.getClass().getName().equals("org.autoplot.AutoplotUI") ) {
+                                //bug 2044: TODO: this should fire off events with the DataSourceEditor to make it available to Autoplot.
+                            }
+                        }
+                    }
                     fedit.markProblems(problems);
                     
                     final String fsurl= surl;
@@ -920,68 +956,104 @@ public class DataSetSelector extends javax.swing.JPanel {
         }
     }
 
+    /**
+     * add a listener for escape key press, which will setVisible(false) and
+     * clear the dialog.
+     * @param dialog 
+     */
+    public static void addCancelEscapeKey( final JDialog dialog ) {
+        // add escape key listener to mean cancel.
+        dialog.getRootPane().registerKeyboardAction( new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                Component focus= dialog.getFocusOwner();
+                if ( focus!=null && focus instanceof JTextField ) {
+                    logger.finer("ignore escape pressed within a JTextField");
+                    return;
+                }
+                if ( focus!=null && focus instanceof JRootPane ) {
+                    logger.finer("ignore escape pressed within a JRootPane");
+                    return;
+                }
+                dialog.setVisible(false);
+                dialog.dispose(); 
+            }
+        }, KeyStroke.getKeyStroke( KeyEvent.VK_ESCAPE, 0 ), JComponent.WHEN_IN_FOCUSED_WINDOW );        
+    }
+    
     private Runnable getURIReviewDialog( final String fsurl, final DataSourceEditorPanel fedit, final List<String> problems ) {
         Runnable run= new Runnable() {
             @Override
             public void run() {
-                DataSourceEditorDialog dialog;
-                Window window= SwingUtilities.getWindowAncestor(DataSetSelector.this); 
-                String title = "Editing URI " + fsurl;
-                if (window instanceof Frame) {
-                    dialog = new DataSourceEditorDialog((Frame) window, fedit.getPanel(), true);
-                } else if (window instanceof Dialog) {  // TODO: Java 1.6 ModalityType.
-                    dialog = new DataSourceEditorDialog((Dialog) window, fedit.getPanel(), true);
-                } else {
-                    throw new RuntimeException("parent windowAncestor type is not supported.");
-                }
-                dialog.setTitle(title);
-                dialog.setProblems(problems);
-
-                if ( actionListenerList==null || actionListenerList.isEmpty() || playButton==false ) {
-                    dialog.setPlayButton(false); // nothing is going to happen, so don't show play button.
-                } else {
-                    dialog.setExpertMode(isExpertMode());
-                }
-
-                pendingChanges.put( PENDING_EDIT, DataSetSelector.this );
-                
-                WindowManager.getInstance().showModalDialog(dialog);
-                
-                if (!dialog.isCancelled()) {
-                    String surl= fedit.getURI();                                
-                    logger.log( Level.FINE, "dataSetSelector.setSelectedItem(\"{0}\");", surl );
-                    dataSetSelector.setSelectedItem(surl);
-
-                    boolean bug1098= false; //TODO finish off this change.
-                    if ( bug1098 ) {
-                        DataSourceFactory dsf;
-                        try {
-                            dsf = DataSetURI.getDataSourceFactory( DataSetURI.getURI(surl), new NullProgressMonitor());
-                            TimeSeriesBrowse tsb= dsf.getCapability( TimeSeriesBrowse.class );
-                            tsb.setURI(surl);
-                            DatumRange timeRangeNew= tsb.getTimeRange();
-                            if ( !timeRangeNew.equals(timeRange) ) {
-                                logger.log(Level.FINE, "resetting timerange to {0}", timeRangeNew);
-                                timeRange= timeRangeNew;
-                            }
-                        } catch (ParseException | IOException | IllegalArgumentException | URISyntaxException ex) {
-                            logger.log( Level.SEVERE, ex.getMessage(), ex );
-                        }
+                try {
+                    final DataSourceEditorDialog dialog;
+                    Window window= SwingUtilities.getWindowAncestor(DataSetSelector.this); 
+                    String title = "Editing URI " + fsurl;
+                    if (window instanceof Frame) {
+                        dialog = new DataSourceEditorDialog((Frame) window, fedit.getPanel(), true);
+                    } else if (window instanceof Dialog) {  // TODO: Java 1.6 ModalityType.
+                        dialog = new DataSourceEditorDialog((Dialog) window, fedit.getPanel(), true);
+                    } else {
+                        throw new RuntimeException("parent windowAncestor type is not supported.");
                     }
-                    keyModifiers = dialog.getModifiers();
-                    maybePlot(true);
+                    dialog.setTitle(title);
+                    dialog.setProblems(problems);
+
+                    if ( actionListenerList==null || actionListenerList.isEmpty() || playButton==false ) {
+                        dialog.setPlayButton(false); // nothing is going to happen, so don't show play button.
+                    } else {
+                        dialog.setExpertMode(isExpertMode());
+                    }
+
+                    pendingChanges.put( PENDING_EDIT, DataSetSelector.this );
+
+                    addCancelEscapeKey(dialog);
+
+                    WindowManager.getInstance().showModalDialog(dialog);
+
+                    if (!dialog.isCancelled()) {
+                        String surl= fedit.getURI();                                
+                        logger.log( Level.FINE, "dataSetSelectorComboBox.setSelectedItem(\"{0}\");", surl );
+                        dataSetSelectorComboBox.setSelectedItem(surl);
+                        logger.log( Level.FINE, "dataSetSelectorComboBox.getEditor().setItem(\"{0}\");", surl );
+                        dataSetSelectorComboBox.getEditor().setItem(surl);
+
+                        boolean bug1098= false; //TODO finish off this change.
+                        if ( bug1098 ) {
+                            DataSourceFactory dsf;
+                            try {
+                                dsf = DataSetURI.getDataSourceFactory( DataSetURI.getURI(surl), new NullProgressMonitor());
+                                TimeSeriesBrowse tsb= dsf.getCapability( TimeSeriesBrowse.class );
+                                tsb.setURI(surl);
+                                DatumRange timeRangeNew= tsb.getTimeRange();
+                                if ( !timeRangeNew.equals(timeRange) ) {
+                                    logger.log(Level.FINE, "resetting timerange to {0}", timeRangeNew);
+                                    timeRange= timeRangeNew;
+                                }
+                            } catch (ParseException | IOException | IllegalArgumentException | URISyntaxException ex) {
+                                logger.log( Level.SEVERE, ex.getMessage(), ex );
+                            }
+                        }
+                        keyModifiers = dialog.getModifiers();
+                        maybePlot(true);
+                    } else {
+                        setMessage("editor cancelled");
+                    }
+                } finally {
                     pendingChanges.remove( PENDING_EDIT );
-                } else {
-                    setMessage("editor cancelled");
-                    pendingChanges.remove( PENDING_EDIT );
+                    clearBusyIcon();
                 }
+                                
             }
         };
         return run;
     }
     
+    /**
+     * show completions, as if the scientist had hit tab
+     */
     public void showCompletions() {
-        JTextField tf= ((JTextField) dataSetSelector.getEditor().getEditorComponent());
+        JTextField tf= ((JTextField) dataSetSelectorComboBox.getEditor().getEditorComponent());
         final String surl = tf.getText();
         int carotpos = tf.getCaretPosition();
         setMessage("busy: getting completions");
@@ -990,8 +1062,18 @@ public class DataSetSelector extends javax.swing.JPanel {
 
     }
     
+    /**
+     * force hide the completions list.
+     */
+    public void hideCompletions() {
+        if ( completionsPopupMenu!=null ) {
+            completionsPopupMenu.setVisible(false);
+        }
+    }
+    
     private void clearBusyIcon() {
         inspectButton.setIcon( FILEMAG_ICON );
+        inspectButton.setEnabled(true);
     }
 
     /**
@@ -1030,7 +1112,10 @@ public class DataSetSelector extends javax.swing.JPanel {
         
         boolean haveSource= DataSourceRegistry.getInstance().hasSourceByExt(ext);
         
-        boolean sourceNeedsNoFile= ext!=null && ( ext.equals("inline") || ext.equals("cdaweb") || ext.equals("pdsppi") );
+        boolean sourceNeedsNoFile= ext!=null && ( 
+            ext.equals("inline") || ext.equals("cdaweb") || ext.equals("pdsppi") || 
+            ext.equals("dc")
+        );
         
         if ( ( split.file==null || split.resourceUriCarotPos > split.file.length() ) && haveSource || sourceNeedsNoFile ) {
             showFactoryCompletions( surl, carotpos );
@@ -1101,8 +1186,9 @@ public class DataSetSelector extends javax.swing.JPanel {
             completionsRunnable = null;
         }
 
-        completionsMonitor = getMonitor();
-        completionsMonitor.setLabel("getting completions");
+        Window w= SwingUtilities.getWindowAncestor(this);
+        completionsMonitor = getMonitor("completions","getting completions",w);
+        //completionsMonitor.setLabel("getting completions");
 
         completionsRunnable= run;
 
@@ -1126,7 +1212,12 @@ public class DataSetSelector extends javax.swing.JPanel {
         completionsPopupMenu = CompletionsList.fillPopupNew(completions, labelPrefix, new JScrollPopupMenu(), listener);
         //TODO Here's the plan: we will make the popupMenu be non-focusable, then delegate the Up,Down,Enter and Escape to it when the popup is showing.
         //completionsPopupMenu.setFocusable(true);
-        
+        completionsPopupMenu.registerKeyboardAction( new ActionListener() {
+            @Override
+            public void actionPerformed(ActionEvent e) {
+                hideCompletions();
+            }
+        }, KeyStroke.getKeyStroke( KeyEvent.VK_ESCAPE, 0 ), JComponent.WHEN_IN_FOCUSED_WINDOW );
         setMessage("done getting completions");
         setCursor( Cursor.getPredefinedCursor( Cursor.DEFAULT_CURSOR ) );
 
@@ -1140,10 +1231,10 @@ public class DataSetSelector extends javax.swing.JPanel {
                     int xpos = xpos2 - model.getValue();
                     xpos = Math.min(model.getExtent(), xpos);
 
-                    if ( dataSetSelector.isShowing() ) {
-                        completionsPopupMenu.show(dataSetSelector, xpos, dataSetSelector.getHeight());
+                    if ( dataSetSelectorComboBox.isShowing() ) {
+                        completionsPopupMenu.show(dataSetSelectorComboBox, xpos, dataSetSelectorComboBox.getHeight());
                     } else {
-                        JOptionPane.showMessageDialog( dataSetSelector, "<html>Completions for "+getValue()+"<br>are not available when the data set selector is not showing.</html>");
+                        JOptionPane.showMessageDialog(dataSetSelectorComboBox, "<html>Completions for "+getValue()+"<br>are not available when the data set selector is not showing.</html>");
                     }
                     completionsRunnable = null;
                     
@@ -1327,7 +1418,9 @@ public class DataSetSelector extends javax.swing.JPanel {
     }
 
     private void showFileSystemCompletions(final String surl, final int carotpos) {
-
+        if ( carotpos> surl.length() ) {
+            throw new StringIndexOutOfBoundsException("index out of bounds: "+carotpos+" in \"" +surl + "\"" );
+        }
         logger.log(Level.FINE, "entering showFileSystemCompletions({0},{1})", new Object[]{surl, carotpos});
         calcAndShowCompletions( new Runnable() {
             @Override
@@ -1496,14 +1589,19 @@ public class DataSetSelector extends javax.swing.JPanel {
      */
     public final void addCompletionKeys() {
 
-        ActionMap map = dataSetSelector.getActionMap();
+        ActionMap map = dataSetSelectorComboBox.getActionMap();
         map.put("complete", new AbstractAction("completionsPopup") {
             @Override
             public void actionPerformed(ActionEvent ev) {
                 org.das2.util.LoggerManager.logGuiEvent(ev);
-                String context= (String) dataSetSelector.getEditor().getItem();
-                //String context = (String) dataSetSelector.getSelectedItem();  // This is repeated code.  See browseButtonActionPerformed.
+                String context= (String) dataSetSelectorComboBox.getEditor().getItem();
+                //String context = (String) dataSetSelectorComboBox.getSelectedItem();  // This is repeated code.  See browseButtonActionPerformed.
                 if ( context==null ) context= "";
+                Component c= dataSetSelectorComboBox.getEditor().getEditorComponent();
+                if ( c instanceof JTextField ) { // which it is...
+                    int i= ((JTextField)c).getCaretPosition();
+                    context= context.substring(0,i);
+                }
 
                 // hooks for browsing, such as "vap+internal"
                 for (String browseTriggerRegex : browseTriggers.keySet()) {
@@ -1529,13 +1627,13 @@ public class DataSetSelector extends javax.swing.JPanel {
             }
         });
 
-        dataSetSelector.setActionMap(map);
-        final JTextField tf = (JTextField) dataSetSelector.getEditor().getEditorComponent();
+        dataSetSelectorComboBox.setActionMap(map);
+        final JTextField tf = (JTextField) dataSetSelectorComboBox.getEditor().getEditorComponent();
         tf.addActionListener(new ActionListener() {
             @Override
             public void actionPerformed(ActionEvent ev) {
                 org.das2.util.LoggerManager.logGuiEvent(ev);                
-                dataSetSelector.setSelectedItem(tf.getText());
+                dataSetSelectorComboBox.setSelectedItem(tf.getText());
                 keyModifiers = ev.getModifiers();
                 try {
                     setValue(getEditor().getText());
@@ -1550,7 +1648,7 @@ public class DataSetSelector extends javax.swing.JPanel {
         setFocusTraversalKeys( KeyboardFocusManager.FORWARD_TRAVERSAL_KEYS, trav );
         setFocusTraversalKeys( KeyboardFocusManager.BACKWARD_TRAVERSAL_KEYS, trav );
 
-        InputMap imap = SwingUtilities.getUIInputMap(dataSetSelector, JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT);
+        InputMap imap = SwingUtilities.getUIInputMap(dataSetSelectorComboBox, JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT);
         imap.put(KeyStroke.getKeyStroke(KeyEvent.VK_SPACE, InputEvent.CTRL_MASK), "complete");
         imap.put(KeyStroke.getKeyStroke(KeyEvent.VK_TAB, 0 ), "complete");
         imap.put(KeyStroke.getKeyStroke(KeyEvent.VK_ENTER, InputEvent.CTRL_MASK), "plot");
@@ -1646,16 +1744,16 @@ public class DataSetSelector extends javax.swing.JPanel {
 
         inspectButton = new javax.swing.JButton();
         plotItButton = new javax.swing.JButton();
-        dataSetSelector = new javax.swing.JComboBox();
+        dataSetSelectorComboBox = new javax.swing.JComboBox();
 
         setMaximumSize(new java.awt.Dimension(1000, 27));
 
-        inspectButton.setIcon(new javax.swing.ImageIcon(getClass().getResource("/org/autoplot/datasource/fileMag.png"))); // NOI18N
+        inspectButton.setIcon(new javax.swing.ImageIcon(getClass().getResource("/resources/fileMag.png"))); // NOI18N
         inspectButton.setToolTipText("<html>Inspect this resource.<br>\nFor folder names, this enters the file system browser, or shows a list of remote folders.<br>\nFor files, this will enter an editor panel for the resource, or show a list of parameter options.<br>\n</html>\n\n");
         inspectButton.setMargin(new java.awt.Insets(2, 2, 2, 2));
         inspectButton.setMaximumSize(new java.awt.Dimension(27, 27));
         inspectButton.setMinimumSize(new java.awt.Dimension(27, 27));
-        inspectButton.setName("browse"); // NOI18N
+        inspectButton.setName("inspect"); // NOI18N
         inspectButton.setPreferredSize(new java.awt.Dimension(27, 27));
         inspectButton.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
@@ -1663,8 +1761,8 @@ public class DataSetSelector extends javax.swing.JPanel {
             }
         });
 
-        plotItButton.setIcon(new javax.swing.ImageIcon(getClass().getResource("/org/autoplot/datasource/go.png"))); // NOI18N
-        plotItButton.setToolTipText("<html>Plot this data location, or URI.<br>\nCtrl modifier: plot the dataset by adding a new plot<br>\nShift modifier: plot the dataset as an overplot<br>\nAlt modifier: inspect this resource.<br>");
+        plotItButton.setIcon(new javax.swing.ImageIcon(getClass().getResource("/resources/go.png"))); // NOI18N
+        plotItButton.setToolTipText("<html>Play button plots this data location, or URI<br>\nThis may also load a .vap file or run a script, depending on the text entered.<br>\nCtrl modifier: plot the dataset by adding a new plot<br>\nShift modifier: plot the dataset as an overplot<br>\nAlt modifier: inspect this resource.<br>");
         plotItButton.setMaximumSize(new java.awt.Dimension(27, 27));
         plotItButton.setMinimumSize(new java.awt.Dimension(27, 27));
         plotItButton.setName("go"); // NOI18N
@@ -1675,20 +1773,20 @@ public class DataSetSelector extends javax.swing.JPanel {
             }
         });
 
-        dataSetSelector.setEditable(true);
-        dataSetSelector.setModel(new javax.swing.DefaultComboBoxModel(new String[] { "(application will put recent items here)" }));
-        dataSetSelector.setToolTipText("Enter data source address");
-        dataSetSelector.setMaximumSize(new java.awt.Dimension(2000, 27));
-        dataSetSelector.setMinimumSize(new java.awt.Dimension(100, 27));
-        dataSetSelector.setPreferredSize(new java.awt.Dimension(300, 27));
-        dataSetSelector.addPopupMenuListener(new javax.swing.event.PopupMenuListener() {
+        dataSetSelectorComboBox.setEditable(true);
+        dataSetSelectorComboBox.setModel(new javax.swing.DefaultComboBoxModel(new String[] { "(application will put recent items here)" }));
+        dataSetSelectorComboBox.setToolTipText("Enter data source address");
+        dataSetSelectorComboBox.setMaximumSize(new java.awt.Dimension(2000, 27));
+        dataSetSelectorComboBox.setMinimumSize(new java.awt.Dimension(100, 27));
+        dataSetSelectorComboBox.setPreferredSize(new java.awt.Dimension(300, 27));
+        dataSetSelectorComboBox.addPopupMenuListener(new javax.swing.event.PopupMenuListener() {
             public void popupMenuWillBecomeVisible(javax.swing.event.PopupMenuEvent evt) {
             }
             public void popupMenuWillBecomeInvisible(javax.swing.event.PopupMenuEvent evt) {
-                dataSetSelectorPopupMenuWillBecomeInvisible(evt);
+                dataSetSelectorComboBoxPopupMenuWillBecomeInvisible(evt);
             }
             public void popupMenuCanceled(javax.swing.event.PopupMenuEvent evt) {
-                dataSetSelectorPopupMenuCanceled(evt);
+                dataSetSelectorComboBoxPopupMenuCanceled(evt);
             }
         });
 
@@ -1697,7 +1795,7 @@ public class DataSetSelector extends javax.swing.JPanel {
         layout.setHorizontalGroup(
             layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
             .add(org.jdesktop.layout.GroupLayout.TRAILING, layout.createSequentialGroup()
-                .add(dataSetSelector, 0, 386, Short.MAX_VALUE)
+                .add(dataSetSelectorComboBox, 0, 386, Short.MAX_VALUE)
                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
                 .add(plotItButton, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 26, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
@@ -1710,10 +1808,10 @@ public class DataSetSelector extends javax.swing.JPanel {
             layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
             .add(plotItButton, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
             .add(inspectButton, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 20, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE)
-            .add(dataSetSelector, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
+            .add(dataSetSelectorComboBox, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
         );
 
-        layout.linkSize(new java.awt.Component[] {dataSetSelector, inspectButton, plotItButton}, org.jdesktop.layout.GroupLayout.VERTICAL);
+        layout.linkSize(new java.awt.Component[] {dataSetSelectorComboBox, inspectButton, plotItButton}, org.jdesktop.layout.GroupLayout.VERTICAL);
 
         inspectButton.getAccessibleContext().setAccessibleDescription("inspect contents of file or directory");
     }// </editor-fold>//GEN-END:initComponents
@@ -1731,7 +1829,7 @@ public class DataSetSelector extends javax.swing.JPanel {
 
     private void inspectButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_inspectButtonActionPerformed
         org.das2.util.LoggerManager.logGuiEvent(evt);            
-        String context = ((String) dataSetSelector.getEditor().getItem()).trim();
+        String context = ((String) dataSetSelectorComboBox.getEditor().getItem()).trim();
         if ( context.startsWith("vap ") ) context= "vap+"+context.substring(4);
         String ext = DataSetURI.getExt(context);
         final String fcontext= context;
@@ -1746,11 +1844,35 @@ public class DataSetSelector extends javax.swing.JPanel {
                 return;
             }
         }
+        
+        boolean doBrowseSourceType= false;
+        if ( enableDataSource ) {
+            if ( !context.contains("/?") && context.contains("?") ) {
+                doBrowseSourceType= true;
+            } 
+            // see if the xml or json file is handled by a different source.
+            if ( ext!=null && ( ext.equals( DataSetURI.RECOGNIZE_FILE_EXTENSION_JSON ) || ext.equals( DataSetURI.RECOGNIZE_FILE_EXTENSION_XML) ) ) {
+                try {
+                    File f= DataSetURI.getFile(context,new AlertNullProgressMonitor("download on event thread"));
+                    String ext2= DataSourceRecognizer.guessDataSourceType(f);
+                    if ( ext2!=null ) {
+                        ext= ext2;
+                    }                    
+                } catch (IOException ex) {
+                    logger.log(Level.SEVERE, null, ex);
+                }
+            }
+            
+            if ( DataSourceRegistry.getInstance().hasSourceByExt(ext) ) {
+                doBrowseSourceType= true;
+            }
+        }
+        
 
         if ( enableDataSource && ( context.trim().length()==0 || context.trim().equals("vap+") ) ) {
             showCompletions();
 
-        } else if ( enableDataSource &&  ( (!context.contains("/?") && context.contains("?")) || DataSourceRegistry.getInstance().hasSourceByExt(ext) ) ) {
+        } else if ( doBrowseSourceType ) {
             browseSourceType();
 
         } else {
@@ -1759,7 +1881,7 @@ public class DataSetSelector extends javax.swing.JPanel {
                     || split.scheme.equals("http") || split.scheme.equals("https")
                     || split.scheme.equals("ftp") || split.scheme.equals("sftp" ) ) ) {
                 try {
-                    if (FileSystemUtil.resourceExists(context)  && FileSystemUtil.resourceIsFile(context) ) {
+                    if ( enableDataSource && FileSystemUtil.resourceExists(context)  && FileSystemUtil.resourceIsFile(context) ) {
                         if ( !FileSystemUtil.resourceIsLocal(context) ) {
                             Runnable run= new Runnable() {
                                 @Override
@@ -1782,6 +1904,20 @@ public class DataSetSelector extends javax.swing.JPanel {
                     } else if (split.scheme.equals("file")) {
                         JFileChooser chooser = new JFileChooser( new File( DataSetURI.toUri(split.path) ) );
                         chooser.setMultiSelectionEnabled(true);
+                        if ( acceptPattern!=null ) {
+                            final Pattern p= Pattern.compile(acceptPattern);
+                            chooser.setFileFilter( new FileFilter() {
+                                @Override
+                                public boolean accept(File f) {
+                                    return f!=null && ( f.isDirectory() || p.matcher(f.toString()).matches() );
+                                }
+
+                                @Override
+                                public String getDescription() {
+                                    return "files matching "+Glob.getGlobFromRegex(acceptPattern);
+                                }
+                            });
+                        }
                         int result = chooser.showOpenDialog(this);
                         if (result == JFileChooser.APPROVE_OPTION) {
                             File[] ff=  chooser.getSelectedFiles();
@@ -1799,7 +1935,7 @@ public class DataSetSelector extends javax.swing.JPanel {
                             setValue(suri);
                             maybePlot(false);
 
-                            //dataSetSelector.setSelectedItem(suri);
+                            //dataSetSelectorComboBox.setSelectedItem(suri);
                         }
                     } else {
                         showCompletions();
@@ -1814,7 +1950,7 @@ public class DataSetSelector extends javax.swing.JPanel {
     }//GEN-LAST:event_inspectButtonActionPerformed
     private boolean popupCancelled = false;
 
-private void dataSetSelectorPopupMenuWillBecomeInvisible(javax.swing.event.PopupMenuEvent evt) {//GEN-FIRST:event_dataSetSelectorPopupMenuWillBecomeInvisible
+private void dataSetSelectorComboBoxPopupMenuWillBecomeInvisible(javax.swing.event.PopupMenuEvent evt) {//GEN-FIRST:event_dataSetSelectorComboBoxPopupMenuWillBecomeInvisible
     if (popupCancelled == false) {
         if ( (keyModifiers&KeyEvent.ALT_MASK ) == KeyEvent.ALT_MASK ) {
             browseSourceType();
@@ -1823,20 +1959,20 @@ private void dataSetSelectorPopupMenuWillBecomeInvisible(javax.swing.event.Popup
         }
     }
     popupCancelled = false;
-}//GEN-LAST:event_dataSetSelectorPopupMenuWillBecomeInvisible
+}//GEN-LAST:event_dataSetSelectorComboBoxPopupMenuWillBecomeInvisible
 
-private void dataSetSelectorPopupMenuCanceled(javax.swing.event.PopupMenuEvent evt) {//GEN-FIRST:event_dataSetSelectorPopupMenuCanceled
+private void dataSetSelectorComboBoxPopupMenuCanceled(javax.swing.event.PopupMenuEvent evt) {//GEN-FIRST:event_dataSetSelectorComboBoxPopupMenuCanceled
     popupCancelled = true;
-}//GEN-LAST:event_dataSetSelectorPopupMenuCanceled
+}//GEN-LAST:event_dataSetSelectorComboBoxPopupMenuCanceled
 
     // Variables declaration - do not modify//GEN-BEGIN:variables
-    private javax.swing.JComboBox dataSetSelector;
+    private javax.swing.JComboBox dataSetSelectorComboBox;
     private javax.swing.JButton inspectButton;
     private javax.swing.JButton plotItButton;
     // End of variables declaration//GEN-END:variables
 
     /**
-     * this returns the value of the datasetselector, rather than what is pending in the editor.  The problem is pending
+     * this returns the value of the dataSetSelectorComboBox, rather than what is pending in the editor.  The problem is pending
      * operations in the text editor will cause the value to be clobbered.
      * @return
      */
@@ -1852,8 +1988,8 @@ private void dataSetSelectorPopupMenuCanceled(javax.swing.event.PopupMenuEvent e
      * @return Value of property value.
      */
     public String getValue() {
-        String val= (String)this.dataSetSelector.getEditor().getItem(); //TODO why not use this if selectedItem is null?
-        //String val= (String)this.dataSetSelector.getSelectedItem(); //TODO: check this vs getEditor().getItem() on different platforms
+        String val= (String)this.dataSetSelectorComboBox.getEditor().getItem(); //TODO why not use this if selectedItem is null?
+        //String val= (String)this.dataSetSelectorComboBox.getSelectedItem(); //TODO: check this vs getEditor().getItem() on different platforms
         if ( val==null ) {
             return "";
         } else {
@@ -2014,7 +2150,7 @@ private void dataSetSelectorPopupMenuCanceled(javax.swing.event.PopupMenuEvent e
             }
         }
         Collections.reverse(r);
-        dataSetSelector.setModel(new DefaultComboBoxModel(r.toArray()));
+        dataSetSelectorComboBox.setModel(new DefaultComboBoxModel(r.toArray()));
         //editor.setText(value); // don't show most recent one.
         support.refreshRecentFilesMenu();
         firePropertyChange( PROP_RECENT, oldRecent, recent);
@@ -2079,7 +2215,7 @@ private void dataSetSelectorPopupMenuCanceled(javax.swing.event.PopupMenuEvent e
     }
 
     /**
-     * This is how we allow .vap files to be in the datasetSelector.  We register
+     * This is how we allow .vap files to be in the dataSetSelector.  We register
      * a pattern for which an action is invoked.
      * @param regex regular expression for the trigger.
      * @param action the action to take.
@@ -2105,7 +2241,7 @@ private void dataSetSelectorPopupMenuCanceled(javax.swing.event.PopupMenuEvent e
     }
 
     /**
-     * allows the dataSetSelector to be used to select files.
+     * allows the dataSetSelectorComboBox to be used to select files.
      * @param b
      */
     public void setDisableDataSources(boolean b) {
@@ -2240,7 +2376,7 @@ private void dataSetSelectorPopupMenuCanceled(javax.swing.event.PopupMenuEvent e
 
         JMenu fontMenu= new JMenu( "Font Size" );
 
-        fontMenu.add( new AbstractAction( "Big" ) {
+        fontMenu.add(new AbstractAction( "Big" ) {
             @Override
             public void actionPerformed(ActionEvent ev) {
                 org.das2.util.LoggerManager.logGuiEvent(ev);            
@@ -2248,12 +2384,12 @@ private void dataSetSelectorPopupMenuCanceled(javax.swing.event.PopupMenuEvent e
                 int size= 16;
                 if ( size>4 && size<18 ) {
                     Font nf= f.deriveFont( (float)size );
-                    dataSetSelector.setFont(nf);
+                    dataSetSelectorComboBox.setFont(nf);
                 }
             }
         });
 
-        fontMenu.add( new AbstractAction( "Normal" ) {
+        fontMenu.add(new AbstractAction( "Normal" ) {
             @Override
             public void actionPerformed(ActionEvent ev) {
                 org.das2.util.LoggerManager.logGuiEvent(ev);            
@@ -2261,12 +2397,12 @@ private void dataSetSelectorPopupMenuCanceled(javax.swing.event.PopupMenuEvent e
                 int size= getParent().getFont().getSize();
                 if ( size>4 && size<18 ) {
                     Font nf= f.deriveFont( (float)size );
-                    dataSetSelector.setFont(nf);
+                    dataSetSelectorComboBox.setFont(nf);
                 }
             }
         });
 
-        fontMenu.add( new AbstractAction( "Small" ) {
+        fontMenu.add(new AbstractAction( "Small" ) {
             @Override
             public void actionPerformed(ActionEvent ev) {
                 org.das2.util.LoggerManager.logGuiEvent(ev);            
@@ -2274,7 +2410,7 @@ private void dataSetSelectorPopupMenuCanceled(javax.swing.event.PopupMenuEvent e
                 int size= 8;
                 if ( size>4 && size<18 ) {
                     Font nf= f.deriveFont( (float)size );
-                    dataSetSelector.setFont(nf);
+                    dataSetSelectorComboBox.setFont(nf);
                 }
             }
         });
@@ -2337,7 +2473,7 @@ private void dataSetSelectorPopupMenuCanceled(javax.swing.event.PopupMenuEvent e
     }
 
     private boolean expertMode= true;
-    private boolean isExpertMode() {
+    public boolean isExpertMode() {
         return expertMode;
     }
 
@@ -2354,7 +2490,7 @@ private void dataSetSelectorPopupMenuCanceled(javax.swing.event.PopupMenuEvent e
 
     @Override
     public void setEnabled(boolean enabled) {
-        dataSetSelector.setEnabled(enabled);
+        dataSetSelectorComboBox.setEnabled(enabled);
         plotItButton.setEnabled(enabled);
         inspectButton.setEnabled(enabled);
         super.setEnabled(enabled); //To change body of generated methods, choose Tools | Templates.
@@ -2393,6 +2529,33 @@ private void dataSetSelectorPopupMenuCanceled(javax.swing.event.PopupMenuEvent e
     }
     
     /**
+     * return true if all the time ranges are for a similar time, where they
+     * differ by no more than 10%.
+     * @param timeRanges
+     * @return 
+     */
+    private static boolean allSimilarTimes( List<DatumRange> timeRanges ) {
+        if ( timeRanges.size()<2 ) return true;
+        DatumRange dr1= timeRanges.get(0);
+        if ( !UnitsUtil.isIntervalOrRatioMeasurement( dr1.getUnits()) ) throw new IllegalArgumentException("data must be numeric or location");
+        if ( dr1.width().value()==0 ) return false; 
+        boolean result= true;
+        for ( int i=1; result && i<timeRanges.size(); i++ ) {
+            DatumRange dr2= timeRanges.get(i);
+            double d1= DatumRangeUtil.normalize( dr1, dr2.min() );
+            if ( !( d1>-0.05 && d1<0.05 ) ) {
+                result= false;
+            } else {
+                double d2= DatumRangeUtil.normalize( dr1, dr2.max() );
+                if ( !( d2>0.95 || d2<1.05 ) ) {
+                    result= false;
+                }
+            }
+        }
+        return result;
+    }
+    
+    /**
      * Allow the user to pick one of a set of times, when it is ambiguous what they want.
      * @param parent null or the component to focus.
      * @param timeRange list of time ranges, which may also contain null.
@@ -2409,6 +2572,11 @@ private void dataSetSelectorPopupMenuCanceled(javax.swing.event.PopupMenuEvent e
             }
         }
         if ( timeRange.size()==1 ) return timeRange.get(0);
+        
+        if ( allSimilarTimes(timeRange) ) {
+            return timeRange.get(timeRange.size()-1);
+        }
+        
         JPanel p= new JPanel();
         p.setLayout( new BoxLayout( p, BoxLayout.Y_AXIS ) );
         p.add( new JLabel("<html>The URI contains a time different than the current<br>application time range.  Which should be used?</html>") );
@@ -2430,6 +2598,25 @@ private void dataSetSelectorPopupMenuCanceled(javax.swing.event.PopupMenuEvent e
             }
         }
         return null;
+    }
+
+    /**
+     * This makes sense to me, where you can just add a URL to the selector.
+     * I haven't looked at this class in ten years, and it's bizarre how complex
+     * it is.  I'm making this a method so that this is done in one place.  This
+     * contains the logic which was in the pngwalkTool.  If 
+     * there are other things to be done, it will be done here.
+     * @param suri 
+     */
+    public void addToRecent(String suri ) {
+        List<String> urls = new ArrayList<>();
+        List<String> recent = new ArrayList(getRecent());
+        recent.removeAll( Collections.singleton( suri ) );
+        for (String b : recent) {
+            urls.add( b );
+        }
+        urls.add( suri );
+        setRecent(urls);     
     }
     
 }

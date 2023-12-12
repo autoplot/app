@@ -135,7 +135,7 @@ public class AddPlotElementDialog extends javax.swing.JDialog {
         //man.setPrefNode("tca");
         man.setVisible(true);
         Bookmark book= man.getSelectedBookmark();
-        if ( book!=null ) {
+        if ( book!=null && book instanceof Bookmark.Item ) {
             sel.setValue( ((Bookmark.Item)book).getUri() );
         }
     }
@@ -205,7 +205,7 @@ public class AddPlotElementDialog extends javax.swing.JDialog {
         });
 
         plotBelowButton.setText("Plot Below");
-        plotBelowButton.setToolTipText("Plot below the current plot, possibly inserting a plot.");
+        plotBelowButton.setToolTipText("Plot below the current plot, possibly inserting a plot.  Holding shift will plot above.");
         plotBelowButton.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
                 plotBelowButtonActionPerformed(evt);
@@ -372,7 +372,7 @@ public class AddPlotElementDialog extends javax.swing.JDialog {
 
     private void plotBelowButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_plotBelowButtonActionPerformed
         cancelled= false;
-        setModifiers( KeyEvent.CTRL_MASK );
+        setModifiers( KeyEvent.CTRL_MASK | ( evt.getModifiers() & ActionEvent.SHIFT_MASK ) );
         setVisible(false);
 }//GEN-LAST:event_plotBelowButtonActionPerformed
 

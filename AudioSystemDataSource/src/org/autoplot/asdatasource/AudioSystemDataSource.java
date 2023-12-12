@@ -32,9 +32,7 @@ import org.das2.qds.ops.Ops;
  * provide a dataset by grabbing data from the desktop's audio system.
  * @author jbf
  */
-public class AudioSystemDataSource extends AbstractDataSource implements Updating {
-
-    public static final int SAMPLE_RATE = 8000; // SAMPLE_RATE * SAMPLE_LENGTH_SEC should be multiple of BUFSIZE
+public final class AudioSystemDataSource extends AbstractDataSource implements Updating {
 
     public AudioSystemDataSource( URI uri ) {
         super(uri);
@@ -56,20 +54,25 @@ public class AudioSystemDataSource extends AbstractDataSource implements Updatin
 
         double lenSeconds = Double.parseDouble( getParam( "len", "1.0") );
 
-        nsamples = (int) (lenSeconds * SAMPLE_RATE);
-        int len = nsamples * 4;
-        int nchannels= 1;
+        int sampleRate= Integer.parseInt( getParam( "rate", "8000" ) );
+        
+        nsamples = (int) (lenSeconds * sampleRate );
+        int len = nsamples * 2;
+        
+        int nchannels= Integer.parseInt( getParam( "channels", "1" ) );
+        if ( nchannels<1 || nchannels>8 ) throw new IllegalArgumentException("channels must be between 1 and 8");
+        
         int bitsPerSample= 16;
-        int frameSize= bitsPerSample / ( nchannels * 8 );
+        int frameSize= nchannels * bitsPerSample / 8;
 
-        dataBuffer = ByteBuffer.allocateDirect(len);
+        dataBuffer = ByteBuffer.allocateDirect( nsamples*frameSize );
 
         TargetDataLine targetDataLine;
         AudioInputStream audioInputStream;
 
         AudioFormat audioFormat = new AudioFormat(
                 AudioFormat.Encoding.PCM_SIGNED,
-                SAMPLE_RATE, bitsPerSample, nchannels, frameSize, SAMPLE_RATE, false);
+                sampleRate, bitsPerSample, nchannels, frameSize, sampleRate, false);
         DataLine.Info info = new DataLine.Info(TargetDataLine.class, audioFormat);
 
         targetDataLine = (TargetDataLine) AudioSystem.getLine(info);
@@ -91,11 +94,22 @@ public class AudioSystemDataSource extends AbstractDataSource implements Updatin
 
         dataBuffer.order( ByteOrder.LITTLE_ENDIAN );
 
-        TagGenDataSet t= new TagGenDataSet( nsamples, 1./SAMPLE_RATE, 0.0, Units.seconds );
+        TagGenDataSet t= new TagGenDataSet( nsamples, 1./sampleRate, 0.0, Units.seconds );
         t.putProperty( QDataSet.LABEL, "Seconds Offset");
         //startUpdateTimer();
         
-        MutablePropertyDataSet ds= BufferDataSet.makeDataSet( 1, 2, 0, nsamples, 1, 1, 1, dataBuffer, BufferDataSet.SHORT );
+        MutablePropertyDataSet ds;
+        if ( nchannels>1 ) {
+            ds= BufferDataSet.makeDataSet( 2, 2*nchannels, 0, nsamples, nchannels, 1, 1, dataBuffer, BufferDataSet.SHORT );
+            String[] cc= new String[nchannels];
+            for ( int i=0;i<nchannels; i++ ) {
+                cc[i]= "ch_"+String.valueOf(i);
+            }
+            ds.putProperty( QDataSet.DEPEND_1, Ops.labelsDataset(cc) );
+        } else { // if ( nchannels==1 ) {
+            ds= BufferDataSet.makeDataSet( 1, 2, 0, nsamples, 1, 1, 1, dataBuffer, BufferDataSet.SHORT );
+        } 
+        
         ds.putProperty( QDataSet.DEPEND_0, t );
         
         if ( spec>-1 ) {
@@ -113,19 +127,21 @@ public class AudioSystemDataSource extends AbstractDataSource implements Updatin
         public Iterator<QDataSet> streamDataSet( final ProgressMonitor mon) throws Exception {
 
             nsamples= 2048; // this is per record now.
-            int len = nsamples * 2;
-            int nchannels= 1;
+
+            final int nchannels= Integer.parseInt( getParam( "channels", "1" ) );
             int bitsPerSample= 16;
-            int frameSizeBytes= bitsPerSample / ( nchannels * 8 );
+            int frameSizeBytes= nchannels * bitsPerSample / 8;
 
-            dataBuffer = ByteBuffer.allocateDirect(len);
-
+            dataBuffer = ByteBuffer.allocateDirect( nsamples*frameSizeBytes );
+            
+            final int sampleRate= Integer.parseInt( getParam( "rate", "8000" ) );
+        
             final TargetDataLine targetDataLine;
             AudioInputStream audioInputStream;
 
             AudioFormat audioFormat = new AudioFormat(
                     AudioFormat.Encoding.PCM_SIGNED,
-                    SAMPLE_RATE, bitsPerSample, nchannels, frameSizeBytes, SAMPLE_RATE, false);
+                    sampleRate, bitsPerSample, nchannels, frameSizeBytes, sampleRate, false);
             DataLine.Info info = new DataLine.Info(TargetDataLine.class, audioFormat);
 
             targetDataLine = (TargetDataLine) AudioSystem.getLine(info);
@@ -157,10 +173,21 @@ public class AudioSystemDataSource extends AbstractDataSource implements Updatin
                         
                         dataBuffer.order( ByteOrder.LITTLE_ENDIAN );
                         
-                        TagGenDataSet t= new TagGenDataSet( nsamples, 1./SAMPLE_RATE, 0.0, Units.seconds );
+                        TagGenDataSet t= new TagGenDataSet( nsamples, 1./sampleRate, 0.0, Units.seconds );
                         t.putProperty( QDataSet.LABEL, "Seconds Offset");
+                        
+                        MutablePropertyDataSet ds;
+                        if ( nchannels>1 ) {
+                            ds= BufferDataSet.makeDataSet( 2, 2*nchannels, 0, nsamples, nchannels, 1, 1, dataBuffer, BufferDataSet.SHORT );
+                            String[] cc= new String[nchannels];
+                            for ( int i=0;i<nchannels; i++ ) {
+                                cc[i]= "ch_"+String.valueOf(i);
+                            }
+                            ds.putProperty( QDataSet.DEPEND_1, Ops.labelsDataset(cc) );
+                        } else {
+                            ds= BufferDataSet.makeDataSet( 1, 2, 0, nsamples, 1, 1, 1, dataBuffer, BufferDataSet.SHORT );
+                        }
                                                 
-                        MutablePropertyDataSet ds= BufferDataSet.makeDataSet( 1, 2, 0, nsamples, 1, 1, 1, dataBuffer, BufferDataSet.SHORT );
                         ds.putProperty( QDataSet.DEPEND_0, t );
         
                         result= BufferDataSet.copy(ds);
@@ -198,10 +225,12 @@ public class AudioSystemDataSource extends AbstractDataSource implements Updatin
 
     PropertyChangeSupport pcs= new PropertyChangeSupport(this);
 
+    @Override
     public void addPropertyChangeListener(PropertyChangeListener listener) {
         pcs.addPropertyChangeListener(listener);
     }
 
+    @Override
     public void removePropertyChangeListener(PropertyChangeListener listener) {
         pcs.removePropertyChangeListener(listener);
     }

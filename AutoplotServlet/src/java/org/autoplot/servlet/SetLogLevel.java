@@ -43,13 +43,13 @@ public class SetLogLevel extends HttpServlet {
             String format= request.getParameter("format");
             
             String remoteAddr= request.getRemoteAddr();
-            if ( !remoteAddr.equals("127.0.0.1" ) ) {
+            if ( !remoteAddr.equals("127.0.0.1" ) && !remoteAddr.startsWith("192.168.0.") ) { 
                 out.println("<html>");
                 out.println("<head>");
                 out.println("<title>Servlet SetLogLevel</title>");  
                 out.println("</head>");
                 out.println("<body>");
-                out.println("<p>.../SetLogLevel must be called from 127.0.0.1<br>");
+                out.println("<p>.../SetLogLevel must be called from 127.0.0.1, was called from "+remoteAddr+"<br>");
                 out.println("</code>");
                 
             } else {

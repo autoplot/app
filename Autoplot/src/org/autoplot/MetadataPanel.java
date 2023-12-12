@@ -18,6 +18,7 @@ import java.beans.PropertyChangeEvent;
 import java.beans.PropertyChangeListener;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 import javax.swing.JPopupMenu;
 import javax.swing.SwingUtilities;
@@ -42,6 +43,8 @@ import org.autoplot.datasource.MetadataModel;
 import org.das2.qds.util.AutoHistogram;
 import org.das2.qds.util.PropertiesTreeModel;
 import org.autoplot.metatree.NameValueTreeModel;
+import org.das2.datum.Datum;
+import org.das2.datum.Units;
 
 /**
  * MetadataPanel shows statistics and metadata for the dataset, such as units and fill values.
@@ -53,10 +56,10 @@ public class MetadataPanel extends javax.swing.JPanel {
     Application dom;
     CombinedTreeModel tree;
     TreeModel dsTree;
+    private QDataSet dsTreeDs;
     TreeModel componentDataSetTree=null;
     DataSourceFilter bindToDataSourceFilter = null;  //TODO: these should be weak references or such.
     PlotElement bindToPlotElement =null;
-    private QDataSet dsTreeDs;
     private NameValueTreeModel statsTree;
 
     Thread updateComponentDataSetThread= null;
@@ -381,6 +384,9 @@ public class MetadataPanel extends javax.swing.JPanel {
         });
     }
 
+    /**
+     * update the "Processed Dataset" node
+     */
     private synchronized void updateComponentDataSetPropertiesView() {
         assert EventQueue.isDispatchThread() == false;
         final TreeModel unmount;
@@ -493,10 +499,20 @@ public class MetadataPanel extends javax.swing.JPanel {
             }
 
             if (cadence != null) {
-                //Datum d = DatumUtil.asOrderOneUnits(DataSetUtil.asDatum(cadence));
-                //Units u = d.getUnits();
-                //map.put("Cadence", format(d.doubleValue(u)) + " " + u);
-                map.put("Cadence", cadence );
+                if ( cadence.rank()==0 ) {
+                    Datum d = DatumUtil.asOrderOneUnits(DataSetUtil.asDatum(cadence));
+                    Units u = d.getUnits();
+                    map.put("Cadence", d );
+                    if ( u.isConvertibleTo(Units.seconds) ) {
+                        try {
+                            map.put("Frequency (1/Cadence)",DatumUtil.asOrderOneUnits(Datum.create(1).divide(d)));
+                        } catch ( IllegalArgumentException ex ) {
+                            logger.log(Level.FINE,"inverse datum cannot be calculated.",ex);
+                        }
+                    }
+                } else {
+                    map.put( "Cadence", cadence );
+                }
             } else {
                 map.put("Cadence", "null");
             }
@@ -569,6 +585,7 @@ public class MetadataPanel extends javax.swing.JPanel {
     private void copyMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_copyMenuItemActionPerformed
         LoggerManager.logGuiEvent(evt);
         TreePath tp= metaDataTree.getSelectionPath();
+        if ( tp==null ) return;
         StringSelection stringSelection = new StringSelection( tp.getLastPathComponent().toString() );
         Clipboard clipboard = Toolkit.getDefaultToolkit().getSystemClipboard();
         clipboard.setContents(stringSelection, new ClipboardOwner() {
@@ -581,6 +598,7 @@ public class MetadataPanel extends javax.swing.JPanel {
     private void copyValueMenuItemActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_copyValueMenuItemActionPerformed
         LoggerManager.logGuiEvent(evt);
         TreePath tp= metaDataTree.getSelectionPath();
+        if ( tp==null ) return;
         String s= tp.getLastPathComponent().toString();
         int i= s.indexOf('=');
         if ( i>-1 ) {

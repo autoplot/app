@@ -18,6 +18,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.BufferedWriter;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.Set;
 
 /**
@@ -81,7 +82,7 @@ public class Test026 {
         doTest(id, test, ref, 0., false);
     }
 
-    private static Set<Integer> usedIds= new HashSet<>();
+    private static LinkedHashMap<Integer,String> usedIds= new LinkedHashMap<>();
     
     /**
      * 
@@ -93,8 +94,11 @@ public class Test026 {
      */
     private static void doTest(int id, String test, String ref, double diffMicros, boolean secondChance) throws Exception {
 
-        if ( usedIds.contains(id) ) throw new IllegalArgumentException("id "+id+" used twice, test code needs attention");
-        usedIds.add(id);
+        String previousUsedId= usedIds.get(id);
+        if ( previousUsedId!=null && !previousUsedId.equals(test) ) {
+            throw new IllegalArgumentException("id "+id+" used twice, test code needs attention");
+        }
+        usedIds.put(id,test);
         
         DatumRange dr = parseTimeRange(test);
         DatumRange drref = parseTimeRange(ref);
@@ -210,7 +214,8 @@ public class Test026 {
             doTest(19, "P5D/2007-03-06", "2007-03-01T00:00:00Z/2007-03-06T00:00:00Z");
             doTest(20, "2000-01-01T13:00/PT1H", "2000-01-01 13:00 to 14:00");
             doTest(21, "20000101T13:00Z/14:00Z", "2000-01-01 13:00 to 14:00");
-            //doTest(22, "20000101T1300Z/1400Z", "2000-01-01 13:00 to 14:00" );
+            doTest(22, "20000101T1300Z/1400Z", "2000-01-01 13:00 to 14:00" );
+            doTest(23, "20000101/05", "2000-01-01 00:00 to 2000-01-05 00:00" );
 
             //Extreme times
             doTest(30, "1000", "1000-01-01T00:00Z to 1001-01-01T00:00");

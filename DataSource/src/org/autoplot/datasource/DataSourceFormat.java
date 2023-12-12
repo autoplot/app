@@ -1,7 +1,3 @@
-/*
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
- */
 
 package org.autoplot.datasource;
 
@@ -12,10 +8,12 @@ import org.das2.qds.QDataSet;
  * @author jbf
  */
 public interface DataSourceFormat {
+
     /**
      * Format the dataset using the specified URI.  This should be parsed the same way 
      * read URIs are parsed, and arguments should reflect those of the reader 
-     * when possible.
+     * when possible.  If the uri refers to a file and the folder which will contain
+     * the file does not exist, it should be created.
      * @param uri
      * @param data
      * @param mon
@@ -30,6 +28,17 @@ public interface DataSourceFormat {
      */
     public boolean canFormat( QDataSet ds );
 
+//    /**
+//     * stream the data.  
+//     * Do not use this--it is likely to change.
+//     * @param params parameters for streaming.
+//     * @param data iterator of records to be streamed.
+//     * @param out the output stream accepting the formatted data
+//     * @return true if the data can be streamed.
+//     * @throws Exception 
+//     */
+//    public boolean streamData( Map<String,String> params, Iterator<QDataSet> data, OutputStream out ) throws Exception;
+        
     /**
      * return a description of this format
      * @return 

@@ -38,6 +38,7 @@ import javax.swing.Timer;
 import java.awt.event.ActionListener;
 import java.awt.event.ActionEvent;
 import javax.swing.JDialog;
+import static org.autoplot.cdaweb.CDAWebDB.CDAWeb;
 import org.das2.components.DasProgressPanel;
 import org.das2.datum.DatumRange;
 import org.das2.datum.DatumRangeUtil;
@@ -150,7 +151,9 @@ public class CDAWebEditorPanel extends javax.swing.JPanel implements DataSourceE
                 new Runnable() { 
                     @Override
                     public void run() { 
-                        timeRangeComboBox.setText(ftr);
+                        if ( !timeRangeComboBox.isDirty() ) {
+                            timeRangeComboBox.setText(ftr);
+                        }
                         DefaultComboBoxModel m= new DefaultComboBoxModel(new String[] { "Example Time Ranges",timeDflt } );
                         exampleTimeRangesCB.setModel(m);
                     }
@@ -172,7 +175,7 @@ public class CDAWebEditorPanel extends javax.swing.JPanel implements DataSourceE
     private void refreshDataSet( CdfJavaDataSourceEditorPanel panel, final String ds, Map<String,String> args ) throws Exception {
         try {
             if ( ! CDAWebDB.getInstance().getServiceProviderIds().containsKey(ds) ) {
-                messageComponent= new JLabel("<html>Service provider \""+ ds +"\" not found in ftp/cdaweb.gsfc.nasa.gov/pub/cdaweb/all.xml");
+                messageComponent= new JLabel("<html>Service provider \""+ ds +"\" not found in "+CDAWebDB.dbloc );
                 descriptionLabel.setText("");
                 timeRangeComboBox.setText("");
                 paramEditor= null;

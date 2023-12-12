@@ -1,6 +1,8 @@
 
 package org.autoplot.dom;
 
+import java.text.ParseException;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.logging.Level;
@@ -10,14 +12,15 @@ import java.util.regex.Pattern;
 import org.das2.datum.DatumRange;
 import org.das2.datum.DatumRangeUtil;
 import org.das2.datum.OrbitDatumRange;
+import org.das2.datum.Orbits;
 import org.das2.datum.TimeParser;
-import org.das2.datum.Units;
 import org.das2.datum.UnitsUtil;
 import org.das2.util.LoggerManager;
 import org.jdesktop.beansbinding.Converter;
 import org.das2.qds.DataSetUtil;
 import org.das2.qds.QDataSet;
 import org.das2.qds.SemanticOps;
+import org.das2.qds.ops.Ops;
 
 /**
  * Class for containing the logic of how macros are implemented.
@@ -77,6 +80,11 @@ public class LabelConverter extends Converter {
         PlotElement pe= getFocusPlotElement();
         
         String title= (String)value;
+        
+        if ( title.length()==0 ) {
+            return title;
+        }
+        
         boolean done= false;
         
         while ( !done ) {
@@ -85,7 +93,7 @@ public class LabelConverter extends Converter {
             if ( title.contains("CONTEXT" ) ) {
                 if ( pe!=null ) {
                     int loopCount=0;
-                    if ( pe.getController().isPendingChanges() ) {
+                    if ( pe.getController().isPendingChanges() ) { //TODO: review
                         loopCount++;
                         if ( loopCount>1000 ) {
                             break;
@@ -108,9 +116,8 @@ public class LabelConverter extends Converter {
                                 dataSet= d;
                             }
                         }
-                        String contextStr= DataSetUtil.contextAsString(dataSet);
                         logger.log(Level.FINEST, "bug1814: context substitution success. {0}", Thread.currentThread().getName());
-                        title= insertString( title, "CONTEXT", contextStr );
+                        title= insertUnformattedData( title, "CONTEXT", dataSet ); 
                     } else {
                         logger.log(Level.FINEST, "bug1814: ds is null. {0}", Thread.currentThread().getName());
                         title= insertString( title, "CONTEXT", "" ); 
@@ -121,6 +128,7 @@ public class LabelConverter extends Converter {
                 }
             }
             if ( title.contains("PLOT_CONTEXT") ) {
+                // Das2 also has a CONTEXT property, which is represented by PLOT_CONTEXT in Autoplot.
                 title= insertString( title, "PLOT_CONTEXT", "%{CONTEXT}");
             }            
             if ( title.contains("USER_PROPERTIES" ) ) {
@@ -128,7 +136,9 @@ public class LabelConverter extends Converter {
                     QDataSet dataSet= pe.getController().getDataSet();
                     if ( dataSet!=null ) {
                         Map<String,Object> props= (Map<String, Object>) dataSet.property(QDataSet.USER_PROPERTIES);
-                        title= DomUtil.resolveProperties( title, "USER_PROPERTIES", props );
+                        if ( props!=null ) {
+                            title= DomUtil.resolveProperties( title, "USER_PROPERTIES", props );
+                        }
                     }
                 }
             }
@@ -138,7 +148,9 @@ public class LabelConverter extends Converter {
                     DataSourceFilter dsf= (DataSourceFilter) DomUtil.getElementById( dom, pe.getDataSourceFilterId() );
                     if ( dsf!=null ) { // ought not to be!
                         Map<String,Object> props= (Map<String, Object>) dsf.getController().getRawProperties(); //TODO: this is a really old name that needs updating...
-                        title= DomUtil.resolveProperties( title, "METADATA", props );
+                        if ( props!=null ) {
+                            title= DomUtil.resolveProperties( title, "METADATA", props );
+                        }
                     }
                 }
             }
@@ -178,28 +190,64 @@ public class LabelConverter extends Converter {
                 String insert= ( tr==null ? "(no timerange)" : tr.toString() );
                 Matcher m= pop.matcher(title);
                 if ( m.matches() ) {
-                    String control= m.group(2);
-                    if ( control.equals(",NOORBIT") ) {
-                        if ( tr!=null ) {
-                            if ( tr instanceof OrbitDatumRange ) {
-                                insert= DatumRangeUtil.formatTimeRange(tr,false) + " (Orbit "+((OrbitDatumRange)tr).getOrbit()+")";
+                    String control= m.group(2).trim();
+                    Map<String,String> controls= new HashMap<>();
+                    if ( control.length()>0 ) {
+                        char delim= control.charAt(0);
+                        String[] ss;
+                        ss= control.substring(1).split( "\\"+delim );
+                        for ( String s: ss ) {
+                            int i= s.indexOf("=");
+                            if ( i==-1 ) {
+                                controls.put(s,"");
                             } else {
-                                insert= DatumRangeUtil.formatTimeRange(tr,false);
+                                controls.put(s.substring(0,i),s.substring(i+1));
                             }
-                        }                        
-                    } else if ( control.startsWith(",FORMAT=") ) {
-                        String format= control.substring(8);
-                        if ( format.equals("$o") || format.equals("%o") ) {
-                            if ( tr instanceof OrbitDatumRange ) {
-                                insert= ((OrbitDatumRange)tr).getOrbit();
-                            } else {
-                                insert= "???";
-                            }
-                        } else {
-                            TimeParser tp= TimeParser.create(format);
+                        }
+                    }
+                    if ( controls.size()>0 ) {
+                        if ( controls.containsKey("CONTEXT") && tr!=null ) {
+                            String context= controls.get("CONTEXT");
+                            if ( context!=null ) { // the context can be an orbit file or orbit identifier.
+                                Orbits o= Orbits.getOrbitsFor(context);
+                                String s= o.getOrbit(tr.middle());
+                                if ( s!=null ) {
+                                    try {
+                                        // convert to orbit datum range for the same time.
+                                        DatumRange drtest= o.getDatumRange(s);
+                                        if ( Math.abs( DatumRangeUtil.normalize( tr, drtest.min() ) ) < 0.05 &&
+                                             Math.abs( DatumRangeUtil.normalize( tr, drtest.max() ) - 1.0 ) < 0.05 ) {
+                                            tr= DatumRangeUtil.parseTimeRange("orbit:"+context+":"+s);
+                                        }
+                                    } catch (ParseException ex) {
+                                        logger.log(Level.SEVERE, null, ex);
+                                    }
+
+                                }
+                            }                            
+                        }
+                        if ( controls.containsKey("NOORBIT") ) {
                             if ( tr!=null ) {
-                                insert= tp.format(tr);
-                            }                        
+                                if ( tr instanceof OrbitDatumRange ) {
+                                    insert= DatumRangeUtil.formatTimeRange(tr,false) + " (Orbit "+((OrbitDatumRange)tr).getOrbit()+")";
+                                } else {
+                                    insert= DatumRangeUtil.formatTimeRange(tr,false);
+                                }
+                            }                            
+                        } else if ( controls.containsKey("FORMAT") ) {
+                            String format= controls.get("FORMAT");
+                            if ( format.equals("$o") || format.equals("%o") ) {
+                                if ( tr instanceof OrbitDatumRange ) {
+                                    insert= ((OrbitDatumRange)tr).getOrbit();
+                                } else {
+                                    insert= "???";
+                                }
+                            } else {
+                                TimeParser tp= TimeParser.create(format);
+                                if ( tr!=null ) {
+                                    insert= tp.format(tr);
+                                }                        
+                            }
                         }
                     }
                 }
@@ -232,6 +280,10 @@ public class LabelConverter extends Converter {
     @Override
     public Object convertReverse(Object value) {
         String title= (String)value;
+        
+        if ( title.length()==0 ) {
+            return title;
+        }
         
         String ptitle;
         if ( annotation!=null ) {
@@ -267,6 +319,96 @@ public class LabelConverter extends Converter {
         return title;
     }
 
+    /**
+     * find the dataset with the given name
+     * @param context
+     * @return 
+     */
+    private static QDataSet findByName( String name, QDataSet context ) {
+        for ( int i=0; i<context.length(); i++ ) {
+            QDataSet d= context.slice(i);
+            String n= Ops.guessName(d);
+            if ( n==null && d.rank()>0 ) {
+                n= Ops.guessName(d.slice(0));
+            }
+            if ( n!=null && n.equals(name) ) {
+                return d;
+            }
+        }
+        return null;
+    }
+    
+    /**
+     * replace %{LABEL} or $(LABEL) with value, possibly formatting it.
+     * @param title the string containing the macro.
+     * @param label the label to replace, such as METADATA.SPACECRAFT.
+     * @param dataset the value to insert
+     * @return the new string with the value inserted.
+     */
+    protected static String insertUnformattedData( String title, String label, QDataSet dataset ) {
+        String svalue= DataSetUtil.contextAsString(dataset);
+        Pattern p= Pattern.compile("(\\%\\{"+label+"(,(.*?))?\\})");
+        Matcher m= p.matcher(title);
+        boolean found= m.find();
+        if ( !found ) {
+            p= Pattern.compile("(\\$\\("+label+"(,(.*?))?\\))");
+            m= p.matcher(title);
+            found= m.find();
+        }
+        if ( found ) {
+            String args= m.group(3);
+            if ( args!=null ) {
+                QDataSet ds= DataSetUtil.getContext(dataset);
+                String[] aa= args.split(",",-2);
+                for ( String a: aa ) {
+                    if ( a.startsWith("name=") ) {
+                        QDataSet ds1= findByName( a.substring(5), ds );
+                        if ( ds1==null ) {
+                            svalue="(notfound)";
+                        } else {
+                            ds= ds1;
+                        }
+                    }
+                }
+                if ( ds.rank()>1 ) {
+                    if ( ds.length()>1 ) {
+                        ds= ds.slice(0);
+                        logger.warning("only 1 context supported");
+                    } else if ( ds.length()==1 ) {
+                        ds= ds.slice(0);
+                    } 
+                }
+                for ( String a: aa ) {
+                    if ( ds.length()>0 ) {
+                        if ( !svalue.equals("(notfound)") && a.startsWith("format=") && args.length()>8 ) {
+                            try {
+                                if ( a.charAt(7)=='$' ) {
+                                    TimeParser tp= TimeParser.create(a.substring(7));
+                                    if ( ds.length()==1 ) {
+                                        svalue= tp.format( Ops.datum(ds.slice(0)) );
+                                    } else if (ds.length()==2 ) {
+                                        svalue= tp.format( Ops.datumRange(ds.slice(0)) );
+                                    }
+                                } else {
+                                    if ( a.endsWith("d") || a.endsWith("x") ) { // x is hexidecimal
+                                        svalue= String.format( a.substring(7), (int)ds.slice(0).value() );
+                                    } else {
+                                        svalue= String.format( a.substring(7), ds.slice(0).value() );
+                                    }
+                                }
+                            } catch ( Exception ex ) {
+                                ex.printStackTrace();
+                                svalue="(exception)";
+                            }
+                        }
+                    }
+                }
+            }
+            return title.substring(0,m.start()) + svalue + title.substring(m.end());
+        }
+        return title;
+    }
+    
     /**
      * replace %{LABEL} or $(LABEL) with value.
      * @param title the string containing the macro.

@@ -12,6 +12,7 @@ import org.das2.datum.Datum;
 import org.das2.datum.Units;
 import org.das2.graph.DasColorBar;
 import org.das2.graph.DefaultPlotSymbol;
+import org.das2.graph.ErrorBarType;
 import org.das2.graph.PlotSymbol;
 import org.das2.graph.PsymConnector;
 import org.das2.graph.SpectrogramRenderer.RebinnerEnum;
@@ -27,9 +28,8 @@ public class PlotElementStyle extends DomNode {
     }
     
     private double symbolSize= 1.0;
-    public final static String PROP_FILL_TO_REFERENCE= "fillToReference";
-    public final static String PROP_SYMBOL_SIZE= "symbolSize";
-    
+
+    public final static String PROP_SYMBOL_SIZE= "symbolSize";    
     
     public double getSymbolSize() {
         return this.symbolSize;
@@ -82,6 +82,52 @@ public class PlotElementStyle extends DomNode {
         Color oldFillColor = this.fillColor;
         this.fillColor = fillColor;
         propertyChangeSupport.firePropertyChange(PROP_FILLCOLOR, oldFillColor, fillColor);
+    }
+
+    private String fillDirection = "both";
+
+    public static final String PROP_FILL_DIRECTION = "fillDirection";
+
+    public String getFillDirection() {
+        return fillDirection;
+    }
+
+    /**
+     * values include "both" "none" "above" "below"
+     * @param fillDirection 
+     */
+    public void setFillDirection(String fillDirection) {
+        String oldFillDirection = this.fillDirection;
+        this.fillDirection = fillDirection;
+        propertyChangeSupport.firePropertyChange(PROP_FILL_DIRECTION, oldFillDirection, fillDirection);
+    }
+
+    private boolean drawError = false;
+
+    public static final String PROP_DRAWERROR = "drawError";
+
+    public boolean isDrawError() {
+        return drawError;
+    }
+
+    public void setDrawError(boolean drawError) {
+        boolean oldDrawError = this.drawError;
+        this.drawError = drawError;
+        propertyChangeSupport.firePropertyChange(PROP_DRAWERROR, oldDrawError, drawError);
+    }
+
+    private ErrorBarType errorBarType = ErrorBarType.BAR;
+
+    public static final String PROP_ERRORBARTYPE = "errorBarType";
+
+    public ErrorBarType getErrorBarType() {
+        return errorBarType;
+    }
+
+    public void setErrorBarType(ErrorBarType errorBarType) {
+        ErrorBarType oldErrorBarType = this.errorBarType;
+        this.errorBarType = errorBarType;
+        propertyChangeSupport.firePropertyChange(PROP_ERRORBARTYPE, oldErrorBarType, errorBarType);
     }
 
     public final static String PROP_COLORTABLE= "colortable";
@@ -143,6 +189,8 @@ public class PlotElementStyle extends DomNode {
         propertyChangeSupport.firePropertyChange(PROP_REFERENCE, oldVal, reference );
     }
     
+    public final static String PROP_FILL_TO_REFERENCE= "fillToReference";
+    
     private boolean fillToReference= false;
     
     public boolean isFillToReference() {
@@ -183,6 +231,21 @@ public class PlotElementStyle extends DomNode {
         propertyChangeSupport.firePropertyChange(PROP_ANTIALIASED, oldAntiAliased, antiAliased);
     }
     
+    private boolean showLimits = true;
+
+    public static final String PROP_SHOWLIMITS = "showLimits";
+
+    public boolean isShowLimits() {
+        return showLimits;
+    }
+
+    public void setShowLimits(boolean showLimits) {
+        boolean oldShowLimits = this.showLimits;
+        this.showLimits = showLimits;
+        propertyChangeSupport.firePropertyChange(PROP_SHOWLIMITS, oldShowLimits, showLimits);
+    }
+
+    
     /*  DomNode Stuff ******************/
 
     @Override
@@ -197,6 +260,7 @@ public class PlotElementStyle extends DomNode {
         PlotElementStyle that= ( PlotElementStyle )node;
         if ( !exclude.contains(PROP_COLORTABLE ) ) this.setColortable( that.colortable );
         if ( !exclude.contains(PROP_FILL_TO_REFERENCE ) )this.setFillToReference( that.fillToReference );
+        if ( !exclude.contains(PROP_FILL_DIRECTION ) )this.setFillDirection(that.fillDirection );
         if ( !exclude.contains(PROP_COLOR ) )this.setColor( that.getColor() );
         if ( !exclude.contains(PROP_FILLCOLOR ) ) this.setFillColor( that.getFillColor() );
         if ( !exclude.contains(PROP_REFERENCE ) )this.setReference( that.getReference() );
@@ -205,6 +269,9 @@ public class PlotElementStyle extends DomNode {
         if ( !exclude.contains(PROP_SYMBOL_SIZE ) )this.setSymbolSize( that.getSymbolSize() );
         if ( !exclude.contains(PROP_SYMBOL_CONNECTOR ) )this.setSymbolConnector( that.getSymbolConnector() );
         if ( !exclude.contains(PROP_REBINMETHOD ) ) this.setRebinMethod(that.getRebinMethod());
+        if ( !exclude.contains(PROP_SHOWLIMITS ) ) this.setShowLimits(that.showLimits);
+        if ( !exclude.contains(PROP_DRAWERROR ) ) this.setDrawError(that.isDrawError());
+        if ( !exclude.contains(PROP_ERRORBARTYPE ) ) this.setErrorBarType(that.getErrorBarType());
     }
 
     @Override
@@ -216,31 +283,33 @@ public class PlotElementStyle extends DomNode {
 
         boolean b;
         b=  that.color.equals(this.color) ;
-        if ( !b ) result.add( new PropertyChangeDiff( "color", that.color , this.color )) ;
+        if ( !b ) result.add( new PropertyChangeDiff( PROP_COLOR, that.color , this.color )) ;
         b=  that.fillColor.equals(this.fillColor) ;
-        if ( !b ) result.add( new PropertyChangeDiff( "fillColor", that.fillColor , this.fillColor ) );
-        
+        if ( !b ) result.add( new PropertyChangeDiff( PROP_FILLCOLOR, that.fillColor , this.fillColor ) );
+        b=  that.fillDirection.equals(this.fillDirection) ;
+        if ( !b ) result.add( new PropertyChangeDiff( PROP_FILL_DIRECTION, that.fillDirection , this.fillDirection ) );        
         b=  that.colortable.equals(this.colortable) ;
-        if ( !b ) result.add( new PropertyChangeDiff( "colortable", that.colortable , this.colortable ) );
+        if ( !b ) result.add( new PropertyChangeDiff( PROP_COLORTABLE, that.colortable , this.colortable ) );
         b=  that.lineWidth==this.lineWidth ;
-        if ( !b ) result.add( new PropertyChangeDiff( "lineWidth", that.lineWidth,this.lineWidth) );
+        if ( !b ) result.add( new PropertyChangeDiff( PROP_LINE_WIDTH, that.lineWidth,this.lineWidth) );
         b=  that.symbolSize==this.symbolSize ;
-        if ( !b ) result.add( new PropertyChangeDiff( "symbolSize", that.symbolSize,this.symbolSize) );
-
+        if ( !b ) result.add( new PropertyChangeDiff( PROP_SYMBOL_SIZE, that.symbolSize,this.symbolSize) );
         b= that.plotSymbol.equals( this.plotSymbol ) ;
-        if ( !b ) result.add( new PropertyChangeDiff( "plotSymbol", that.plotSymbol, this.plotSymbol ));
+        if ( !b ) result.add( new PropertyChangeDiff( PROP_PLOT_SYMBOL, that.plotSymbol, this.plotSymbol ));
         b= that.symbolConnector.equals( this.symbolConnector ) ;
-        if ( !b ) result.add( new PropertyChangeDiff( "symbolConnector", that.symbolConnector, this.symbolConnector ));
-
+        if ( !b ) result.add( new PropertyChangeDiff( PROP_SYMBOL_CONNECTOR, that.symbolConnector, this.symbolConnector ));
         b= that.fillToReference==this.fillToReference;
-        if ( !b ) result.add( new PropertyChangeDiff( "fillToReference", that.fillToReference, this.fillToReference ));
-
+        if ( !b ) result.add( new PropertyChangeDiff( PROP_FILL_TO_REFERENCE, that.fillToReference, this.fillToReference ));
         b= that.rebinMethod==this.rebinMethod;
-        if ( !b ) result.add( new PropertyChangeDiff( "rebinMethod", that.rebinMethod, this.rebinMethod ) );
-
+        if ( !b ) result.add( new PropertyChangeDiff( PROP_REBINMETHOD, that.rebinMethod, this.rebinMethod ) );
         b= that.reference.equals( this.reference );
-        if ( !b ) result.add( new PropertyChangeDiff( "reference",  that.reference, this.reference ));
-
+        if ( !b ) result.add( new PropertyChangeDiff( PROP_REFERENCE,  that.reference, this.reference ));
+        b= that.showLimits==this.showLimits;
+        if ( !b ) result.add( new PropertyChangeDiff( PROP_SHOWLIMITS,  that.showLimits, this.showLimits ));
+        b= that.drawError==this.drawError;
+        if ( !b ) result.add( new PropertyChangeDiff( PROP_DRAWERROR,  that.drawError, this.drawError ));
+        b= that.errorBarType.equals(this.errorBarType);
+        if ( !b ) result.add( new PropertyChangeDiff( PROP_ERRORBARTYPE,  that.errorBarType, this.errorBarType ));
         return result;
     }
 

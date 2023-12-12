@@ -1,16 +1,14 @@
-/*
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
- */
 
 package org.das2.jythoncompletion;
 
 /**
- *
+ * CompletionContext describes a place in code where completion was triggered,
+ * containing the type of completion and the context around it.
  * @author jbf
  */
 public class CompletionContext {
     public static final String METHOD_NAME= "method";
+    public static final String CLASS_METHOD_NAME= "classMethod"; // g.<C> where g is a graphics context
     public static final String ATTRIBUTE_NAME= "attr";
     public static final String PACKAGE_NAME= "package";
     public static final String MODULE_NAME= "module";
@@ -47,6 +45,11 @@ public class CompletionContext {
     public String completable;
     
     /**
+     * if non-null, this is the class of the object which we are completing.
+     */
+    private Class contextObjectClass;
+    
+    /**
      * 
      * @param contextType
      * @param contextString
@@ -57,9 +60,24 @@ public class CompletionContext {
         this.contextString= contextString;
         this.completable= completable;
     }
+    
+    public void setContextObjectClass( Class claz ) {
+        this.contextObjectClass= claz;
+    }
 
+    /**
+     * return null or the class for the context.
+     * @return 
+     */
+    public Class getContextObjectClass() {
+        return this.contextObjectClass;
+    }
+    
     @Override
     public String toString() {
-        return "" + this.contextType + ": " + this.contextString + " " + this.completable;
+        String scontextString= this.contextString==null ? "(nocontext)" : this.contextString;
+        String scompletable= this.completable==null ? "(nocompletable)" : this.completable;
+        if ( scompletable.length()==0 ) scompletable= "";
+        return "" + this.contextType + ": " + scontextString + " " + scompletable;
     }
 }

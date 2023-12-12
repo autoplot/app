@@ -7,6 +7,8 @@
 
 package org.autoplot;
 
+import java.awt.EventQueue;
+import java.awt.Graphics;
 import java.awt.event.InputEvent;
 import java.awt.event.KeyEvent;
 import java.beans.PropertyChangeEvent;
@@ -39,7 +41,12 @@ public class DataPanel extends javax.swing.JPanel {
     private final AutoplotUI app;
     private final ApplicationController applicationController;
     private DataSourceFilter dsf; // current focus
+    
     private BindingGroup dataSourceFilterBindingGroup;
+    private boolean dataSourceFilterBindingGroupIsBound= false;
+
+    private BindingGroup plotElementBindingGroup;
+    private boolean plotElementBindingGroupIsBound= false;
     
     private PlotElement plotElement;// current focus
     
@@ -51,7 +58,7 @@ public class DataPanel extends javax.swing.JPanel {
         dataSourceFiltersPanel.setName("operationsPanel");
         this.app= app;
         
-        this.dom = app.getDocumentModel();
+        this.dom = app.getDom();
         this.applicationController= this.dom.getController();
         this.applicationController.addPropertyChangeListener( ApplicationController.PROP_PLOT_ELEMENT, new PropertyChangeListener() {
             @Override
@@ -102,27 +109,54 @@ public class DataPanel extends javax.swing.JPanel {
     protected void setExpertMode( boolean expert ) {
         plotElementFiltersPanel.setExpertMode(expert);
         dataSourceFiltersPanel.setExpertMode(expert);
+        dataSetSelector.setEnabled(expert);
+        dataSourceFiltersPanel.setEnabled(expert);
+        additionalOperationsCheckBox.setEnabled(expert);
+        doSuppressReset.setEnabled(expert);
     }
 
     /**
      * encourage making local copies for thread safety.
      * @return the current plotElement.
      */
-    private synchronized PlotElement getElement() {
+    private PlotElement getElement() {
         return plotElement;
     }
-        
+
+    /**
+     * to avoid use of synchronized blocks, methods must be called from the
+     * event thread.  This verifies that the thread is the event thread.
+     * @param caller 
+     */
+    private static void assertEventThread( String caller ) {
+        if ( !SwingUtilities.isEventDispatchThread() ) {
+            throw new IllegalArgumentException( caller + " must be called from the event thread.");
+        }
+    }
 
     /**
      * bind to the data source and plot plotElement.
+     * This must be called on the event thread.
      */
     protected final void doBindings() {
         logger.fine("doBindings");
         doPlotElementBindings();
         doDataSourceFilterBindings();
     }
-    
 
+    @Override
+    public void paint(Graphics g) {
+        if ( !dataSourceFilterBindingGroupIsBound ) {
+            dataSourceFilterBindingGroup.bind();
+            dataSourceFilterBindingGroupIsBound= true;
+        }
+        if ( !plotElementBindingGroupIsBound ) {
+            plotElementBindingGroup.bind();
+            plotElementBindingGroupIsBound= true;
+        }
+        super.paint(g); //To change body of generated methods, choose Tools | Templates.
+    }
+    
     protected boolean adjusting = false;
     /**
      * true indicates the component is in transition.
@@ -138,8 +172,6 @@ public class DataPanel extends javax.swing.JPanel {
         this.adjusting = adjusting;
         firePropertyChange(PROP_ADJUSTING, oldAdjusting, adjusting);
     }
-
-    private BindingGroup elementBindingGroup;
     
     /**
      * show the context after the slicing and operations for the user's reference.
@@ -152,6 +184,18 @@ public class DataPanel extends javax.swing.JPanel {
         }
     };
 
+    /**
+     * if there are filters, then make sure the dialog is shown.
+     */
+    private final transient PropertyChangeListener filtersListener= new PropertyChangeListener() {
+        @Override
+        public void propertyChange(PropertyChangeEvent evt) {
+            if ( dsf.getFilters().trim().length()>0 ) {
+                DataPanel.this.additionalOperationsCheckBox.setSelected(true);
+            }
+        }
+    };
+    
     private final transient PropertyChangeListener fillDataSetListener= new PropertyChangeListener() {
         @Override
         public void propertyChange(PropertyChangeEvent evt) {
@@ -190,9 +234,11 @@ public class DataPanel extends javax.swing.JPanel {
         }
     }
 
-    private synchronized void doPlotElementBindings() {
+    private void doPlotElementBindings() {
+        assertEventThread("doPlotElementBindings");
+
         BindingGroup bc = new BindingGroup();
-        if (elementBindingGroup != null) elementBindingGroup.unbind();
+        if (plotElementBindingGroup != null) plotElementBindingGroup.unbind();
         setAdjusting( true ); // suppress events
         if ( plotElement!=null ) {
             plotElement.getController().removePropertyChangeListener( PlotElementController.PROP_DATASET, contextListener );
@@ -228,8 +274,9 @@ public class DataPanel extends javax.swing.JPanel {
             bc.addBinding(Bindings.createAutoBinding(UpdateStrategy.READ_WRITE, plotElement.getController(), BeanProperty.create("sliceAutoranges"), this.sliceAutorangesCB, BeanProperty.create("selected") ) );
         }
 
-        elementBindingGroup = bc;
-        bc.bind();
+        plotElementBindingGroup = bc;
+        plotElementBindingGroupIsBound= false;
+        
         setAdjusting( false );
         
         if ( p!=null ) {
@@ -237,15 +284,23 @@ public class DataPanel extends javax.swing.JPanel {
         }
             
         updateProcessDataSetLabel();
+        
+        repaint();
 
     }
 
-    private synchronized void doDataSourceFilterBindings() {
-
+    /**
+     * this should be called on the event thread.
+     */
+    private void doDataSourceFilterBindings() {
+        
+        assertEventThread("doDataSourceFilterBindings");
+        
         if (dataSourceFilterBindingGroup != null) dataSourceFilterBindingGroup.unbind();
 
         if ( dsf!=null ) {
             dsf.getController().removePropertyChangeListener(DataSourceController.PROP_FILLDATASET, fillDataSetListener );
+            dsf.removePropertyChangeListener( DataSourceFilter.PROP_FILTERS, filtersListener );
         }
         
         final DataSourceFilter newDsf = applicationController.getDataSourceFilter();
@@ -260,6 +315,8 @@ public class DataPanel extends javax.swing.JPanel {
         //dataSetLabel.setText( ds==null ? "(no dataset)" : ds.toString() );
         
         newDsf.getController().addPropertyChangeListener( DataSourceController.PROP_FILLDATASET, fillDataSetListener );
+        newDsf.addPropertyChangeListener( DataSourceFilter.PROP_FILTERS, filtersListener );
+        additionalOperationsCheckBox.setSelected( newDsf.getFilters().trim().length()>0 );
         
         dataSourceFiltersPanel.setFilter( newDsf.getFilters() );
         dataSourceFiltersPanel.setDataSet( newDsf.getController().getDataSet() );
@@ -270,15 +327,13 @@ public class DataPanel extends javax.swing.JPanel {
         bc.addBinding(Bindings.createAutoBinding(UpdateStrategy.READ_WRITE, newDsf, BeanProperty.create("filters"), this.dataSourceFiltersPanel, BeanProperty.create("filter")) );
         bc.addBinding(Bindings.createAutoBinding( UpdateStrategy.READ_WRITE, newDsf, BeanProperty.create("uri"), this.dataSetSelector, BeanProperty.create("value")));
         bc.addBinding(Bindings.createAutoBinding(UpdateStrategy.READ_WRITE, newDsf, BeanProperty.create("controller.dataSet"), this.dataSourceFiltersPanel, BeanProperty.create("dataSet")));
-        try {
-            bc.bind();
-        } catch ( RuntimeException e ) {
-            throw e;
-        }
+        
         dataSourceFilterBindingGroup = bc;
+        dataSourceFilterBindingGroupIsBound= false;
 
         dsf= newDsf;
 
+        repaint();
     }
 
     /** This method is called from within the constructor to
@@ -327,7 +382,12 @@ public class DataPanel extends javax.swing.JPanel {
         binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, additionalOperationsCheckBox, org.jdesktop.beansbinding.ELProperty.create("${selected}"), dataSourceFiltersPanel, org.jdesktop.beansbinding.BeanProperty.create("enabled"));
         bindingGroup.addBinding(binding);
 
+        additionalOperationsCheckBox.setSelected(false);
         additionalOperationsCheckBox.setText("Apply additional operations immediately after data is loaded");
+
+        binding = org.jdesktop.beansbinding.Bindings.createAutoBinding(org.jdesktop.beansbinding.AutoBinding.UpdateStrategy.READ_WRITE, dataSourceFiltersPanel, org.jdesktop.beansbinding.ELProperty.create("${visible}"), additionalOperationsCheckBox, org.jdesktop.beansbinding.BeanProperty.create("selected"));
+        bindingGroup.addBinding(binding);
+
         additionalOperationsCheckBox.addActionListener(new java.awt.event.ActionListener() {
             public void actionPerformed(java.awt.event.ActionEvent evt) {
                 additionalOperationsCheckBoxActionPerformed(evt);
@@ -354,7 +414,7 @@ public class DataPanel extends javax.swing.JPanel {
                         .add(12, 12, 12)
                         .add(jPanel1Layout.createParallelGroup(org.jdesktop.layout.GroupLayout.LEADING)
                             .add(jLabel2, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE)
-                            .add(dataSourceFiltersPanel, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, Short.MAX_VALUE))))
+                            .add(dataSourceFiltersPanel, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 0, Short.MAX_VALUE))))
                 .addContainerGap())
         );
         jPanel1Layout.setVerticalGroup(
@@ -368,7 +428,7 @@ public class DataPanel extends javax.swing.JPanel {
                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
                 .add(jLabel2)
                 .addPreferredGap(org.jdesktop.layout.LayoutStyle.RELATED)
-                .add(dataSourceFiltersPanel, org.jdesktop.layout.GroupLayout.DEFAULT_SIZE, 73, Short.MAX_VALUE)
+                .add(dataSourceFiltersPanel, org.jdesktop.layout.GroupLayout.PREFERRED_SIZE, 0, Short.MAX_VALUE)
                 .addContainerGap())
         );
 
@@ -454,6 +514,9 @@ public class DataPanel extends javax.swing.JPanel {
     private void additionalOperationsCheckBoxActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_additionalOperationsCheckBoxActionPerformed
         dataSourceFiltersPanel.setVisible( additionalOperationsCheckBox.isSelected() );
         jLabel2.setVisible( additionalOperationsCheckBox.isSelected() );
+        if ( !additionalOperationsCheckBox.isSelected() ) {
+            dsf.setFilters("");
+        }
     }//GEN-LAST:event_additionalOperationsCheckBoxActionPerformed
 
 //    /**

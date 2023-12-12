@@ -16,6 +16,8 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.logging.Level;
+import java.util.logging.Logger;
+import org.autoplot.AutoplotUtil;
 import org.das2.datum.DatumRange;
 import org.das2.datum.DatumRangeUtil;
 import static org.das2.datum.DatumRangeUtil.parseISO8601Range;
@@ -48,14 +50,14 @@ public class Test019 {
         ff= fsm.getBestFilesFor( DatumRangeUtil.parseTimeRange( "2008-003" ) );
         if ( ff.length==1 ) System.err.println(ff[0]); else throw new IllegalStateException("no files found");
 
-        uri= "http://demo:demo@www-pw.physics.uiowa.edu/~jbf/data/restrict/";
+        uri= "https://demo:demo@space.physics.uiowa.edu/~jbf/data/restrict/";
         fsm= FileStorageModel.create(FileSystem.create( new URI( uri ) ),
                "data_$Y_$m_$d_v$v.qds" );
         ff= fsm.getBestFilesFor( DatumRangeUtil.parseTimeRange( "2010-03-02" ) );
         if ( ff.length==1 ) System.err.println(ff[0]); else throw new IllegalStateException("no files found");
 
         
-        uri= "http://demo@host:demo@www-pw.physics.uiowa.edu/~jbf/data/restrictAt/";
+        uri= "https://demo@host:demo@space.physics.uiowa.edu/~jbf/data/restrictAt/";
         fsm= FileStorageModel.create(FileSystem.create( new URI( uri ) ),
                "data_$Y_$m_$d_v$v.qds" );
         ff= fsm.getBestFilesFor( DatumRangeUtil.parseTimeRange( "2010-03-02" ) );
@@ -79,7 +81,7 @@ public class Test019 {
     }
 
     public static void testFSMVersioning() throws Exception {
-        String uri= "http://sarahandjeremy.net/~jbf/autoplot/tests/test019_fsm/vers/";
+        String uri= "https://jfaden.net/~jbf/autoplot/tests/test019_fsm/vers/";
         FileStorageModel fsm;
         String[] ss;
         fsm= FileStorageModel.create(FileSystem.create( new URI( uri ) ),
@@ -249,7 +251,7 @@ public class Test019 {
     }
     
     public static void testFileSystemListing() throws FileNotFoundException, FileSystem.FileSystemOfflineException, UnknownHostException, IOException {
-        FileSystem fs= FileSystem.create("http://emfisis-soc.physics.uiowa.edu/~jbf/20130912/");
+        FileSystem fs= FileSystem.create("https://cottagesystems.com/~jbf/autoplot/dan/");
         String[] ss= fs.listDirectory("/");
         FileObject fo= fs.getFileObject(ss[0]);
         System.err.println( fo.getSize() );
@@ -265,12 +267,12 @@ public class Test019 {
      * @throws IOException 
      */
     public static void testDeadFileSystemListing() throws FileNotFoundException, FileSystem.FileSystemOfflineException, UnknownHostException, IOException {
-        boolean makeIt= false;
+        File f= FileSystem.settings().getLocalCacheDir();
+        File f2= new File( f.toString()+"/http/www-pw.physics.uiowa.edu/~jbf/autoplot/test/019/20130912/");
+        boolean makeIt= ! f2.exists();
         if ( makeIt ) {
-            File f= FileSystem.settings().getLocalCacheDir();
-            File f2= new File( f.toString()+"/http/emfisis-soc.physics.uiowa.edu/~jbf/20130912/");
             f2.mkdirs();
-            f= new File( f.toString()+"/http/emfisis-soc.physics.uiowa.edu/~jbf/20130912/.listing.part");
+            f= new File( f.toString()+"/http/www-pw.physics.uiowa.edu/~jbf/autoplot/test/019/20130912/.listing.part");
             FileWriter w= new FileWriter(f);
             try {
                 w.append("test");
@@ -283,7 +285,7 @@ public class Test019 {
                 TestSupport.logger.log(Level.SEVERE, ex.getMessage(), ex);
             }
         }
-        FileSystem fs= FileSystem.create("http://emfisis-soc.physics.uiowa.edu/~jbf/20130912/");
+        FileSystem fs= FileSystem.create("http://www-pw.physics.uiowa.edu/~jbf/autoplot/test/019/20130912/");
         String[] ss= fs.listDirectory("/");
         FileObject fo= fs.getFileObject(ss[0]);
         System.err.println( fo.getSize() );
@@ -328,6 +330,9 @@ public class Test019 {
     
     public static void main( String[] args ) {
         try {
+            
+            Logger.getLogger("test019").warning("disabling certificates");
+            AutoplotUtil.disableCertificates();
             
             ScriptContext.generateTimeRanges( "$(o,id=rbspa-pp)", "orbit:rbspa-pp:70-99" );
             

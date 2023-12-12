@@ -2,12 +2,10 @@
  * AggregatingDataSourceFactory.java
  *
  * Created on October 25, 2007, 11:02 AM
- *
- * To change this template, choose Tools | Template Manager
- * and open the template in the editor.
  */
 package org.autoplot.aggregator;
 
+import java.io.File;
 import java.io.FileNotFoundException;
 import org.das2.datum.DatumRangeUtil;
 import java.util.logging.Level;
@@ -32,6 +30,7 @@ import org.autoplot.datasource.DataSourceFactory;
 import org.autoplot.datasource.DefaultTimeSeriesBrowse;
 import org.autoplot.datasource.URISplit;
 import org.autoplot.datasource.capability.TimeSeriesBrowse;
+import org.das2.util.filesystem.LocalFileSystem;
 
 /**
  * ftp://cdaweb.gsfc.nasa.gov/pub/data/noaa/noaa14/$Y/noaa14_meped1min_sem_$Y$m$d_v01.cdf?timerange=2000-01-01
@@ -49,6 +48,40 @@ public class AggregatingDataSourceFactory implements DataSourceFactory {
     public AggregatingDataSourceFactory() {
     }
 
+    /**
+     * return a file from the aggregation, so that it can be inspected externally.
+     * @param uri
+     * @param monitor
+     * @return null or a file.
+     * @throws IOException 
+     * @see setDelegateDataSourceFactory
+     */
+    public static String getRepresentativeFile( URI uri, ProgressMonitor monitor ) throws IOException {
+        String surl = DataSetURI.fromUri( uri );
+        FileStorageModel fsm = getFileStorageModel(surl);
+        
+        URISplit split = URISplit.parse(surl);
+        Map parms = URISplit.parseParams(split.params);
+        
+        DatumRange rangeConstraint=null;
+        String stimeRange= (String) parms.get("timerange");
+        if ( stimeRange!=null ) {
+            try {
+                rangeConstraint= DatumRangeUtil.parseTimeRange(stimeRange);
+            } catch ( ParseException ex ) {
+                logger.log(Level.INFO, "unable to used timerange, can''t parse: {0}", stimeRange);
+            }
+        }
+        String ff= fsm.getRepresentativeFile( monitor, null, rangeConstraint );
+        if ( ff==null ) {
+            return null;
+        } else {
+            int i= splitIndex(surl);
+            return surl.substring(0,i)+ff;
+        }
+
+    }
+    
     @Override
     public DataSource getDataSource(URI uri) throws Exception {
         String suri=  DataSetURI.fromUri(uri);
@@ -100,14 +133,20 @@ public class AggregatingDataSourceFactory implements DataSourceFactory {
      * @see #splitIndex(java.lang.String) which splits the static part from the agg part.
      */
     public static FileStorageModel getFileStorageModel(String suri) throws IOException {
+
+        suri= suri.replaceAll("\\*","\\$x");
+        
         URISplit split= URISplit.parse(suri);
         String surl= split.surl; // support cases where resource URI is not yet valid.
         int i = surl.indexOf('?');
 
         String sansArgs = i == -1 ? surl : surl.substring(0, i);
-
+        
         i = splitIndex(sansArgs);
         FileSystem fs;
+        
+        if ( i==-1 ) i= sansArgs.lastIndexOf("/");
+        
         fs = FileSystem.create( DataSetURI.toUri(sansArgs.substring(0, i)));
 
         if ( sansArgs.charAt(i)=='/' ) i=i+1; // kludgy
@@ -156,10 +195,10 @@ public class AggregatingDataSourceFactory implements DataSourceFactory {
                         delegateFile= fsm.getRepresentativeFile( mon.getSubtaskMonitor("get delegate") );
                     }
                 } else {
-                    delegateFile= fsm.getRepresentativeFile( mon );
+                    delegateFile= fsm.getRepresentativeFile( mon.getSubtaskMonitor("get delegate") );
                 }
             } else {
-                delegateFile= fsm.getRepresentativeFile( mon );
+                delegateFile= fsm.getRepresentativeFile( mon.getSubtaskMonitor("get delegate") );
             }
             return delegateFile;
             
@@ -168,6 +207,14 @@ public class AggregatingDataSourceFactory implements DataSourceFactory {
         }
     }
 
+    /**
+     * return the context to use for the delegate file.  Bugs:<ul>
+     * <li>file:///tmp/convert/j*.dat?column=
+     * </ul>
+     * @param cc
+     * @return
+     * @throws IOException 
+     */
     private static CompletionContext getDelegateDataSourceCompletionContext(CompletionContext cc) throws IOException {
 
         String surl = cc.surl;
@@ -185,8 +232,14 @@ public class AggregatingDataSourceFactory implements DataSourceFactory {
 
         URISplit split = URISplit.parse(surl);
 
-        String delegateFfile = fsm.getFileSystem().getRootURI().resolve(delegateFile).toString();
-        urlLen += delegateFfile.length();
+        String encodedDelegateFile= delegateFile.replaceAll(":","%3A");
+        String delegateFfile;
+        if ( fsm.getFileSystem() instanceof LocalFileSystem ) {
+            delegateFfile= new File( ((LocalFileSystem)fsm.getFileSystem()).getLocalRoot(), URISplit.uriEncode(encodedDelegateFile) ).toString();
+        } else {
+            delegateFfile= fsm.getFileSystem().getRootURI().resolve(URISplit.uriEncode(encodedDelegateFile)).toString();
+        }
+        urlLen += split.file.length();
         carotPos -= urlLen - delegateFfile.length();
         split.file = delegateFfile;
 
@@ -210,8 +263,9 @@ public class AggregatingDataSourceFactory implements DataSourceFactory {
         delegatecc.surlpos = carotPos;
         delegatecc.context = cc.context;
         
+        String decodedDelegateFile= delegateFfile.replaceAll("%3A",":");
         //delegatecc.resource= new URL( delegateFfile );
-        delegatecc.resourceURI = DataSetURI.toUri(delegateFfile);
+        delegatecc.resourceURI = DataSetURI.toUri(decodedDelegateFile);
 
         return delegatecc;
     }
@@ -223,7 +277,7 @@ public class AggregatingDataSourceFactory implements DataSourceFactory {
      * @throws java.io.IOException
      * @throws IllegalArgumentException if it is not able to find any data files.
      */
-    protected static String getDelegateDataSourceFactoryUri(String suri, ProgressMonitor mon) throws IOException, IllegalArgumentException {
+    public static String getDelegateDataSourceFactoryUri(String suri, ProgressMonitor mon) throws IOException, IllegalArgumentException {
 
         URISplit split= URISplit.parse(suri);
 
@@ -242,8 +296,18 @@ public class AggregatingDataSourceFactory implements DataSourceFactory {
             try {
                 DatumRange timeRangeDatum= DatumRangeUtil.parseTimeRange(timeRange);
                 String[] names = fsm.getBestNamesFor(timeRangeDatum,new NullProgressMonitor());
-                if ( names.length>0 ) {
-                    file= names[0];
+                FileSystem fs= fsm.getFileSystem();
+                for (String name : names) {
+                    // look for a file which is not empty.
+                    if (fs.getFileObject(name).getSize() > 0) {
+                        file = name;
+                        break;
+                    }
+                }
+                if ( file==null ){
+                    if ( names.length>0 ) {
+                        file= names[0];
+                    }
                 }
             } catch (ParseException ex) {
                 logger.log(Level.SEVERE, ex.getMessage(), ex);
@@ -258,7 +322,11 @@ public class AggregatingDataSourceFactory implements DataSourceFactory {
             throw new IllegalArgumentException( "unable to find any files in "+fsm );
         }
 
-        split.resourceUri= fsm.getFileSystem().getRootURI().resolve(file);
+        if ( fsm.getFileSystem() instanceof LocalFileSystem ) {
+            split.resourceUri= fsm.getFileSystem().getFileObject(file).getFile().toURI();
+        } else {
+            split.resourceUri= fsm.getFileSystem().getRootURI().resolve(file.replaceAll(":","%3A"));
+        }
         String scompUrl = DataSetURI.fromUri( split.resourceUri );
         if (split.params.length() > 0) {
             scompUrl += "?" + split.params;
@@ -289,16 +357,29 @@ public class AggregatingDataSourceFactory implements DataSourceFactory {
         List<CompletionContext> result = new ArrayList<>();
         CompletionContext delegatecc = getDelegateDataSourceCompletionContext(cc);
 
+        logger.log(Level.FINE, "got delegate cc: {0}", delegatecc);
+        
         List<CompletionContext> delegateCompletions = f.getCompletions(delegatecc,mon);
         result.addAll(delegateCompletions);
 
         if (cc.context == CompletionContext.CONTEXT_PARAMETER_NAME) {
             result.add(new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "timerange=" ));
-
+            result.add(new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "avail=" ));
+            result.add(new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "reduce=" ));
+            result.add(new CompletionContext( CompletionContext.CONTEXT_PARAMETER_NAME, "filenameProvidesContext=" ));
         } else if (cc.context == CompletionContext.CONTEXT_PARAMETER_VALUE) {
             String paramName = CompletionContext.get(CompletionContext.CONTEXT_PARAMETER_NAME, cc);
             if (paramName.equals("timerange")) {
                 result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "<timerange>"));
+            } else if ( paramName.equals("avail") ) {
+                result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "T"));
+                result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "F"));
+            } else if ( paramName.equals("reduce") ) {
+                result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "T"));
+                result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "F"));
+            } else if ( paramName.equals("filenameProvidesContext") ) {
+                result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "T"));
+                result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "F"));
             }
         } else {
         }
@@ -376,4 +457,14 @@ public class AggregatingDataSourceFactory implements DataSourceFactory {
         return false;
     }
 
+    @Override
+    public boolean isFileResource() {
+        return false;
+    }
+
+    @Override
+    public String getDescription() {
+        return "Combination of Files From a Supported Data Source";
+    }
+    
 }

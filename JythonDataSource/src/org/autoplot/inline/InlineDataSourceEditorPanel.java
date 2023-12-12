@@ -9,6 +9,8 @@ import java.awt.FlowLayout;
 import java.awt.Window;
 import java.awt.event.ActionEvent;
 import java.awt.event.ActionListener;
+import java.awt.event.KeyEvent;
+import java.awt.event.KeyListener;
 import java.text.ParseException;
 import java.util.Arrays;
 import java.util.List;
@@ -51,6 +53,14 @@ public class InlineDataSourceEditorPanel extends javax.swing.JPanel implements D
      * Creates new form InlineDataSourceEditorPanel
      */
     public InlineDataSourceEditorPanel() {
+    }
+    
+    /**
+     * return the mashup tool, so that a resolver can be added.
+     * @return the mashup tool used.
+     */
+    public DataMashUp getDataMashUp() {
+        return this.dataMashUp1;
     }
 
     private static final String SCHEME_EVENT_LIST= "eventList";
@@ -291,6 +301,26 @@ public class InlineDataSourceEditorPanel extends javax.swing.JPanel implements D
             }
         }
     }
+    
+    /**
+     * 
+     * @param s
+     * @param delims
+     * @return 
+     */
+    private static String maybeFindDelim( String s, String[] delims ) {
+        s= s.trim();
+        for ( String d: delims ) {
+            String[] ss= s.split(d,-2);
+            if ( ss.length>1 ) {
+                return d;
+            }
+        }
+        return null;
+    }
+    
+    private static final String[] SINGLE_TEXTFIELD_DELIMS= new String[] {" ",","} ;
+    
     private void addButtonActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_addButtonActionPerformed
         LoggerManager.logGuiEvent(evt);
         JPanel p= new JPanel();
@@ -299,7 +329,7 @@ public class InlineDataSourceEditorPanel extends javax.swing.JPanel implements D
         } else {
             p.setLayout( new FlowLayout() );
         }
-        JTextField[] tfs= new JTextField[tm.getColumnCount()];
+        final JTextField[] tfs= new JTextField[tm.getColumnCount()];
         for ( int i=0; i<tm.getColumnCount(); i++ ) {  // load up the last record so it can be edited to make new record
             JComboBox cb1= new JComboBox();
             cb1.setToolTipText("Examples");
@@ -330,10 +360,23 @@ public class InlineDataSourceEditorPanel extends javax.swing.JPanel implements D
                     ss[i]= (String)tm.getValueAt(i,0);
                 }
             }
-            StringBuilder sval= new StringBuilder(tfs[0].getText());
-            for ( int i=1; i<tm.getColumnCount(); i++ ) {
-                sval.append(",").append(tfs[i].getText());
+            String s= tfs[0].getText().trim();
+            
+            StringBuilder sval;
+            String delim= maybeFindDelim( s, SINGLE_TEXTFIELD_DELIMS );
+            if ( delim!=null ) {
+                String[] ssval= s.split(delim,-2);
+                sval= new StringBuilder(ssval[0]);
+                for ( int i=1; i<tm.getColumnCount(); i++ ) {
+                    sval.append(",").append(ssval[i]);
+                }
+            } else {
+                sval= new StringBuilder(tfs[0].getText());
+                for ( int i=1; i<tm.getColumnCount(); i++ ) {
+                    sval.append(",").append(tfs[i].getText());
+                }
             }
+            
             if ( tm.getColumnCount()>1 ) {
                 ss[tm.getRowCount()]= sval.toString();                
                 tm= toTableModel( DataSourceUtil.strjoin( Arrays.asList(ss), ";" ), 2 );
@@ -390,7 +433,7 @@ public class InlineDataSourceEditorPanel extends javax.swing.JPanel implements D
         int rank= tm.getColumnCount()>1 ? 2 : 1;
         tm= toTableModel(sb.toString(), rank );
         setColumnLabels();
-        table.setModel( tm );
+        table.setModel(tm );
     }//GEN-LAST:event_deleteSelectedButtonActionPerformed
 
     private void jTabbedPane1StateChanged(javax.swing.event.ChangeEvent evt) {//GEN-FIRST:event_jTabbedPane1StateChanged
@@ -405,7 +448,7 @@ public class InlineDataSourceEditorPanel extends javax.swing.JPanel implements D
     private void initializeScheme() {
         switch ( schemeComboBox.getSelectedIndex() ) {
             case 0:
-                tm= toTableModel( new String[0] );
+                tm= toTableModel( 0, 1 );
                 directionsLabel.setText("<html><i>Enter a list of times or points</i></html>");
                 scheme= SCHEME_EVENT_LIST;
                 tm.setColumnIdentifiers( new String[] { "x" } );
@@ -425,7 +468,7 @@ public class InlineDataSourceEditorPanel extends javax.swing.JPanel implements D
             default:
                 throw new IllegalArgumentException("whoops");
         }
-        table.setModel( tm );
+        table.setModel(tm );
     }
     
     private void schemeComboBoxActionPerformed(java.awt.event.ActionEvent evt) {//GEN-FIRST:event_schemeComboBoxActionPerformed
@@ -526,7 +569,11 @@ public class InlineDataSourceEditorPanel extends javax.swing.JPanel implements D
     private static DefaultTableModel toTableModel( final String s, int rank) {
         final String[] ss= s.split(";");
         if ( rank==1 ) {
-            return toTableModel( s.split(",") );
+            if ( s.trim().length()==0 ) {
+                return toTableModel(0,1);
+            } else {
+                return toTableModel( s.split(",") );
+            }
         }
         final int nc= ss[0].split(",").length;
         
@@ -605,10 +652,12 @@ public class InlineDataSourceEditorPanel extends javax.swing.JPanel implements D
         String[] ss= Util.guardedSplit( uri, '&', '\'', '\"' );
         DefaultTableModel mtm= new DefaultTableModel( ss.length-1, 4 );
         Pattern p= Pattern.compile("ds=createEvent\\((ds\\,)?\\'(.*)\\'\\,(.*)\\,\\'(.*)\\'\\)");
+        boolean foundOne= false;
         for ( int i=0; i<ss.length; i++ ) {
             if ( i<ss.length-1 ) {
                 Matcher m= p.matcher(ss[i]);
                 if ( m.matches() ) {
+                    foundOne= true;
                     String time= m.group(2);
                     try {
                         DatumRange tr= DatumRangeUtil.parseTimeRange(time);
@@ -627,7 +676,11 @@ public class InlineDataSourceEditorPanel extends javax.swing.JPanel implements D
                 }
             }
         }
-        return mtm;
+        if ( foundOne ) {
+            return mtm;
+        } else {
+            return null;
+        }
     }
     
     @Override
@@ -744,7 +797,7 @@ public class InlineDataSourceEditorPanel extends javax.swing.JPanel implements D
                 StringBuilder s= new StringBuilder( "vap+inline:" );
                 if ( scheme.equals(SCHEME_EVENT_LIST_COLORS) ) {
                     for ( int i=0; i<tm.getRowCount(); i++ ) {
-                        String str= String.format( "%s/%s", tm.getValueAt(i,0), tm.getValueAt(i,1) );
+                        String str= String.format("%s/%s", tm.getValueAt(i,0), tm.getValueAt(i,1) );
                         try {
                             DatumRange drtr= DatumRangeUtil.parseTimeRange(str);
                             str= drtr.toString().replaceAll(" ","+");
@@ -752,9 +805,9 @@ public class InlineDataSourceEditorPanel extends javax.swing.JPanel implements D
                             // do nothing, just use the old format, which will fail and reject.
                         }
                         if ( i==0 ) {
-                            s.append( String.format( "ds=createEvent('%s',%s,'%s')", str, tm.getValueAt(i,2), tm.getValueAt(i,3) ) );
+                            s.append(String.format("ds=createEvent('%s',%s,'%s')", str, tm.getValueAt(i,2), tm.getValueAt(i,3) ) );
                         } else {
-                            s.append( String.format( "&ds=createEvent(ds,'%s',%s,'%s')", str, tm.getValueAt(i,2), tm.getValueAt(i,3) ) );
+                            s.append(String.format("&ds=createEvent(ds,'%s',%s,'%s')", str, tm.getValueAt(i,2), tm.getValueAt(i,3) ) );
                         }
                     }
                     s.append("&ds");

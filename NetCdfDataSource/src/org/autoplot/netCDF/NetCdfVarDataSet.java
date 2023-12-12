@@ -6,7 +6,6 @@ import java.util.logging.Logger;
 import org.das2.datum.Units;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
@@ -18,17 +17,21 @@ import org.das2.datum.UnitsConverter;
 import org.das2.util.monitor.NullProgressMonitor;
 import org.das2.util.monitor.ProgressMonitor;
 import org.das2.qds.AbstractDataSet;
-import org.das2.qds.DataSetOps;
 import org.das2.qds.DataSetUtil;
 import org.das2.qds.QDataSet;
 import org.autoplot.datasource.MetadataModel;
 import org.das2.qds.ops.Ops;
 import org.autoplot.metatree.IstpMetadataModel;
+import org.autoplot.metatree.MetadataUtil;
+import org.das2.datum.EnumerationUnits;
+import org.das2.datum.TimeUtil;
+import org.das2.datum.UnitsUtil;
 import ucar.ma2.DataType;
 import ucar.ma2.InvalidRangeException;
 import ucar.ma2.Range;
 import ucar.nc2.Variable;
 import ucar.nc2.Attribute;
+import ucar.nc2.AttributeContainer;
 import ucar.nc2.dataset.NetcdfDataset;
 
 /**
@@ -140,9 +143,14 @@ public class NetCdfVarDataSet extends AbstractDataSet {
         int digitCount=-1;
         for ( int ich=0; ich<s.length(); ich++ ) {
             if ( !Character.isDigit(s.charAt(ich) ) ) {
-                if ( digitCount==-1 ) digitCount= ich; // http://amda-dev.irap.omp.eu/BASE/DATA/WND/SWE/swe19970812.nc?Time has null char at 17.
+                if ( digitCount==-1 ) {
+                    digitCount= ich;
+                } // http://amda-dev.irap.omp.eu/BASE/DATA/WND/SWE/swe19970812.nc?Time has null char at 17.
             } else {
-                if ( digitCount>-1 ) return null; // we found a non-digit preceeding a digit, so this isn't a block of digits like expected.
+                if ( digitCount>-1 ) {
+                    digitCount=-1;
+                    break;
+                } // we found a non-digit preceeding a digit, so this isn't a block of digits like expected.
             }
         }
         switch (digitCount) {
@@ -152,13 +160,24 @@ public class NetCdfVarDataSet extends AbstractDataSet {
             case 17:
                 tp= TimeParser.create("$Y$m$d$H$M$S$(subsec,places=3)");
                 break;
+            case -1:
+                s= s.trim();
+                try {
+                    String t= TimeParser.iso8601String(s);
+                    tp= TimeParser.create(t);
+                    break;
+                } catch ( IllegalArgumentException ex ) {
+                    return null;
+                }
             default:
         }
         return tp;
      }
      
+     
+     
     /**
-     * Read the NetCDF data.
+     * Read the NetCDF data, including DEPEND_0 if used, using the CDF conventions.
      * @param variable the NetCDF variable.
      * @param ncfile the NetCDF file.
      * @param constraints null, or string like "[0:10]"  Note it's allowed for the constraint to not have [] because this is called recursively.
@@ -177,6 +196,7 @@ public class NetCdfVarDataSet extends AbstractDataSet {
             for ( Variable vv: vvs ) {
                 if ( vv.findAttribute("DEPEND_0" )!=null ) {
                     mm= new IstpMetadataModel();
+                    break;
                 }
             }
             logger.log(Level.FINER, "look for DEPEND_0 (ms):{0}", (System.currentTimeMillis()-t0));
@@ -195,7 +215,7 @@ public class NetCdfVarDataSet extends AbstractDataSet {
 
                 String[] cc= constraints.split(",");
                 List<Range> ranges= new ArrayList( v.getRanges() );
-                for ( int i=0; i<cc.length; i++ ) {
+                for ( int i=0; i<Math.min(ranges.size(),cc.length); i++ ) {
                     long[] ir= parseConstraint( cc[i],ranges.get(i).last()+1 );
                     if ( ir[1]==-1 ) {
                         ranges.set( i, new Range((int)ir[0],(int)ir[0]) );
@@ -252,6 +272,9 @@ public class NetCdfVarDataSet extends AbstractDataSet {
         boolean isCoordinateVariable= false;
         
         for ( int ir=0; ir<a.getRank(); ir++ ) {
+            if ( v.getFullName().contains("Temperature") && ir==1 ) { 
+                System.err.println("Here stop Jeremy");
+            }
             if ( !slice[ir] ) {
                 logger.log(Level.FINER, "v.getDimension({0})", ir);
                 ucar.nc2.Dimension d= v.getDimension(ir);
@@ -265,7 +288,12 @@ public class NetCdfVarDataSet extends AbstractDataSet {
                         if ( dv!=variable && dv.getRank()==1 ) {
                             mon.setProgressMessage( "reading "+dv.getNameAndDimensions() );
                             QDataSet dependi= create( dv, sliceConstraints(constraints,ir), ncfile, new NullProgressMonitor() );
-                            properties.put( "DEPEND_"+(ir-sliceCount(slice,ir) ), dependi );
+                            if ( dependi.length()==3 && dependi.value(0)==dependi.value(1) && dependi.value(0)==dependi.value(2) ) {
+                                // https://cdaweb.sci.gsfc.nasa.gov/sp_test3017/data/goes/goes10/mag_l2_netcdf/$Y/dn_magn-l2-hires_g10_d$Y$m$d_v0_0_5.nc?b_total?timerange=2005-05-30&b_eci&timerange=2005-05-30+12:00+to+18:00
+                                properties.put( "DEPEND_"+(ir-sliceCount(slice,ir) ), Ops.labelsDataset( new String[] { "X","Y","Z" } ) );
+                            } else {
+                                properties.put( "DEPEND_"+(ir-sliceCount(slice,ir) ), dependi );
+                            }
                         } else if ( dv!=variable && dv.getRank()==2 && dv.getDataType()==DataType.CHAR ) { // assume they are times.
                             mon.setProgressMessage( "reading "+dv.getNameAndDimensions() );
                             QDataSet dependi= create( dv, sliceConstraints(constraints,ir), ncfile, new NullProgressMonitor() );
@@ -283,7 +311,7 @@ public class NetCdfVarDataSet extends AbstractDataSet {
         mon.setProgressMessage("reading attributes");
 
         logger.finer("v.getAttributes()");
-        List attrs= v.getAttributes();
+        AttributeContainer attrs= v.attributes();
         for ( Iterator i= attrs.iterator(); i.hasNext(); ) {
             Attribute attr= (Attribute) i.next();
             if ( !attr.isArray() ) {
@@ -295,9 +323,32 @@ public class NetCdfVarDataSet extends AbstractDataSet {
             }
         }
         
+        Object lablPtr= attributes.get("LABL_PTR_1");
+        if ( lablPtr!=null && lablPtr instanceof String ) {
+            Variable vv= ncfile.findVariable((String)lablPtr);
+            if ( vv==null ) {
+                logger.log(Level.WARNING, "unable to find variable: {0}", lablPtr);
+            } else {
+                if ( vv.getDataType()==DataType.CHAR && vv.getDimensions().size()==2 && shape[1]==vv.getDimension(0).getLength() ) {
+                    String[] ss= new String[vv.getDimension(0).getLength()];
+                    char[][] arr= (char[][])vv.read().copyToNDJavaArray();
+                    for ( int i=0; i<ss.length; i++ ) {
+                        ss[i]= String.copyValueOf(arr[i]);
+                    }
+                    properties.put( "DEPEND_1", Ops.labelsDataset(ss) );
+                }
+            }
+        }
         
         if ( attributes.containsKey("units") ) {
             String unitsString= (String)attributes.get("units");
+            if ( "milliseconds".equalsIgnoreCase(unitsString) ) { // vap+cdaweb:ds=ICON_L2-4_FUV_DAY&filter=icon&id=ICON_L24_Disk_Latitude&timerange=2021-11-02+21:01+to+21:30
+                unitsString= Units.milliseconds.toString();
+            }
+            // try to find time_base, which is aparently case-insensitive
+            Object otb= attributes.get("TIME_BASE");
+            if ( otb==null ) otb= attributes.get("Time_Base");
+            String tb= otb==null ? null : otb.toString();
             
             if ( unitsString.contains(" since ") ) {
                 Units u;
@@ -309,59 +360,151 @@ public class NetCdfVarDataSet extends AbstractDataSet {
                 
                 properties.put( QDataSet.UNITS, u );
                 properties.put( QDataSet.MONOTONIC, Boolean.TRUE );
+            } else if ( Units.lookupUnits(unitsString).isConvertibleTo(Units.seconds) && tb!=null ) {
+                if ( tb.equals("FIXED: 1970 (POSIX)") ) {
+                    try {
+                        properties.put( QDataSet.UNITS, Units.lookupTimeUnits( unitsString + " since 1970" ) );
+                    } catch (ParseException ex) {
+                        throw new RuntimeException(ex); // this shouldn't happen
+                    }
+                } else if ( tb.equals("1970-01-01 00:00:00.000 UTC") ) {
+                    try {
+                        properties.put( QDataSet.UNITS, Units.lookupTimeUnits( unitsString + " since 1970-01-01T00:00Z" ) );
+                    } catch (ParseException ex) {
+                        Logger.getLogger(NetCdfVarDataSet.class.getName()).log(Level.SEVERE, null, ex);
+                    }
+                } else {
+                    Logger.getLogger(NetCdfVarDataSet.class.getName()).log(Level.SEVERE, null, "missing support for this time type: "+tb);
+                }
+                
+            } else {
+                properties.put( QDataSet.UNITS, Units.lookupUnits(unitsString) );
             }
+            
+        }
+        
+        // GEOS files have a number of standard-looking metadata attributes, however I can't identify the name of the standard.
+        // See https://satdat.ngdc.noaa.gov/sem/goes/data/avg/2010/05/goes13/netcdf/g13_magneto_1m_20100501_20100531.nc?BX_1&x=time_tag
+        Object o;
+
+        o= attributes.get("description");
+        if ( o!=null && o instanceof String ) {
+            properties.put( QDataSet.DESCRIPTION, (String)o );
+        }
+  
+        o= attributes.get("comments");
+        if ( o!=null && o instanceof String ) {
+            properties.put( QDataSet.TITLE, (String)o );
+        }
+        
+        o= attributes.get("long_label");
+        if ( o!=null && o instanceof String ) {
+            properties.put( QDataSet.TITLE, (String)o );
         }
 
+        o= attributes.get("short_label");
+        if ( o!=null && o instanceof String ) {
+            properties.put( QDataSet.LABEL, (String)o );
+        }
+
+        o= attributes.get("long_name");
+        if ( o!=null && o instanceof String ) {
+            if ( properties.get( QDataSet.NAME )==null ) {
+                properties.put( QDataSet.NAME, Ops.safeName((String)o) );
+            }
+            if ( properties.get( QDataSet.LABEL )==null ) {
+                Units u= (Units)properties.get(QDataSet.UNITS);
+                if ( u==null || !UnitsUtil.isTimeLocation(u) ) {
+                    properties.put( QDataSet.LABEL, o );
+                }
+            }
+        }
+        
+        o= attributes.get("lin_log");
+        if ( o!=null && ( o.equals("lin") || o.equals("log") ) ) {
+            properties.put( QDataSet.SCALE_TYPE, o.equals("lin") ? "linear" : (String)o );
+        }
+        
+        o= attributes.get("nominal_min");
+        if ( o!=null && o instanceof String ) {
+            properties.put( QDataSet.TYPICAL_MIN, Double.parseDouble( (String)o ) );
+        }
+
+        o= attributes.get("nominal_max");
+        if ( o!=null && o instanceof String ) {
+            properties.put( QDataSet.TYPICAL_MAX, Double.parseDouble( (String)o ) );
+        }
+
+        o= attributes.get("format");
+        if ( o!=null && o instanceof String ) {
+            properties.put( QDataSet.FORMAT, MetadataUtil.normalizeFormatSpecifier( (String)o ) );
+        }
+
+        EnumerationUnits eu= null;
+        
         if ( data==null ) {
             if ( cdata==null ) {
                 throw new RuntimeException("Either data or cdata should be defined at this point");
             }
-            //20110101T00:00 is 14 chars long.  "2011-Jan-01T00:00:00.000000000     " is 35 chars long. (LANL has padding after the times to make it 35 characters long.)
-            if ( shape.length==2 && shape[1]>=14 && shape[1]<=35 ) { // NASA/Goddard translation service formats Times as strings, check for this.
-                logger.fine("parsing times formatted in char arrays");
-                data= new double[shape[0]];
-                String ss= new String(cdata);
-                TimeParser tp= null;
-                boolean tryGuessTimeParser= true;
-                for ( int i=0; i<shape[0]; i++ ) {
-                    int n= i*shape[1];
-                    String s= ss.substring( n, n+shape[1] );
-                    try {
-                        if ( tp!=null ) {
-                            data[i]= tp.parse(s).getTime(Units.us2000);
-                        } else {
-                            data[i] = Units.us2000.parse(s).doubleValue(Units.us2000);
-                        }
-                    } catch (ParseException ex) {
-                        if ( tryGuessTimeParser ) {
+            logger.fine("parsing times formatted in char arrays");
+            data= new double[shape[0]];
+            String ss= new String(cdata);
+            TimeParser tp= null;
+            boolean tryGuessTimeParser= true;
+            for ( int i=0; i<shape[0]; i++ ) {
+                int n= i*shape[1];
+                String s= ss.substring( n, n+shape[1] );
+                try {
+                    if ( tp!=null ) {
+                        data[i]= tp.parse(s).getTime(Units.us2000);
+                    } else {
+                        if ( tryGuessTimeParser ) { // see if it is a time, and if not load it as nominal data.
                             tryGuessTimeParser= false;
-                            tp= guessTimeParser(s);
+                            tp= guessTimeParser(s); 
                             if ( tp==null ) {
-                                data[i]= Units.us2000.getFillDouble();
-                            } else {
-                                try {
-                                    data[i]= tp.parse(s).getTime(Units.us2000);
-                                } catch ( ParseException ex2 ) {
-                                    data[i]= Units.us2000.getFillDouble();
-                                }
+                                eu= Units.nominal("netcdf");
                             }
+                        }
+                        if ( tp!=null ) {
+                            data[i] = tp.parse(s).getTime(Units.us2000);
                         } else {
-                            data[i]= Units.us2000.getFillDouble();
+                            assert eu!=null;
+                            data[i] = eu.createDatum(s).doubleValue(eu);
                         }
                     }
+                } catch ( ParseException ex ) {
+                    data[i]= Double.NaN;
                 }
-                properties.put(QDataSet.UNITS,Units.us2000);
-                shape= new int[] { shape[0] };
-            } else {
-                data= (double[])a.get1DJavaArray( Double.class ); // whoops, it wasn't NASA/Goddard data after all.
             }
+            if ( eu!=null ) {
+                properties.put(QDataSet.UNITS,eu);
+            } else {
+                properties.put(QDataSet.UNITS,Units.us2000);
+            }
+            shape= new int[] { shape[0] };            
         }
 
         if ( attributes.containsKey("_FillValue" ) ) {
-            double fill= Double.parseDouble( (String) attributes.get("_FillValue") );
-            properties.put( QDataSet.FILL_VALUE, fill );
+            String sfill= (String) attributes.get("_FillValue");
+            if ( eu!=null ) {
+                properties.put( QDataSet.FILL_VALUE, eu.createDatum(sfill).doubleValue(eu) );
+            } else {
+                double fill= Double.parseDouble( sfill );
+                properties.put( QDataSet.FILL_VALUE, fill );
+            }
+            
         }
 
+        o= attributes.get("missing_value");
+        if ( o!=null ) {
+            if ( a.getElementType()==float.class ) {
+                properties.put( QDataSet.FILL_VALUE, Float.parseFloat((String)o) );
+            } else if ( a.getElementType()==double.class ) {
+                properties.put( QDataSet.FILL_VALUE, Double.parseDouble((String)o) );
+            } else {
+                properties.put( QDataSet.FILL_VALUE, Long.parseLong((String)o) );
+            }
+        }
 
         if ( ( mm!=null && mm instanceof IstpMetadataModel ) ||  attributes.containsKey("VAR_TYPE") || attributes.containsKey("DEPEND_0") ) { // LANL want to create HDF5 files with ISTP metadata
             logger.log(Level.FINE, "variable '{0}' has VAR_TYPE or DEPEND_0 attribute, use ISTP metadata", v.getName());
@@ -376,6 +519,17 @@ public class NetCdfVarDataSet extends AbstractDataSet {
                 if ( istpProps.containsKey(QDataSet.TYPICAL_MAX) ) istpProps.put( QDataSet.TYPICAL_MAX, uc.convert( (Number)istpProps.get(QDataSet.TYPICAL_MAX ) ) );
                 istpProps.put(QDataSet.UNITS,Units.us2000);
             }
+            if ( istpProps.containsKey(QDataSet.RENDER_TYPE) ) {
+                String s= (String)istpProps.get(QDataSet.RENDER_TYPE);
+                if ( s.equals("image") ) {
+                    logger.fine("removing DISPLAY_TYPE=image because it's incorrect");
+                    istpProps.remove(QDataSet.RENDER_TYPE);
+                }
+            }
+            
+            if ( properties.containsKey(QDataSet.UNITS) ) {
+                istpProps.remove("UNITS");
+            };
             properties.putAll(istpProps);
 
             for ( int ir=0; ir<a.getRank(); ir++ ) {
@@ -420,6 +574,8 @@ public class NetCdfVarDataSet extends AbstractDataSet {
                 }
         }
 
+        properties.put( QDataSet.USER_PROPERTIES, attributes );
+        
         // perform the slices
         ArrayList<Integer> newShape= new ArrayList(shape.length);
         for ( int i=0; i<shape.length; i++ ) {

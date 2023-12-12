@@ -1,6 +1,7 @@
 
 package org.autoplot.jythonsupport;
 
+import java.lang.reflect.Array;
 import java.lang.reflect.Method;
 import java.text.ParseException;
 import java.util.HashMap;
@@ -10,6 +11,7 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.das2.datum.Datum;
 import org.das2.datum.DatumUtil;
+import org.das2.datum.EnumerationUnits;
 import org.das2.datum.InconvertibleUnitsException;
 import org.das2.datum.Units;
 import org.das2.datum.UnitsConverter;
@@ -50,18 +52,22 @@ import org.das2.qds.ops.CoerceUtil;
  *
  * @author jbf
  */
-public class PyQDataSet extends PyJavaInstance {
+public final class PyQDataSet extends PyJavaInstance {
 
     private static final Logger logger= Logger.getLogger("jython");
 
     WritableDataSet ds;
     MutablePropertyDataSet mpds;
     QDataSet rods; // read-only dataset
-    Units units; // indicates if the units have been set.
+    Units units; // indicates if the units have been set.  If the data is a bundle, this should not be set.
     int serialNumber;
     
-    private static AtomicInteger _seq= new AtomicInteger(1000);
+    private static final AtomicInteger _seq= new AtomicInteger(1000);
 
+    public PyQDataSet( ) {
+        throw new IllegalArgumentException("no-arg constructor is not supported");
+    }
+    
     /**
      * Note getDataSet will always provide a writable dataset.
      * @param ds 
@@ -206,6 +212,19 @@ public class PyQDataSet extends PyJavaInstance {
     public PyObject __rpow__(PyObject arg0) {
         QDataSet that = coerce_ds(arg0);
         return new PyQDataSet(Ops.pow(that, rods));
+    }
+    
+    @Override
+    public boolean __nonzero__() {
+        if ( this.rods.rank()>0 ) {
+            throw new IllegalArgumentException("data must be rank 0");
+        }
+        Units u= (Units)this.rods.property(QDataSet.UNITS);
+        if ( u!=null && u.getOffsetUnits()!=u ) {
+            throw new IllegalArgumentException("data must be dimensionless or a ratiometric datum.");
+        } else {
+            return this.rods.value()!=0;
+        }
     }
 
     @Override
@@ -529,19 +548,19 @@ public class PyQDataSet extends PyJavaInstance {
                 if ( step==null || step.equals(1) ) {
                     if ( start==null ) start= 0;
                     if ( stop==null ) stop= rods.length();
-                    if ( start.intValue()<0 ) start= rods.length() + start.intValue();
+                    if ( start.intValue()<0 ) start= rods.length() + start.intValue(); // support negative indices
                     if ( stop.intValue()<0 ) stop= rods.length() + stop.intValue();
                     return new PyQDataSet( rods.trim( start.intValue(), stop.intValue() ) );
                 } else {
                     TrimStrideWrapper wds= new TrimStrideWrapper(rods);
-                    wds.setTrim( 0, start, stop, step );
+                    wds.setTrim( 0, start, stop, step ); // supports negative indices
                     return new PyQDataSet(wds);
                 }
 
             } else if (arg0.isNumberType()) {
                 int idx = ((Number) arg0.__tojava__(Number.class)).intValue();
                 if ( idx<0 ) {
-                    idx= rods.length()+idx;
+                    idx= rods.length()+idx; // support negative indices
                 }
 
                 QDataSet sds= rods.slice(idx); //TODO: why is this not the writable dataset, or a copy of it?
@@ -553,7 +572,7 @@ public class PyQDataSet extends PyJavaInstance {
                 if ( slices.__len__()==2 && slices.__getitem__(1) instanceof PyInteger ) { // sf 3473406: optimize for ds[:,0] to use unbundle
                     if ( slices.__getitem__(0) instanceof PySlice ) {
                         int index= ((Number)slices.__getitem__(1).__tojava__( Number.class )).intValue();
-                        if ( index<0 ) index= rods.length(0) + index;
+                        if ( index<0 ) index= rods.length(0) + index; // support negative indices
                         QDataSet unb1= DataSetOps.unbundle( rods, index, false );
                         PySlice slice = (PySlice) slices.__getitem__(0);
                         if ( slice.start instanceof PyNone && slice.stop instanceof PyNone && slice.step instanceof PyNone ) {
@@ -573,52 +592,78 @@ public class PyQDataSet extends PyJavaInstance {
                 
                 Map<String,Object> bundleProps= new HashMap();
                 
+                QDataSet[] lists= new QDataSet[slices.__len__()];
+                boolean allLists= true;
+                boolean betterBeAllLists= false;
                 QubeDataSetIterator iter = new QubeDataSetIterator(rods);
                 for (int i = 0; i < slices.__len__(); i++) {
                     PyObject a = slices.__getitem__(i);
-                    QubeDataSetIterator.DimensionIteratorFactory fit;
+                    if ( ! ( a instanceof PyQDataSet ) && !( a instanceof PyInteger || a instanceof PyFloat ) ) {
+                        allLists= false;
+                    }
+                    QubeDataSetIterator.DimensionIteratorFactory fit= null;
                     if (a instanceof PySlice) {
                         PySlice slice = (PySlice) a;
                         Number start = (Number) getNumber(slice.start); // TODO: for the 0th index and step=1, native trim can be used.
                         Number stop = (Number)  getNumber(slice.stop);
                         Number step = (Number)  getNumber(slice.step);
-                        fit = new QubeDataSetIterator.StartStopStepIteratorFactory(start, stop, step);
+                        fit = new QubeDataSetIterator.StartStopStepIteratorFactory(start, stop, step); // supports negative indices
 
                     } else if ( a instanceof PyQDataSet ) {
                         Object o2 = a.__tojava__(QDataSet.class);
                         QDataSet that = (QDataSet) o2;
-                        if ( that.rank()==0 ) {
-                            int idx = (int)(that.value());
-                            fit = new QubeDataSetIterator.SingletonIteratorFactory(idx);
-                        } else {
-                            fit = new QubeDataSetIterator.IndexListIteratorFactory(that);
+                        switch (that.rank()) {
+                            case 0:
+                                int idx = (int)(that.value());
+                                fit = new QubeDataSetIterator.SingletonIteratorFactory(idx); // supports negative indices
+                                break;
+                            case 1:
+                                fit = new QubeDataSetIterator.IndexListIteratorFactory(that); // supports negative indices
+                                break;
+                            default:
+                                betterBeAllLists= true;
+                                break;
                         }
-                        
+                        lists[i]= ((PyQDataSet)a).rods;
                     } else if (a.isNumberType()) {
                         int idx = ((Number) getNumber( a )).intValue();
-                        fit = new QubeDataSetIterator.SingletonIteratorFactory(idx);
+                        fit = new QubeDataSetIterator.SingletonIteratorFactory(idx); // supports negative indices
                         if ( i==rods.rank()-1 ) {
                             QDataSet bds= (QDataSet) rods.property( "BUNDLE_"+i );
                             if ( bds!=null && rods.property( "DEPEND_"+i )==null ) { // https://sourceforge.net/p/autoplot/bugs/1478/
                                 DataSetUtil.sliceProperties( bds, idx, bundleProps );
                             }
                         }
+                        lists[i]= DataSetUtil.asDataSet( idx );
                     } else {
                         QDataSet that = coerce_ds(a);
-                        fit = new QubeDataSetIterator.IndexListIteratorFactory(that);
+                        fit = new QubeDataSetIterator.IndexListIteratorFactory(that); // supports negative indices
+                        lists[i]= DataSetUtil.asDataSet( that );
                     }
 
-                    iter.setIndexIteratorFactory(i, fit);
+                    if ( fit!=null ) iter.setIndexIteratorFactory(i, fit);
                 }
+                
+                if ( betterBeAllLists && !allLists ) {
+                    throw new IllegalArgumentException("index error, because all indeces must be lists.");
+                }
+                    
+                ArrayDataSet result;
+                if ( allLists && lists.length == rods.rank() ) {
+                    lists = checkIndexBundle( lists );
+                    result= DataSetOps.applyIndexAllLists( rods, lists ); // supports negative indices
+                    
+                } else {
 
-                DDataSet result= iter.createEmptyDs();
+                    result= iter.createEmptyDs();
 
-                QubeDataSetIterator resultIter = new QubeDataSetIterator(result);
-                while (iter.hasNext()) {
-                    iter.next();
-                    double d = iter.getValue(rods);
-                    resultIter.next();
-                    resultIter.putValue(result, d);
+                    QubeDataSetIterator resultIter = new QubeDataSetIterator(result);
+                    while (iter.hasNext()) {
+                        iter.next();
+                        double d = iter.getValue(rods);
+                        resultIter.next();
+                        resultIter.putValue(result, d);
+                    }
                 }
                 
                 DataSetUtil.copyDimensionProperties( rods, result );
@@ -655,9 +700,22 @@ public class PyQDataSet extends PyJavaInstance {
                         throw ex1;
                     }
                 }
+            } else if ( that.rank()==1 && SemanticOps.isRank1Bundle(that) ) {
+                logger.fine( "getitem with rank 1 bundle of indices" );
+                QDataSet sds= rods;
+                for ( int i=0; i<that.length(); i++ ) {
+                    sds= sds.slice( (int)that.value(i) );
+                }
+                return new PyQDataSet( sds );
+                
             } else if ( that.rank()==0 ) {
                 QDataSet sds= rods.slice( (int)that.value() ); //TODO: why is this not the writable dataset, or a copy of it?
                 return new PyQDataSet( sds );
+                
+            } else if ( that.rank()>1 ) {
+                WritableDataSet result= DataSetOps.applyIndexAllLists( rods, new QDataSet[] { that } );
+                DataSetUtil.copyDimensionProperties( rods, result );
+                return new PyQDataSet(result);
                 
             } else {
                 QubeDataSetIterator.DimensionIteratorFactory fit = new QubeDataSetIterator.IndexListIteratorFactory(that);
@@ -687,6 +745,21 @@ public class PyQDataSet extends PyJavaInstance {
         }
     }
 
+    /**
+     * returns null if the data does not have a bundle, otherwise the bundle is returned.
+     * @return 
+     */
+    private QDataSet getBundle() {
+        QDataSet bds;
+        if ( this.ds.rank()==1 ) {
+            bds = (QDataSet) this.ds.property(QDataSet.BUNDLE_0);
+        } else {
+            bds = (QDataSet) this.ds.property(QDataSet.BUNDLE_1);
+        }
+        return bds;
+        
+    }
+    
     /**
      * Assign the values to the indeces specified.  
      * Note, if the value has units and the PyQDataSet does not yet have units, 
@@ -729,191 +802,273 @@ public class PyQDataSet extends PyJavaInstance {
             QDataSet that = (QDataSet) o;
 
             if (ds.rank() > 1) {
-                iter = new IndexListDataSetIterator(that);
+                if ( SemanticOps.isRank1Bundle(that) ) {
+                    for ( int k=0; k<that.length(); k++ ) {
+                        QubeDataSetIterator.DimensionIteratorFactory fit = new QubeDataSetIterator.IndexListIteratorFactory(that.slice(k));
+                        ((QubeDataSetIterator) iter).setIndexIteratorFactory(k, fit);
+                    }
+                } else {
+                    if ( that.rank()==1 ) {
+                        QubeDataSetIterator.DimensionIteratorFactory fit = new QubeDataSetIterator.IndexListIteratorFactory(that);
+                        ((QubeDataSetIterator) iter).setIndexIteratorFactory(0, fit);
+                    } else {
+                        iter = new IndexListDataSetIterator(that);
+                    }
+                }
             } else {
                 QubeDataSetIterator.DimensionIteratorFactory fit = new QubeDataSetIterator.IndexListIteratorFactory(that);
                 ((QubeDataSetIterator) iter).setIndexIteratorFactory(0, fit);
             }
 
-        } else {
+        } else { // arg0.isSequenceType
             PySequence slices = (PySequence) arg0;
             QDataSet[] lists= new QDataSet[slices.__len__()];
+            int maxRank=0;
             boolean allLists= true;
-			int[] qubedims= DataSetUtil.qubeDims(ds);
+            int[] qubedims= DataSetUtil.qubeDims(ds);
             for (int i = 0; i < slices.__len__(); i++) {
                 PyObject a = slices.__getitem__(i);
-                if ( ! ( a instanceof PyQDataSet ) && !( a instanceof PyInteger || a instanceof PyFloat ) ) {
+                if (!(a instanceof PyQDataSet) && !(a instanceof PyInteger || a instanceof PyFloat)) {
                     allLists= false;
-                } else if ( a instanceof PyInteger || a instanceof PyFloat ) {
-					int idx;
-					if ( a instanceof PyInteger ) {
-						idx= ((PyInteger)a).getValue();
-					} else {
-						idx= (int)( ((PyFloat)a).getValue() );
-					}
-					if ( idx<0 ) {
-						if ( i==0 || qubedims!=null ) {
-							idx= ( i==0 ) ? ( ds.length()+idx ) : ( qubedims[i]+idx );
-						}
-					}
-                    lists[i]= DataSetUtil.asDataSet( idx );
+                } else if (a instanceof PyInteger || a instanceof PyFloat) {
+                    int idx;
+                    if (a instanceof PyInteger) {
+                        idx = ((PyInteger) a).getValue();
+                    } else {
+                        idx = (int) (((PyFloat) a).getValue());
+                    }
+                    if (idx < 0) {
+                        if (i == 0 || qubedims != null) {
+                            idx = (i == 0) ? (ds.length() + idx) : (qubedims[i] + idx);
+                        }
+                    }
+                    lists[i] = DataSetUtil.asDataSet(idx);
                 } else {
-                    lists[i]= ((PyQDataSet)a).rods;
+                    QDataSet rods1= ((PyQDataSet) a).rods;
+                    lists[i] = rods1;
+                    if ( rods1.rank()>maxRank ) maxRank=rods1.rank();
                 }
             }
-            if ( allLists ) {
-                QDataSet val= coerceDsInternal(  arg1 );
-                
-                QDataSet[] ll= new QDataSet[2];
-                ll[0]= lists[0];
-                for ( int i=1; i<slices.__len__(); i++) {
-                    ll[1]= lists[i];
-                    CoerceUtil.coerce( ll[0], ll[1], false, ll );
-                    lists[0]= ll[0];
-                    lists[i]= ll[1];
+            if (allLists) {
+                QDataSet val = coerceDsInternal(arg1);
+                lists = checkIndexBundle(lists);
+                if (units == null) { // see repeat code below.  Return requires repetition.
+                    logger.fine("resetting units based on values assigned");
+                    Units u = SemanticOps.getUnits(val);
+                    if ( u!=Units.dimensionless ) {
+                        if ( getBundle()==null ) {
+                            this.ds.putProperty(QDataSet.UNITS, u);
+                            units = u;
+                        } else {
+                            MutablePropertyDataSet bds= (MutablePropertyDataSet) getBundle();
+                            if ( bds!=null && ds.rank()==2 ) {
+                                int column= (int)lists[1].value() ;
+                                Units columnUnits= (Units)bds.property( QDataSet.UNITS, column );
+                                if ( columnUnits==null ) {
+                                    bds.putProperty( QDataSet.UNITS, column, u );
+                                }
+                            }
+                        }
+                    }
                 }
-                for ( int i=1; i<slices.__len__(); i++) {
-                    ll[1]= lists[i];
-                    CoerceUtil.coerce( ll[0], ll[1], false, ll );
-                    lists[0]= ll[0];
-                    lists[i]= ll[1];
-                }
-                CoerceUtil.coerce( ll[0], val, false, ll );
-                val= ll[1];
-                QubeDataSetIterator it = new QubeDataSetIterator( val );
                 
-                if ( lists[0].rank()==0 ) { // all datasets in lists[] will have the same rank.
-                    switch (ds.rank()) {
+                if ( maxRank==0 ) {
+                    switch ( ds.rank() ) {
+                        case 0:
+                            ds.putValue(val.value());
+                            break;
                         case 1:
-                            it.next();
-                            ds.putValue( (int)lists[0].value(), it.getValue(val));
+                            ds.putValue(((int)lists[0].value()),val.value());
                             break;
                         case 2:
-                            it.next();
-                            ds.putValue( (int)lists[0].value(),
-                                    (int)lists[1].value(), it.getValue(val));
+                            ds.putValue(((int)lists[0].value()),((int)lists[1].value()),val.value());
                             break;
                         case 3:
-                            it.next();
-                            ds.putValue( (int)lists[0].value(),
-                                    (int)lists[1].value(),
-                                    (int)lists[2].value(), it.getValue(val));
+                            ds.putValue(((int)lists[0].value()),((int)lists[1].value()),((int)lists[2].value()),val.value());
                             break;
                         case 4:
-                            it.next();
-                            ds.putValue( (int)lists[0].value(),
-                                    (int)lists[1].value(),
-                                    (int)lists[2].value(),
-                                    (int)lists[3].value(), it.getValue(val));
-                            break;
-                        default:
+                            ds.putValue(((int)lists[0].value()),
+                                    ((int)lists[1].value()),
+                                    ((int)lists[2].value()),
+                                    ((int)lists[3].value()),val.value());
                             break;
                     }
                 } else {
-                    int n= lists[0].length();
-                    switch (ds.rank()) {
-                        case 1:
-                            for ( int i=0;i<n;i++ ) {
-                                it.next();
-                                ds.putValue( (int)lists[0].value(i), it.getValue(val));
-                            }   
-                            break;
-                        case 2:
-                            for ( int i=0;i<n;i++ ) {
-                                it.next();
-                                ds.putValue( (int)lists[0].value(i),
-                                        (int)lists[1].value(i), it.getValue(val));
-                            }   
-                            break;
-                        case 3:
-                            for ( int i=0;i<n;i++ ) {
-                                it.next();
-                                ds.putValue( (int)lists[0].value(i),
-                                        (int)lists[1].value(i),
-                                        (int)lists[2].value(i), it.getValue(val));
-                            }   
-                            break;
-                        case 4:
-                            for ( int i=0;i<n;i++ ) {
-                                it.next();
-                                ds.putValue( (int)lists[0].value(i),
-                                        (int)lists[1].value(i),
-                                        (int)lists[2].value(i),
-                                        (int)lists[3].value(i), it.getValue(val));
-                            }   
-                            break;
-                        default:
-                            break;
-                    }
+                    setItemAllLists( ds, lists, val);
                 }
+
                 return;
+
             } else {
-				int[] qubeDims= DataSetUtil.qubeDims(ds);
-				for (int i = 0; i < slices.__len__(); i++) {
-					PyObject a = slices.__getitem__(i);
-					QubeDataSetIterator.DimensionIteratorFactory fit;
-					if (a instanceof PySlice) {
-						PySlice slice = (PySlice) a; // TODO: why not the same as 75 lines prior?
-						Integer start = (Integer) slice.start.__tojava__(Integer.class);
-						Integer stop = (Integer) slice.stop.__tojava__(Integer.class);
-						Integer step = (Integer) slice.step.__tojava__(Integer.class);
-						fit = new QubeDataSetIterator.StartStopStepIteratorFactory(start, stop, step);
+                int[] qubeDims = DataSetUtil.qubeDims(ds);
+                for (int i = 0; i < slices.__len__(); i++) {
+                    PyObject a = slices.__getitem__(i);
+                    QubeDataSetIterator.DimensionIteratorFactory fit;
+                    if (a instanceof PySlice) {
+                        PySlice slice = (PySlice) a; // TODO: why not the same as 75 lines prior?
+                        Integer start = (Integer) slice.start.__tojava__(Integer.class);
+                        Integer stop = (Integer) slice.stop.__tojava__(Integer.class);
+                        Integer step = (Integer) slice.step.__tojava__(Integer.class);
+                        fit = new QubeDataSetIterator.StartStopStepIteratorFactory(start, stop, step);
 
-					} else if ( a.isNumberType() && ! ( a instanceof PyQDataSet ) ) {
-						if ( a instanceof PyFloat ) throw new IllegalArgumentException("float used to index array");
-						int idx = (Integer) a.__tojava__(Integer.class);
-						if ( idx<0 ) {
-							if ( i==0 || qubeDims!=null ) {
-								idx= i==0 ? ( ds.length()+idx ) : ( qubeDims[i]+idx );
-							} else {
-								throw new IllegalArgumentException("negative index not supported for non-qube.");
-							}
-						}
-						fit = new QubeDataSetIterator.SingletonIteratorFactory(idx);
-					} else { 
-						QDataSet that = coerce_ds(a);
-						fit = new QubeDataSetIterator.IndexListIteratorFactory(that);
-					}
+                    } else if (a.isNumberType() && !(a instanceof PyQDataSet)) {
+                        if (a instanceof PyFloat) {
+                            throw new IllegalArgumentException("float used to index array");
+                        }
+                        int idx = (Integer) a.__tojava__(Integer.class);
+                        if (idx < 0) {
+                            if (i == 0 || qubeDims != null) {
+                                idx = i == 0 ? (ds.length() + idx) : (qubeDims[i] + idx);
+                            } else {
+                                throw new IllegalArgumentException("negative index not supported for non-qube.");
+                            }
+                        }
+                        fit = new QubeDataSetIterator.SingletonIteratorFactory(idx);
+                    } else {
+                        QDataSet that = coerce_ds(a);
+                        if (that.rank() == 0) {
+                            fit = new QubeDataSetIterator.SingletonIteratorFactory((int) that.value());
+                        } else {
+                            fit = new QubeDataSetIterator.IndexListIteratorFactory(that);
+                        }
+                    }
 
-					((QubeDataSetIterator) iter).setIndexIteratorFactory(i, fit);
-				}
-			}
+                    ((QubeDataSetIterator) iter).setIndexIteratorFactory(i, fit);
+                }
+            }
         }
 
         QDataSet val = coerceDsInternal(arg1);
-        if ( units==null ) {
+        if ( units==null ) { // see repeat code above.
             logger.fine("resetting units based on values assigned");
             Units u= SemanticOps.getUnits(val);
-            if ( u!=Units.dimensionless ) this.ds.putProperty(QDataSet.UNITS,u);
-            units= u;
+            if ( getBundle()==null && u!=Units.dimensionless ) {
+                this.ds.putProperty(QDataSet.UNITS,u);
+                units= u;
+            }
         }
-
-        UnitsConverter uc;
-        try {
-            uc= SemanticOps.getUnits(val).getConverter(units);
-        } catch ( InconvertibleUnitsException ex ) {
-            uc= UnitsConverter.IDENTITY;
+        
+        // figure out what the fill value will be.
+        Number fill= (Number)val.property(QDataSet.FILL_VALUE);
+        if ( fill!=null ) {
+            if ( this.ds.property(QDataSet.FILL_VALUE)!=null ) {
+                fill= (Number)this.ds.property(QDataSet.FILL_VALUE);
+            }
+        } else {
+            fill= (Number)this.ds.property(QDataSet.FILL_VALUE);
         }
+        
+        boolean resultHasFill= false;
+        if ( fill==null ) {
+            fill= -1e38;
+        }
+        double dfill= fill.doubleValue();
                 
         // see org.das2.qds.ops.CoerceUtil, make version that makes iterators.
         if ( val.rank()==0 ) {
-            double d = uc.convert(val.value());
-            while (iter.hasNext()) {
-                iter.next();
-                iter.putValue(ds, d);
+            if ( Ops.valid(val).value()==0 ) {
+                while (iter.hasNext()) {
+                    iter.next();
+                    iter.putValue(ds, dfill );
+                    resultHasFill= true;
+                }
+            } else {
+                while (iter.hasNext()) {
+                    iter.next();
+                    iter.putRank0Value(ds, val );
+                }
             }
         } else if ( val.rank()!=iter.rank() ) {
             throw new IllegalArgumentException("not supported, couldn't reconcile ranks in set[" + val + "]=" + iter );
         } else {
+            QDataSet wds= DataSetUtil.weightsDataSet(val);
             QubeDataSetIterator it = new QubeDataSetIterator(val);
-            while (it.hasNext()) {
-                it.next();
-                double d = uc.convert(it.getValue(val));
-                iter.next();
-                iter.putValue(ds, d);
+            if ( SemanticOps.isBundle(val) ) {
+                while (it.hasNext()) {
+                    it.next();
+                    if ( !iter.hasNext() ) throw new IllegalArgumentException("assigned dataset has too many elements");
+                    iter.next();
+                    double w = it.getValue(wds);
+                    if ( w==0 ) {
+                        iter.putValue(ds, dfill);
+                        resultHasFill= true;
+                    } else {
+                        iter.putRank0Value( ds, it.getRank0Value(val) );
+                    }
+                }
+            } else {
+                UnitsConverter uc;
+                if ( units==null ) { //TODO: how did this work before?
+                    uc= UnitsConverter.IDENTITY;
+                } else {
+                    try {
+                        uc= SemanticOps.getUnits(val).getConverter(units);
+                    } catch ( InconvertibleUnitsException ex ) {
+                        uc= UnitsConverter.IDENTITY;
+                    }       
+                }
+                while (it.hasNext()) {
+                    it.next();
+                    if ( !iter.hasNext() ) throw new IllegalArgumentException("assigned dataset has too many elements");
+                    iter.next();
+                    double w = it.getValue(wds);
+                    if ( w==0 ) {
+                        double d = dfill;
+                        iter.putValue(ds, d);
+                        resultHasFill= true;
+                    } else {
+                        double d = uc.convert(it.getValue(val));
+                        iter.putValue(ds, d);
+                    }  
+                }
+            }
+            if ( iter.hasNext() ) {
+                iter.next(); // allow off-by-one so that assignment of diffs is allowed.
+                if ( iter.hasNext() ) {
+                    throw new IllegalArgumentException("assigned dataset has too few elements");
+                } else {
+                    logger.log(Level.FINE, "allowing suspect dataset assignment, where there is an extra element which was not assigned: {0}", iter);
+                }
+                
+            }
+        }
+        
+        if ( resultHasFill ) {
+            Number tfill= (Number)this.ds.property(QDataSet.FILL_VALUE);
+            if ( tfill==null ) {
+                logger.fine("add FILL_VALUE to dataset");
+                this.ds.putProperty( QDataSet.FILL_VALUE, fill );
             }
         }
                 
+    }
+
+    /**
+     * the output of the where command of a rank N dataset is a rank 2 dataset
+     * idx[M,N] where M cases where the condition was true.  This means that
+     * the first dataset might be a bundle of indeces, and here we break them
+     * out to N datasets.
+     * @see https://github.com/autoplot/dev/blob/master/bugs/2134/indexWithRank2_case5.jy
+     * @param lists
+     * @return 
+     */
+    private QDataSet[] checkIndexBundle(QDataSet[] lists) {
+        if ( lists.length<rods.rank() ) {
+            if ( lists[0].rank()==2 && SemanticOps.isLegacyBundle(lists[0]) ) { // output of "where" command
+                logger.log(Level.FINER, "bundle of indices found: {0}", lists[0]);
+                QDataSet[] newLists= new QDataSet[lists[0].length(0)+lists.length-1];
+                for ( int j=0; j<lists[0].length(0); j++ ) {
+                    newLists[j]= Ops.unbundle(lists[0],j);
+                }
+                int ick=1;
+                for ( int j=lists[0].length(0); j<newLists.length; j++ ) {
+                    newLists[j]= lists[ ick ];
+                    ick++;
+                }
+                lists= newLists;
+            }
+        }
+        return lists;
     }
     
     /**
@@ -983,7 +1138,9 @@ public class PyQDataSet extends PyJavaInstance {
         } 
         
         value= convertPropertyValue( rods, prop.toString(), value );
-
+        if ( sprop.equals(QDataSet.UNITS) ) {
+            this.units= (Units)value;
+        }
         mpds.putProperty(sprop, value);
         
     }
@@ -1056,7 +1213,16 @@ public class PyQDataSet extends PyJavaInstance {
                 
             } else if (arg0 instanceof PyString ) {
                 try {
-                    return DataSetUtil.asDataSet(DatumUtil.parse(arg0.toString()));
+                    if ( units!=null ) {
+                        if ( units instanceof EnumerationUnits ) {
+                            return DataSetUtil.asDataSet(((EnumerationUnits)units).createDatum(arg0.toString()));
+                        } else {
+                            // do not attempt to interpret this with is dataset's units because it might be intentionally dimensionless.
+                            return DataSetUtil.asDataSet(DatumUtil.parse(arg0.toString()));
+                        }  
+                    } else {
+                        return DataSetUtil.asDataSet(DatumUtil.parse(arg0.toString()));
+                    }
                 } catch (ParseException ex) {
                     throw new IllegalArgumentException(ex);
                 }
@@ -1077,11 +1243,6 @@ public class PyQDataSet extends PyJavaInstance {
 
     }
 
-    public QDataSet gt( Object o ) {
-        logger.fine(String.valueOf(o));
-        return null;
-    }
-
     public PyQDataSet append( PyObject arg0 ) {
         Object o = arg0.__tojava__(QDataSet.class);
         DDataSet result;
@@ -1090,9 +1251,11 @@ public class PyQDataSet extends PyJavaInstance {
                 double d = (Double) arg0.__tojava__(Double.class);
                 result= (DDataSet) ArrayDataSet.copy( double.class, rods);
                 result= (DDataSet) ArrayDataSet.append( result, DDataSet.wrap( new double[] { d } ) );
-            } else if (arg0.isSequenceType()) {
+            } else if (arg0 instanceof PyList) {
                 result= (DDataSet) ArrayDataSet.copy( double.class, rods );
                 result= (DDataSet) ArrayDataSet.append( result, DDataSet.copy( PyQDataSetAdapter.adaptList((PyList) arg0) ) );
+            } else if (arg0.isSequenceType()) {
+                throw Py.TypeError("unable to coerce sequence: " + arg0);
             } else {
                 throw Py.TypeError("unable to coerce: " + arg0);
             }
@@ -1135,6 +1298,11 @@ public class PyQDataSet extends PyJavaInstance {
         };
     }
 
+    /**
+     * This is what does the magical coersion, see https://sourceforge.net/p/autoplot/bugs/1861/
+     * @param c the class needed.
+     * @return instance of the class if available.
+     */
     @Override
     public Object __tojava__(Class c) {
         if ( c.isArray() && c.getComponentType()==double.class && rods.rank()==1 ) {
@@ -1149,6 +1317,25 @@ public class PyQDataSet extends PyJavaInstance {
             return mpds;
         } else if ( c.isAssignableFrom(WritableDataSet.class) ) {
             return ds;
+        } else if ( rods.rank()==0 ) {
+           // logger.fine("this is not supported because the double version would be used where a dataset would work.");
+            // See sftp://nudnik.physics.uiowa.edu/home/jbf/project/autoplot/tests/1861/demo1861UsesDoubleNotQDataSet.jy
+            //Datum datum= DataSetUtil.asDatum(rods);
+//            if ( false && datum.getUnits()==Units.dimensionless ) {
+//                if ( c==double.class ) {
+//                    return datum.value();
+//                } else if ( c==Double.class ) {
+//                    return datum.value();
+//                } else if ( c==float.class ) {
+//                    return (float)datum.value();
+//                } else if ( c==Float.class ) {
+//                    return (float)datum.value();
+//                } else if ( c==Number.class ) {
+//                    return datum.value();
+//                }
+//            } else {
+              //  logger.fine("data must be dimensionless to be used as a double.");
+            //}
         }
         return super.__tojava__(c);
     }
@@ -1164,4 +1351,185 @@ public class PyQDataSet extends PyJavaInstance {
         return this.rods.rank()==0;
     }
 
+    private void putValue( WritableDataSet ds, int i, double v, Units u ) {
+        Units dsu= this.units!=null ? this.units : SemanticOps.getUnits(ds.slice(i));
+        UnitsConverter uc= u.getConverter( dsu );
+        ds.putValue( i, uc.convert(v) );
+    }
+
+    private void putValue( WritableDataSet ds, int i, int j, double v, Units u ) {
+        Units dsu= this.units!=null ? this.units : SemanticOps.getUnits(ds.slice(i).slice(j));
+        UnitsConverter uc= u.getConverter( dsu );
+        ds.putValue( i, j, uc.convert(v) );
+    }
+    
+    private void putValue( WritableDataSet ds, int i, int j, int k, double v, Units u ) {
+        Units dsu= this.units!=null ? this.units : SemanticOps.getUnits(ds.slice(i).slice(j).slice(k));
+        UnitsConverter uc= u.getConverter( dsu );
+        ds.putValue( i, j, k, uc.convert(v) );
+    }
+    
+    private void putValue( WritableDataSet ds, int i, int j, int k, int l, double v, Units u ) {
+        Units dsu= this.units!=null ? this.units : SemanticOps.getUnits(ds.slice(i).slice(j).slice(k).slice(l) );
+        UnitsConverter uc= u.getConverter( dsu );
+        ds.putValue( i, j, k, l, uc.convert(v) );
+    }
+
+    /**
+     * handle special case where rank 1 datasets are used to index a rank N array.
+     * @param lists datasets of rank 0 or rank 1
+     * @param val the value (or values) to assign.
+     * @return the array extracted.
+     */
+    private void setItemAllLists( WritableDataSet ds, QDataSet[] lists, QDataSet val ) {
+                
+        QDataSet[] ll= new QDataSet[2];
+        ll[0]= lists[0];
+        for ( int i=1; i<lists.length; i++) {
+            ll[1]= lists[i];
+            CoerceUtil.coerce( ll[0], ll[1], false, ll );
+            lists[0]= ll[0];
+            lists[i]= ll[1];
+        }
+        for ( int i=1; i<lists.length; i++) {  // This repeat code is intentional, I believe in the case where coerce happens later.
+            ll[1]= lists[i];
+            CoerceUtil.coerce( ll[0], ll[1], false, ll );
+            lists[0]= ll[0];
+            lists[i]= ll[1];
+        }
+        CoerceUtil.coerce( ll[0], val, false, ll );
+        val= ll[1];
+        
+        Units valUnits= SemanticOps.getUnits(val);
+                
+        QubeDataSetIterator it = new QubeDataSetIterator( val );
+                
+        switch (lists[0].rank()) {  // all datasets in lists[] will have the same rank.
+            case 0:
+                switch (ds.rank()) {
+                    case 1:
+                        it.next();
+                        putValue( ds, (int)lists[0].value(), it.getValue(val), valUnits );
+                        break;
+                    case 2:
+                        it.next();
+                        putValue( ds, (int)lists[0].value(), (int)lists[1].value(), it.getValue(val), valUnits );
+                        break;
+                    case 3: 
+                        it.next();
+                        putValue( ds,
+                            (int)lists[0].value(),
+                            (int)lists[1].value(),
+                            (int)lists[2].value(), it.getValue(val), valUnits );
+                        break;
+                    case 4:
+                        it.next();
+                        putValue(ds, 
+                            (int)lists[0].value(),
+                            (int)lists[1].value(),
+                            (int)lists[2].value(),
+                            (int)lists[3].value(), it.getValue(val), valUnits );
+                        break;
+                    default:
+                        break;
+                }   break;
+            case 1:
+                int n= lists[0].length();
+                switch (ds.rank()) {
+                    case 1:
+                        for ( int i=0;i<n;i++ ) {
+                            it.next();
+                            putValue( ds, (int)lists[0].value(i), it.getValue(val), valUnits );
+                        }
+                        break;
+                    case 2:
+                        for ( int i=0;i<n;i++ ) {
+                            it.next();
+                            putValue( ds, (int)lists[0].value(i), (int)lists[1].value(i), it.getValue(val), valUnits );
+                        }
+                        break;
+                    case 3:
+                        for ( int i=0;i<n;i++ ) {
+                            it.next();
+                            putValue( ds, 
+                                (int)lists[0].value(i),
+                                (int)lists[1].value(i),
+                                (int)lists[2].value(i), it.getValue(val), valUnits );
+                        }
+                        break;
+                    case 4:
+                        for ( int i=0;i<n;i++ ) {
+                            it.next();
+                            putValue( ds,
+                                (int)lists[0].value(i),
+                                (int)lists[1].value(i),
+                                (int)lists[2].value(i),
+                                (int)lists[3].value(i), it.getValue(val), valUnits );
+                        }
+                        break;
+                    default:
+                        break;
+                }   break;
+            default:
+                QubeDataSetIterator iter= new QubeDataSetIterator(lists[0]);
+                switch ( ds.rank() ) {
+                    case 1:
+                        while ( it.hasNext() ) {
+                            it.next();
+                            iter.next();
+                            putValue( ds, (int)iter.getValue( lists[0] ), it.getValue(val), valUnits );
+                        }
+                        break;
+                    case 2:
+                        while ( it.hasNext() ) {
+                            it.next();
+                            iter.next();
+                            putValue( ds, 
+                                (int)iter.getValue( lists[0] ), 
+                                (int)iter.getValue( lists[1] ), it.getValue(val), valUnits );
+                        }
+                        break;
+                    case 3:
+                        while ( it.hasNext() ) {
+                            it.next();
+                            iter.next();
+                            putValue( ds,
+                                (int)iter.getValue( lists[0] ),
+                                (int)iter.getValue( lists[1] ), 
+                                (int)iter.getValue( lists[2] ), it.getValue(val), valUnits );
+                        }
+                        break;
+                    case 4:
+                        while ( it.hasNext() ) {
+                            it.next();
+                            iter.next();
+                            putValue( ds,
+                                (int)iter.getValue(lists[0]), 
+                                (int)iter.getValue(lists[1]),
+                                (int)iter.getValue(lists[2]), 
+                                (int)iter.getValue(lists[3]), it.getValue(val), valUnits );
+                        }
+                        break;
+                }   break;
+        }
+        
+    }
+
+    @Override
+    public int hashCode() {
+        return this.ds.hashCode();
+    }
+        
+    @Override
+    public boolean equals(Object ob_other) {
+        if ( ob_other instanceof PyQDataSet ) {
+            return equals( (PyQDataSet)ob_other );
+        } else {
+            return super.equals(ob_other);
+        }
+    }
+
+    public boolean equals(PyQDataSet ob_other) {
+        return this.ds.equals( ob_other.ds );
+    }    
 }

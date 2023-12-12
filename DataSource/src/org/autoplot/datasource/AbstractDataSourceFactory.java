@@ -28,12 +28,22 @@ public abstract class AbstractDataSourceFactory implements DataSourceFactory {
     }
 
     @Override
-    public boolean reject(String surl, List<String> problems, ProgressMonitor mon) {
+    public boolean reject(String suri, List<String> problems, ProgressMonitor mon) {
         return false;
     }
     
     @Override
     public boolean supportsDiscovery() {
         return false;
+    }
+    
+    @Override
+    public boolean isFileResource() {
+        return true;
+    }
+    
+    @Override
+    public String getDescription() {
+        return "";
     }
 }

@@ -18,6 +18,9 @@ import org.das2.qds.MutablePropertyDataSet;
 import org.das2.qds.QDataSet;
 import org.das2.qds.ops.Ops;
 import org.autoplot.jythonsupport.Util;
+import org.das2.datum.Datum;
+import org.das2.datum.DatumUtil;
+import org.das2.qds.SemanticOps;
 
 
 /**
@@ -50,12 +53,13 @@ public class Test014 {
 
         
         final QDataSet cadence= DataSetUtil.guessCadenceNew( dep0, ds );
-        
+
         
         t= (System.currentTimeMillis()-t0)/1000.;
         System.err.printf( "Guess cadence in %9.3f seconds (%s): %s\n", t, label, uri );
         String type= cadence==null ? null : (String) cadence.property(QDataSet.SCALE_TYPE);
-        System.err.printf( "cadence= %s (scale type=%s): \n", String.valueOf(cadence), type  );
+        String sunits= cadence==null ? null : String.valueOf( SemanticOps.getUnits(cadence) );
+        System.err.printf( "cadence= %s (scale type=%s) (units=%s): \n", String.valueOf(cadence), type, sunits );
 
         QDataSet diff;
         if ( ds.rank()==1 && dep0.rank()==1 ) { // ftp://virbo.org/tmp/poes_n17_20041228.cdf?P1_90[0:300] has every other value=fill.
@@ -125,6 +129,15 @@ public class Test014 {
     public static void main(String[] args) throws InterruptedException, IOException, Exception {
         try {
 
+            System.err.println("== datum formatting experiments ==");
+            Datum d= DatumUtil.parse("150.00 ms");
+            System.err.println("as millisecond unit: "+ d);
+            d= Units.nanoseconds.createDatum(1.50e8);
+            System.err.println("as nanoseconds unit: "+ d);
+            System.err.println("with asOrderOneUnits call: "+ DatumUtil.asOrderOneUnits(d));
+            System.err.println("== done, datum formatting experiments, thanks ==");
+            
+            
             getDocumentModel().getOptions().setAutolayout(false);
             getDocumentModel().getCanvases(0).getMarginColumn().setRight("100%-10em");
 
@@ -135,9 +148,9 @@ public class Test014 {
             ds= Util.getDataSet( "file:///home/jbf/ct/hudson/data/qds/cadence.qds" );
             doTest( 9, "file:///home/jbf/ct/hudson/data/qds/cadence.qds", ds );
 
-            ds= Util.getDataSet( "vap+cdf:file:///home/jbf/ct/lanl/hudson/LANL_LANL-97A_H3_SOPA_20060505_V01.cdf?FEDU" );
+            ds= Util.getDataSet( "vap+cdf:file:///home/jbf/ct/jenkins/data/cdf/LANL_LANL-97A_H3_SOPA_20060505_V01.cdf?FEDU" );
             ds= (QDataSet) ds.property( QDataSet.DEPEND_1 );
-            doTest( 6, "depend 1 of vap+cdf:file:///home/jbf/ct/lanl/hudson/LANL_LANL-97A_H3_SOPA_20060505_V01.cdf?FEDU", ds );
+            doTest( 6, "depend 1 of vap+cdf:file:///home/jbf/ct/jenkins/data/cdf/LANL_LANL-97A_H3_SOPA_20060505_V01.cdf?FEDU", ds );
 
             ds= Util.getDataSet( "vap+cdf:http://cdaweb.gsfc.nasa.gov/istp_public/data/polar/hydra/hyd_h0/2000/po_h0_hyd_20000109_v01.cdf?ELECTRON_DIFFERENTIAL_ENERGY_FLUX" );
             ds= DataSetOps.slice0(ds, 10);
@@ -157,6 +170,10 @@ public class Test014 {
             doTest( 8, "file:/home/jbf/ct/hudson/data.backup/dat/apl/jon/electron_events_safings_and_peaks.csv?column=peak_rate&depend0=begin_UTC", null );
 
             doTest( 10, "file:/home/jbf/ct/hudson/data.backup/cdf/mms1_fpi_brst_l2_dis-dist_20160111063934_v3.1.0.cdf?mms1_dis_dist_brst", null );
+            
+            doTest( 11, "file:/home/jbf/ct/hudson/data/d2s/testStream.d2s",null); // See /home/jbf/project/das2/u/larry/20180726/
+            doTest( 12, "file:/home/jbf/ct/hudson/data/test014/test014_012.qds",null); 
+            
             System.exit(0);  // TODO: something is firing up the event thread
             
         } catch ( Exception ex) {

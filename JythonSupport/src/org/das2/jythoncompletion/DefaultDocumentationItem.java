@@ -1,10 +1,7 @@
 /*
- * UserDocumentationItem.java
+ * DefaultDocumentationItem.java
  *
  * Created on August 3, 2006, 10:27 PM
- *
- * To change this template, choose Tools | Template Manager
- * and open the template in the editor.
  */
 package org.das2.jythoncompletion;
 
@@ -26,7 +23,6 @@ public class DefaultDocumentationItem implements CompletionDocumentation {
     String link;
     String text;
 
-    /** Creates a new instance of UserDocumentationItem */
     public DefaultDocumentationItem(String link) {
         this( link, null );
     }
@@ -82,7 +78,12 @@ public class DefaultDocumentationItem implements CompletionDocumentation {
         }
         if (link.contains("://")) {
             try {
-                return new URL(link);
+                //experiments with refactoring Javadoc to work in popup window.
+                //if ( link.contains("http://docs.oracle.com/javase/8/docs/api/java/awt/Color.html#Color-float-float-float-") ) {
+                //    return new URL("http://jfaden.net/~jbf/autoplot/tmp/Color.html#Color-float-float-float-");
+                //} else {
+                    return new URL(link);
+                //}
             } catch (MalformedURLException ex) {
                 logger.severe(ex.toString());
                 return null;
@@ -92,8 +93,24 @@ public class DefaultDocumentationItem implements CompletionDocumentation {
             int i= link.indexOf("#");
             if ( i==-1 ){
                 url= DefaultDocumentationItem.class.getResource(link);
+                if ( url==null ) {
+                    try {
+                        // second chance to use a local file:... reference
+                        url= new URL(link);
+                    } catch (MalformedURLException ex) {
+                        logger.log(Level.SEVERE, null, ex);
+                    }
+                }
             } else {
                 url= DefaultDocumentationItem.class.getResource(link.substring(0,i));
+                if ( url==null ) {
+                    try {
+                        // second chance to use a local file:... reference
+                        url= new URL(link.substring(0,i));
+                    } catch (MalformedURLException ex) {
+                        logger.log(Level.SEVERE, null, ex);
+                    }
+                }
                 try {
                     url = new URL(url, link.substring(i) );
                 } catch (MalformedURLException ex) {

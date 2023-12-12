@@ -18,8 +18,12 @@ import java.net.URISyntaxException;
 import java.net.URL;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import org.das2.util.LoggerManager;
@@ -52,8 +56,58 @@ public class NetCDFDataSourceFactory extends AbstractDataSourceFactory implement
     public NetCDFDataSourceFactory() {
     }
     
+    @Override
     public DataSource getDataSource(URI uri) throws IOException {
         return new NetCDFDataSource( uri );
+    }
+    
+    public Map<String,CompletionContext> getParams( URI ncFile, ProgressMonitor mon ) throws IOException {
+        File file= DataSetURI.getFile( ncFile, mon );
+
+        NetcdfDataset dataset= getDataSet( file.toURI().toURL() );
+        List<Variable> vars= (List<Variable>)dataset.getVariables();
+
+        LinkedHashMap<String,CompletionContext> result= new LinkedHashMap<>();
+        for ( int j=0; j<vars.size();j++ ) {
+            Variable v= vars.get(j);
+            if ( v.getDimensions().isEmpty() ) continue;
+            if ( v instanceof Structure ) {
+                for ( Variable v2: ((Structure) v).getVariables() ) {
+                    if ( !v2.getDataType().isNumeric() ) continue;
+                    StringBuilder description= new StringBuilder( v2.getName()+"[" );
+                    for ( int k=0; k<v2.getDimensions().size(); k++ ) {
+                        Dimension d= v2.getDimension(k);
+                        if ( k>0 ) description.append(",");
+                        try {
+                            String n= d.getName();
+                            if ( n!=null && !n.equals(v2.getName()) ) {
+                                description.append(d.getName()).append("=");
+                            }
+                            description.append(d.getLength());
+                        } catch ( NullPointerException ex ) {
+                            throw ex;
+                        }
+                    }
+                    description.append("]");
+
+                    ///parameters.put( v2.getName(), description.toString() );
+                    result.put( v2.getName(), new CompletionContext( 
+                        CompletionContext.CONTEXT_PARAMETER_NAME,
+                        v2.getName(), this, "arg_0",
+                        v2.getNameAndDimensions(), v2.getDescription(), true ) );
+                }
+            } else {
+                boolean isFormattedTime= v.getDataType()==DataType.CHAR && v.getRank()==2 && v.getShape(1)>=14 && v.getShape(1)<=30;
+                if ( !isFormattedTime && !v.getDataType().isNumeric() ) continue;
+                result.put( v.getName(), new CompletionContext(
+                        CompletionContext.CONTEXT_PARAMETER_NAME,
+                        v.getName(), this, "arg_0",
+                        v.getNameAndDimensions(), v.getDescription(), true ) );
+            }
+        }
+        dataset.close();
+        return result;
+
     }
     
     @Override
@@ -61,52 +115,17 @@ public class NetCDFDataSourceFactory extends AbstractDataSourceFactory implement
         List<CompletionContext> result= new ArrayList<>();
         
         if ( cc.context==CompletionContext.CONTEXT_PARAMETER_NAME ) {
-            File file= DataSetURI.getFile( cc.resourceURI, mon );
+            Map<String,CompletionContext> result1= getParams( cc.resourceURI, mon );
             
-            NetcdfDataset dataset= getDataSet( file.toURI().toURL() );
-            List<Variable> vars= (List<Variable>)dataset.getVariables();
-            
-            for ( int j=0; j<vars.size();j++ ) {
-                Variable v= vars.get(j);
-                if ( v.getDimensions().isEmpty() ) continue;
-                if ( v instanceof Structure ) {
-                    for ( Variable v2: ((Structure) v).getVariables() ) {
-                        if ( !v2.getDataType().isNumeric() ) continue;
-                        StringBuilder description= new StringBuilder( v2.getName()+"[" );
-                        for ( int k=0; k<v2.getDimensions().size(); k++ ) {
-                            Dimension d= v2.getDimension(k);
-                            if ( k>0 ) description.append(",");
-                            try {
-                                String n= d.getName();
-                                if ( n!=null && !n.equals(v2.getName()) ) {
-                                    description.append(d.getName()).append("=");
-                                }
-                                description.append(d.getLength());
-                            } catch ( NullPointerException ex ) {
-                                throw ex;
-                            }
-                        }
-                        description.append("]");
-                        
-                        ///parameters.put( v2.getName(), description.toString() );
-                        result.add( new CompletionContext( 
-                            CompletionContext.CONTEXT_PARAMETER_NAME,
-                            v2.getName(), this, "arg_0",
-                            v2.getNameAndDimensions(), v2.getDescription(), true ) );
-                    }
-                    
-                } else {
-                    boolean isFormattedTime= v.getDataType()==DataType.CHAR && v.getRank()==2 && v.getShape(1)>=14 && v.getShape(1)<=30;
-                    if ( !isFormattedTime && !v.getDataType().isNumeric() ) continue;
-                    result.add( new CompletionContext(
-                            CompletionContext.CONTEXT_PARAMETER_NAME,
-                            v.getName(), this, "arg_0",
-                            v.getNameAndDimensions(), v.getDescription(), true ) );
-                }
+            for ( Entry<String,CompletionContext> r: result1.entrySet() ) {
+                result.add( r.getValue() );
             }
-            dataset.close();
 
+            result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "x=", "specify the x variable"));
+            result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "y=", "specify the y variable"));
+            
             result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "units=", "override the file units"));
+            result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "xunits=", "override the units for x"));
             result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "where=",
                     "add constraint by another field's value"));
             result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_NAME, "validMin=",
@@ -123,10 +142,34 @@ public class NetCDFDataSourceFactory extends AbstractDataSourceFactory implement
             } else if (paramName.equals("validMax")) {
                 return Collections.singletonList(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "<double>"));            
             } else if (paramName.equals("where")) { // TODO: a fun project would be to make completions for this that look in the file...
-                result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "field17.gt(1)","where the double value in field17 is greater than 17 "));
-                result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "field5.eq(off)", "where the nominal data in field5 is equal to \"off\""));
-                result.add(new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, "field0.le(2000-01-01T00:00)", "where the nominal data in field5 is equal to \"off\""));
+                if ( cc.completable.contains(".") ) {
+                    int i= cc.completable.lastIndexOf(".");
+                    String s= cc.completable.substring(0,i);
+                    if ( s.length()>0 ) {
+                        result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_VALUE, s + ".eq(0)" ) ) ;
+                        result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_VALUE, s + ".ne(0)" ) ) ;
+                        result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_VALUE, s + ".gt(0)" ) ) ;
+                        result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_VALUE, s + ".lt(0)" ) ) ;
+                        result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_VALUE, s + ".within(0+to+10)" ) ) ;
+                    }
+                } else {
+                    Map<String,CompletionContext> result1= getParams( cc.resourceURI, mon );
+                    for ( Entry<String,CompletionContext> r: result1.entrySet() ) {
+                        String s= r.getKey();
+                        result.add( new CompletionContext(CompletionContext.CONTEXT_PARAMETER_VALUE, s+".eq(0)","where parameter is equal to zero"));
+                    }       
+                }
                 return result;
+            } else if ( paramName.equals("x") ) {
+                Map<String,CompletionContext> result1= getParams( cc.resourceURI, mon );
+                for ( Entry<String,CompletionContext> r: result1.entrySet() ) {
+                    result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_VALUE, r.getValue().completable ) );
+                }
+            } else if ( paramName.equals("y") ) {
+                Map<String,CompletionContext> result1= getParams( cc.resourceURI, mon );
+                for ( Entry<String,CompletionContext> r: result1.entrySet() ) {
+                    result.add( new CompletionContext( CompletionContext.CONTEXT_PARAMETER_VALUE, r.getValue().completable ) );
+                }
             }
         }
         
@@ -221,9 +264,19 @@ public class NetCDFDataSourceFactory extends AbstractDataSourceFactory implement
 
             int depCount=0; // number of dependent variables--If there's just one, then we needn't identify it
             List<Variable> vars= (List<Variable>)dataset.getVariables();
+         
+            Set<Variable> coordVars= new HashSet<>();
+            for ( Variable var : vars ) {
+                if (var.isCoordinateVariable()) {
+                    coordVars.add(var);
+                }
+            }
             
             String svariable= (String)params.get("arg_0");
             
+            if ( svariable==null ) {
+                svariable= (String)params.get( NetCDFDataSource.PARAM_Y );
+            }
 
             if ( svariable!=null ) {
                 int ic= svariable.indexOf("[");
@@ -241,19 +294,20 @@ public class NetCDFDataSourceFactory extends AbstractDataSourceFactory implement
                 if ( v instanceof Structure ) {
                     for ( Variable v2: ((Structure) v).getVariables() ) {
                         if ( !v2.getDataType().isNumeric() ) continue;
-                        if ( v2.getName().replaceAll(" ","+").equals( svariable) ) haveIt= true;
+                        if ( v2.getFullName().replaceAll(" ","+").equals( svariable) ) haveIt= true;
                     }
                                         
                 } else {
-                    List l= v.getDimension(0).getCoordinateVariables();
-                    if ( l.size()>1 ) throw new IllegalArgumentException("Huh?");
-                    for ( int i=0; i<l.size(); i++ ) {
-                        Variable dv= (Variable) l.get(0);
-                        if ( dv!=v ) {
-                            depCount++;
-                        }
-                    }
-                    if ( v.getName().replaceAll(" ", "+").equals(svariable) ) haveIt= true;
+                    //TODO: something with coordVars?  I don't follow this code...
+                    //List l= v.getDimension(0).getCoordinateVariables();
+                    //if ( l.size()>1 ) throw new IllegalArgumentException("Huh?");
+                    //for ( int i=0; i<l.size(); i++ ) {
+                    //    Variable dv= (Variable) l.get(0);
+                    //    if ( dv!=v ) {
+                    //        depCount++;
+                    //    }
+                    //}
+                    if ( v.getFullName().replaceAll(" ", "+").equals(svariable) ) haveIt= true;
                 }
             }
 

@@ -5,6 +5,7 @@
  */
 package org.autoplot;
 
+import java.text.ParseException;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.logging.Level;
@@ -13,6 +14,7 @@ import static org.autoplot.AutoplotUtil.DS_LENGTH_LIMIT;
 import org.das2.datum.Datum;
 import org.das2.datum.DatumRange;
 import org.das2.datum.DatumRangeUtil;
+import org.das2.datum.DatumUtil;
 import org.das2.datum.DomainDivider;
 import org.das2.datum.DomainDividerUtil;
 import org.das2.datum.InconvertibleUnitsException;
@@ -54,11 +56,14 @@ public class AutoRangeUtil {
      * also considers delta_plus, delta_minus properties.
      * TODO: /home/jbf/ct/autoplot/script/study/rfe445_speed/verifyExtentSimpleRange.jy showed that this was 25% slower than extent.
      * TODO: this is almost 800% slower than study445FastRange (above), which shows DataSetIterator is slow.
-     * 
+     * @see Ops#extent(org.das2.qds.QDataSet) 
+     * Note: DS_LENGTH_LIMIT limits the total number of points considered.
      * @param ds rank N dataset
-     * @return double[min,max].
+     * @return two-element double, containing min and max.
      */
     private static double[] simpleRange(QDataSet ds) {
+        logger.entering("org.autoplot.AutoRangeUtil", "simpleRange", ds);
+        
         QDataSet max = ds;
         QDataSet min = ds;
         Units u = (Units) ds.property(QDataSet.UNITS);
@@ -88,20 +93,33 @@ public class AutoRangeUtil {
         QDataSet wmin = DataSetUtil.weightsDataSet(min);
         QDataSet wmax = DataSetUtil.weightsDataSet(max);
         QDataSet wds= DataSetUtil.weightsDataSet(ds);
-        QubeDataSetIterator it = new QubeDataSetIterator(ds);
+        
         double[] result = new double[]{Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY};
-        int i = 0;
+        
+        if ( ds.rank()==1 ) {
+            int n0= Math.min( ds.length(), DS_LENGTH_LIMIT);
+            for ( int i=0; i<n0; i++ ) {
+                if ( wds.value(i)==0. ) continue;
+                double maxv= max.value(i);
+                if ( Double.isInfinite( maxv ) ) continue;
+                if ( wmin.value(i)>0. ) result[0] = Math.min(result[0], min.value(i) );
+                if ( wmax.value(i)>0. ) result[1] = Math.max(result[1], maxv );
+            }
+        } else {
+            QubeDataSetIterator it = new QubeDataSetIterator(ds);
+            int i = 0;
 
-        while (i < DS_LENGTH_LIMIT && it.hasNext()) {
-            it.next();
-            i++;
-            if ( it.getValue(wds)==0 ) continue;
-            double maxv= it.getValue(max);
-            if ( Double.isInfinite( maxv ) ) continue;
-            if (it.getValue(wmin) > 0.)
-                result[0] = Math.min(result[0], it.getValue(min));
-            if (it.getValue(wmax) > 0.)
-                result[1] = Math.max(result[1], maxv );
+            while (i < DS_LENGTH_LIMIT && it.hasNext()) {
+                it.next();
+                i++;
+                if ( it.getValue(wds)==0 ) continue;
+                double maxv= it.getValue(max);
+                if ( Double.isInfinite( maxv ) ) continue;
+                if (it.getValue(wmin) > 0.)
+                    result[0] = Math.min(result[0], it.getValue(min));
+                if (it.getValue(wmax) > 0.)
+                    result[1] = Math.max(result[1], maxv );
+            }
         }
 
         if (result[0] == Double.POSITIVE_INFINITY) {  // no valid data!
@@ -113,6 +131,7 @@ public class AutoRangeUtil {
                 result[1] = 1.;
             }
         }
+        logger.exiting("org.autoplot.AutoRangeUtil", "simpleRange");
         return result;
     }
 
@@ -273,7 +292,7 @@ public class AutoRangeUtil {
     public static AutoRangeDescriptor autoRange(QDataSet hist, QDataSet ds, Map properties) {
         Logger logger1 = LoggerManager.getLogger("qdataset.ops.autorange");
         logger1.log(Level.FINE, "enter autoRange {0}", ds);
-        logger1.entering("org.virbo.autoplot.AutoplotUtil", "autoRange");
+        logger1.entering("org.autoplot.AutoRangeUtil", "autoRange");
         Units u = (Units) ds.property(QDataSet.UNITS);
         if (u == null) {
             u = Units.dimensionless;
@@ -405,7 +424,7 @@ public class AutoRangeUtil {
                     // and the stats min is less then the typical range max().
                     result.range = range;
                     // just use the metadata settings.
-                    logger1.exiting("org.virbo.autoplot.AutoplotUtil", "autoRange");
+                    logger1.exiting("org.autoplot.AutoRangeUtil", "autoRange");
                     return result; // DANGER--EXIT POINT
                 }
             }
@@ -429,7 +448,7 @@ public class AutoRangeUtil {
         } else {
             result.range = DatumRange.newDatumRange(result.robustMin, result.robustMax, u);
         }
-        logger1.exiting("org.virbo.autoplot.AutoplotUtil", "autoRange");
+        logger1.exiting("org.autoplot.AutoRangeUtil", "autoRange");
         return result;
     }
 
@@ -463,7 +482,7 @@ public class AutoRangeUtil {
      */
     public static AutoRangeDescriptor autoRange(QDataSet ds, Map properties, boolean ignoreDsProps) {
         Logger logger1 = LoggerManager.getLogger("qdataset.ops.autorange");
-        logger1.entering("org.virbo.autoplot.AutoplotUtil", "autoRange", ds);
+        logger1.entering("org.autoplot.AutoRangeUtil", "autoRange", ds);
         Units u = (Units) ds.property(QDataSet.UNITS);
         if (u == null) {
             if (ds.property(QDataSet.JOIN_0) != null) {
@@ -483,7 +502,7 @@ public class AutoRangeUtil {
             result.range = DataSetUtil.asDatumRange(ext, true);
             result.robustMin = result.range.min().doubleValue(u);
             result.robustMax = result.range.max().doubleValue(u);
-            logger1.exiting("org.virbo.autoplot.AutoplotUtil", "autoRange", ds);
+            logger1.exiting("org.autoplot.AutoRangeUtil", "autoRange", ds);
             return result;
         }
         double[] dd; // two-element array that is the min and max of the data.
@@ -491,7 +510,8 @@ public class AutoRangeUtil {
         if ( mono ) {
             mono= DataSetUtil.isMonotonicAndIncreasingQuick(ds);
         }
-        if (null != ds.property(QDataSet.CADENCE)) {
+        //TODO: consider calculating any cadence here, and using the dataSetAnnotations to store this.
+        if (null != ds.property(QDataSet.CADENCE)) { // this is where the earlier check for cadence in DataSourceController is important.
             if (DataSetUtil.isMonotonic(ds)) {
                 mono = true;
             }
@@ -511,6 +531,7 @@ public class AutoRangeUtil {
                 // TODO: support just typicalMin or typicalMax...
                 typical = new AutoRangeDescriptor();
                 typical.range = new DatumRange(typicalMin.doubleValue(), typicalMax.doubleValue(), u);
+                logger1.log(Level.FINER, "use typical range: {0}", typical.range);
                 typical.log = isLog;
             }
         }
@@ -523,21 +544,40 @@ public class AutoRangeUtil {
             result.robustMin = Double.MAX_VALUE;
             Units units = null;
             UnitsConverter uc = UnitsConverter.IDENTITY;
-            for (int i = 0; i < ds.length(); i++) {
-                AutoRangeDescriptor r1 = autoRange(ds.slice(i), properties, false);
-                if (units == null) {
-                    units = r1.range.getUnits();
-                } else {
-                    uc = r1.range.getUnits().getConverter(units);
-                }
-                result.range = result.range == null ? r1.range : DatumRangeUtil.union(result.range, r1.range);
-                if (r1.log) {
-                    result.log = true;
+            if ( ds.rank()==3 ) {
+                for (int j = 0; j < ds.length(); j++) {
+                    QDataSet ds1= ds.slice(j);
+                    for ( int i=0; i<ds1.length(); i++ ) {
+                        AutoRangeDescriptor r1 = autoRange(ds1.slice(i), properties, false);
+                        if (units == null) {
+                            units = r1.range.getUnits();
+                        } else {
+                            uc = r1.range.getUnits().getConverter(units);
+                        }
+                        result.range = result.range == null ? r1.range : DatumRangeUtil.union(result.range, r1.range);
+                        if (r1.log) {
+                            result.log = true;
+                        }
+                    }
+                }                 
+            } else {
+                for (int i = 0; i < ds.length(); i++) {
+                    AutoRangeDescriptor r1 = autoRange(ds.slice(i), properties, false);
+                    if (units == null) {
+                        units = r1.range.getUnits();
+                    } else {
+                        uc = r1.range.getUnits().getConverter(units);
+                    }
+                    result.range = result.range == null ? r1.range : DatumRangeUtil.union(result.range, r1.range);
+                    if (r1.log) {
+                        result.log = true;
+                    }
                 }
             }
             result.robustMin = result.range.min().doubleValue(result.range.getUnits());
             result.robustMax = result.range.max().doubleValue(result.range.getUnits());
-            logger1.exiting("org.virbo.autoplot.AutoplotUtil", "autoRange", ds);
+            logger1.log(Level.FINER, "result of join autorange: {0}", result.range );
+            logger1.exiting("org.autoplot.AutoRangeUtil", "autoRange", ds);
             return result;
         }
         if (mono && ds.rank() == 1) {
@@ -630,7 +670,7 @@ public class AutoRangeUtil {
                     dd[1] = dd[1] / 100; // work around 2009 bug where DatumRanges cannot contain -1e31.
                 }
             } catch (IllegalArgumentException ex) {
-                logger.log(Level.WARNING, ex.getMessage(), ex);
+                logger1.log(Level.WARNING, ex.getMessage(), ex);
                 if (UnitsUtil.isTimeLocation(u)) {
                     dd = new double[]{0, Units.days.createDatum(1).doubleValue(u.getOffsetUnits())};
                 } else {
@@ -758,6 +798,9 @@ public class AutoRangeUtil {
             }
             result.range = DatumRange.newDatumRange(result.robustMin, result.robustMax, u);
         }
+        
+        logger1.log(Level.FINE, "result.range at this point is {0} {1} {2}", new Object[] { result.range, result.range.getUnits(), result.robustMin } );
+        
         result.log = isLog;
         // interpret properties, looking for hints about scale type and ranges.
         if (properties != null) {
@@ -767,18 +810,22 @@ public class AutoRangeUtil {
             if (uu == null) {
                 uu = Units.dimensionless;
             }
+            logger1.log(Level.FINER, "from properties: typical: {0} {1} \"{2}\"", new Object[]{tmin, tmax, uu});
+            if ( UnitsUtil.isTimeLocation(u) ) uu= u;
             if (UnitsUtil.isIntervalOrRatioMeasurement(uu)) {
                 Datum ftmin = uu.createDatum(tmin == null ? -1 * Double.MAX_VALUE : tmin);
+                logger1.log(Level.FINER, "isLog={0} ftmin={1} tmin={2} tmax={3} uu={4}", new Object[]{isLog, ftmin, tmin, tmax, uu});
                 if (isLog && tmin != null && tmin.doubleValue() <= 0) {
                     //                tmin= new Double( result.range.min().doubleValue(result.range.getUnits()) );
                     //                if ( tmin.doubleValue()<0 ) {
                     tmin = tmax.doubleValue() / 10000.0; // this used to happen in IstpMetadataModel
                     //                }
                 }
-                DatumRange range = getRange(tmin, tmax, uu);
                 // see if the typical extent is consistent with extent seen.  If the
                 // typical extent won't hide the data's structure, then use it.
                 if (tmin != null && tmax != null) {
+                    DatumRange range = getRange(tmin, tmax, uu);
+                    logger1.log(Level.FINER, "getRange from typical: {0}", new Object[]{range});
                     double d1;
                     double d2;
                     if (result.log) {
@@ -842,6 +889,7 @@ public class AutoRangeUtil {
                             logger1.fine("adjusting TYPICAL_MAX from metadata, multiply by 2.0");
                         }
                     }
+                    logger1.log(Level.FINER, "possible range 854: {0}", range);
                     if (d2 - d1 > 0.1 // the stats range occupies 10% of the typical range
                      && d2 > 0.0 // and the stats max is greater than the typical range min()
                      && d2 < 1.14 // and the top isn't clipping data badly  //TODO: we really need to be more robust about this.  hyd_h0/$Y/po_h0_hyd_$Y$m$d_v01.cdf?ION_DIFFERENTIAL_ENERGY_FLUX&timerange=20000109 was failing because a small number of points was messing this up.
@@ -852,7 +900,8 @@ public class AutoRangeUtil {
                         result.range = range;
                         // just use the metadata settings.
                         logger1.fine("using TYPICAL_MIN, TYPICAL_MAX from metadata");
-                        logger1.exiting("org.virbo.autoplot.AutoplotUtil", "autoRange", ds);
+                        logger1.log(Level.FINE, "autorange {0} -> {1} (exit1)", new Object[]{ds, result.range});
+                        logger1.exiting("org.autoplot.AutoRangeUtil", "autoRange", result.range );
                         return result; // DANGER--EXIT POINT
                     } else {
                         logger1.log(Level.FINE, "TYPICAL_MIN={0} and TYPICAL_MAX={1} from metadata rejected because it clipped or squished the data {2}", new Object[]{tmin.toString(), tmax.toString(), result.range});
@@ -871,6 +920,7 @@ public class AutoRangeUtil {
                 }
                 Datum min = u.createDatum(result.robustMin);
                 Datum max = u.createDatum(result.robustMax);
+                logger1.log(Level.FINER, "domain divider at 866: {0} {1}", new Object[]{min, max});
                 DomainDivider div = DomainDividerUtil.getDomainDivider(min, max, true);
                 while (div.boundaryCount(min, max) > 40) {
                     div = div.coarserDivider(false);
@@ -878,10 +928,16 @@ public class AutoRangeUtil {
                 while (div.boundaryCount(min, max) < 20) {
                     div = div.finerDivider(true);
                 }
-                result.range = new DatumRange(div.rangeContaining(min).min(), div.rangeContaining(max).max());
+                //Datum teplison= result.range.width().divide(10000);
+                //DatumRange rmin= div.rangeContaining(result.range.min().add(teplison));
+                //DatumRange rmax= div.rangeContaining(result.range.max().subtract(teplison));
+                DatumRange rmin= div.rangeContaining(min);
+                DatumRange rmax= div.rangeContaining(max);
+                result.range = new DatumRange( rmin.min(), rmax.max() );
             } else if (UnitsUtil.isTimeLocation(u)) {
                 if (result.range.min().doubleValue(Units.us2000) > -6.311348E15) {
                     //TODO: Julian has yr1800 limit.
+                    logger1.log(Level.FINER, "entering domain divider bit: {0}", result.range);
                     if (result.range.width().value() == 0.0) {
                         result.range = new DatumRange(result.range.min(), result.range.min().add(Units.seconds.createDatum(1)));
                     } else {
@@ -892,9 +948,53 @@ public class AutoRangeUtil {
                         while (div.boundaryCount(result.range.min(), result.range.max()) < 20) {
                             div = div.finerDivider(true);
                         }
-                        result.range = new DatumRange(div.rangeContaining(result.range.min()).min(), div.rangeContaining(result.range.max()).max());
+                        logger1.log(Level.FINER, "domainDivider selected: {0} {1}", new Object[] { div, result.range.getUnits() } );
+                        Datum resultmin= result.range.min();
+                        
+                        logger1.log(Level.FINER, "result.range.min(): {0} {1}", 
+                                new Object[]{ 
+                                    String.format( "%20f", resultmin.doubleValue( resultmin.getUnits() ) ), 
+                                    resultmin.getUnits()} );
+//                        if ( result.range.contains( DatumUtil.parseValid("1993-01-01T00:30") ) ) {
+//                            logger1.log(Level.FINER,"here's that interesting case");
+//                            Units tu;
+//                            try {
+//                                tu = Units.lookupTimeUnits("hr since 2001-01-01T00:00:00Z");
+//                                Datum da=tu.createDatum(43823.0);
+//                                DomainDivider domainDivider= DomainDividerUtil.getDomainDivider(da,da);
+//                                DatumRange r= domainDivider.rangeContaining(da);
+//                                logger.log(Level.FINER, ">>> {0} \"{1}\" {2} \"{3}\" {4} {5}", new Object[]{
+//                                    r, 
+//                                    r.getUnits(), 
+//                                    da.doubleValue(da.getUnits()), 
+//                                    da.getUnits(), 
+//                                    Ops.convertUnitsTo(da.subtract(r.min()),Units.nanoseconds),
+//                                    da.subtract(result.range.min())
+//                                }
+//                                );
+//                                
+//                            } catch (ParseException ex) {
+//                                Logger.getLogger(AutoRangeUtil.class.getName()).log(Level.SEVERE, null, ex);
+//                            }
+//                        }
+                        DatumRange rmin= div.rangeContaining(result.range.min());
+                        //int [] ta= TimeUtil.fromDatum(result.range.min()); 
+                        //logger1.log(Level.FINER, "hours, minutes, seconds: {0} {1} {2}", new Object[] { ta[3], ta[4], ta[5] } );
+                        logger1.log(Level.FINER, "rmin: {0} {1}", new Object[] { rmin, rmin.getUnits() } );
+                        logger1.log(Level.FINER, "result.range.min(): {0} {1}", new Object[] { result.range.min(), result.range.min().getUnits() } );
+                        logger1.log(Level.FINER, "range.max-rmin: {0}", rmin.max().subtract(result.range.min()));
+                        logger1.log(Level.FINER, "div.rangeContaining units: {0}", rmin.getUnits());
+                        DatumRange rmax= div.rangeContaining(result.range.max());
+                        //Datum teplison= result.range.width().divide(10000);
+                        //DatumRange rmin= div.rangeContaining(result.range.min().add(teplison));
+                        //DatumRange rmax= div.rangeContaining(result.range.max().subtract(teplison));
+                        logger1.log(Level.FINER, "min: {0}, range containing min: {1}", new Object[]{result.range.min(), rmin});
+                        logger1.log(Level.FINER, "max: {0}, range containing max: {1}", new Object[]{result.range.max(), rmax});
+                        result.range = new DatumRange( rmin.min(), rmax.max() );
+                        
                     }
                 }
+                logger1.log(Level.FINER, "range at 909: {0}", result.range);
             } else {
                 result.range = DatumRange.newDatumRange(result.robustMin, result.robustMax, u);
                 if (result.robustMin < result.robustMax) {
@@ -903,19 +1003,25 @@ public class AutoRangeUtil {
                 if (result.robustMin == 0 && result.robustMax == 0) {
                     result.range = DatumRange.newDatumRange(-0.1, 1.0, u);
                 }
+                logger1.log(Level.FINER, "range at 918: {0}", result.range);
             }
         } else {
             result.range = DatumRange.newDatumRange(result.robustMin, result.robustMax, u);
+            logger1.log(Level.FINER, "range based on robustMin and robustMax: {0}", result.range);
         }
-        logger1.exiting("org.virbo.autoplot.AutoplotUtil", "autoRange", ds);
         if (typical != null) {
+            logger1.finer("checking typical");
             if (result.log && typical.log) {
                 if (typical.range.min().doubleValue(typical.range.getUnits()) <= 0) {
-                    typical.range = new DatumRange(result.range.min(), typical.range.max());
+                    Datum d10= typical.range.max().divide(10);
+                    Datum m= result.range.min().le(d10) ? result.range.min() : d10;
+                    typical.range = new DatumRange( m, typical.range.max());
                 }
                 if (result.range.intersects(typical.range)) {
                     double overlap = DatumRangeUtil.normalizeLog(result.range, typical.range.max()) - DatumRangeUtil.normalizeLog(result.range, typical.range.min());
                     if (overlap > 0.01 && overlap < 100) {
+                        logger1.log(Level.FINE, "autorange {0} -> {1} (exit2)", new Object[]{ds, result.range});
+                        logger1.exiting("org.autoplot.AutoRangeUtil", "autoRange", result.range );
                         return typical;
                     }
                 }
@@ -924,12 +1030,16 @@ public class AutoRangeUtil {
                     if (result.range.intersects(typical.range)) {
                         double overlap = DatumRangeUtil.normalize(result.range, typical.range.max()) - DatumRangeUtil.normalize(result.range, typical.range.min());
                         if (overlap > 0.01 && overlap < 100) {
+                            logger1.log(Level.FINE, "autorange {0} -> {1} (exit3)", new Object[]{ds, result.range});
+                            logger1.exiting("org.autoplot.AutoRangeUtil", "autoRange", result.range );
                             return typical;
                         }
                     }
                 }
             }
         }
+        logger1.log(Level.FINE, "autorange {0} -> {1}", new Object[]{ds, result.range});
+        logger1.exiting("org.autoplot.AutoRangeUtil", "autoRange", result.range );
         return result;
     }
     

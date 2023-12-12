@@ -1,7 +1,3 @@
-/*
- * To change this template, choose Tools | Templates
- * and open the template in the editor.
- */
 
 package org.autoplot.binarydatasource;
 
@@ -13,19 +9,21 @@ import java.nio.ByteOrder;
 import java.nio.channels.Channels;
 import java.nio.channels.WritableByteChannel;
 import java.util.Map;
+import org.autoplot.datasource.AbstractDataSourceFormat;
 import org.das2.qds.buffer.BufferDataSet;
 import org.das2.util.monitor.ProgressMonitor;
 import org.das2.qds.QDataSet;
 import org.das2.qds.QubeDataSetIterator;
 import org.das2.qds.SemanticOps;
 import org.autoplot.datasource.URISplit;
-import org.autoplot.datasource.DataSourceFormat;
+import org.das2.qds.DataSetOps;
+import org.das2.qds.MutablePropertyDataSet;
 
 /**
  * Format data to binary file.
  * @author jbf
  */
-public class BinaryDataSourceFormat implements DataSourceFormat {
+public class BinaryDataSourceFormat extends AbstractDataSourceFormat {
 
     /**
      * copy the dataset into a DoubleBuffer by wrapping a DoubleBuffer with
@@ -73,10 +71,9 @@ public class BinaryDataSourceFormat implements DataSourceFormat {
             it.putValue( ddata, it.getValue(data) );
         }
 
-        if ( dep0!=null ) {
-            BufferDataSet ddep0= BufferDataSet.makeDataSet( 1,
-                recSize, 0, 
-                data.length(), data.length(0), 1, 1,
+        if ( dep0!=null && dep0.rank()==1 ) {
+            BufferDataSet ddep0= BufferDataSet.makeDataSet( 1, recSize, 0, 
+                dep0.length(), 1, 1, 1,
                 result, dep0Type );
 
             it= new QubeDataSetIterator(dep0);
@@ -141,33 +138,48 @@ public class BinaryDataSourceFormat implements DataSourceFormat {
     @Override
     public void formatData( String uri, QDataSet data, ProgressMonitor mon) throws IOException {
         
+        super.setUri(uri);
+        super.maybeMkdirs();
+
+        String doDep= getParam("doDep", "");
+        if ( doDep.length()>0 && doDep.toUpperCase().charAt(0)=='F' ) {
+            MutablePropertyDataSet mpds= DataSetOps.makePropertiesMutable(data);
+            mpds.putProperty( QDataSet.DEPEND_0, null );
+            mpds.putProperty( QDataSet.DEPEND_1, null );
+            mpds.putProperty( QDataSet.BUNDLE_1, null );
+            data= mpds;
+        }
+
         URISplit split= URISplit.parse(uri);
         java.util.Map<String,String> params= URISplit.parseParams(split.params);
 
         ByteBuffer result;
-        if (data.rank() == 2) {
-            result= formatRank2( data, mon, params );
-        } else if (data.rank() == 1) {
-            result= formatRank1( data, mon, params );
-        } else {
-            throw new IllegalArgumentException("rank not supported");
+        switch (data.rank()) {
+            case 2:
+                result= formatRank2( data, mon, params );
+                break;
+            case 1:
+                result= formatRank1( data, mon, params );
+                break;
+            default:
+                throw new IllegalArgumentException("rank not supported");
         }
-        
-        WritableByteChannel channel= Channels.newChannel( new FileOutputStream( new File( split.resourceUri ) ) );
-        channel.write(result);
-        
-        channel.close();
+                        
+        File outFile= new File( split.resourceUri );        
+        try (WritableByteChannel channel = Channels.newChannel( new FileOutputStream( outFile ) )) {
+            channel.write(result);
+        }
         
     }
 
     @Override
     public boolean canFormat(QDataSet ds) {
-        return ! ( ds.rank()==0  || SemanticOps.isJoin(ds) );
+        return ds.rank()<3 && ( ! ( ds.rank()==0  || SemanticOps.isJoin(ds) ) );
     }
 
     @Override
     public String getDescription() {
         return "Binary Table";
     }
-
+    
 }

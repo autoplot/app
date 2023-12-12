@@ -6,21 +6,28 @@ package org.autoplot.jythonsupport;
 
 import java.io.BufferedReader;
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.FileReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
 import java.net.URISyntaxException;
+import java.net.UnknownHostException;
 import java.nio.channels.Channels;
 import java.nio.channels.ReadableByteChannel;
 import java.nio.channels.WritableByteChannel;
 import java.text.ParseException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import org.das2.datum.DatumRange;
 import org.das2.datum.DatumRangeUtil;
 import java.util.logging.Level;
@@ -43,11 +50,20 @@ import org.das2.qds.WritableDataSet;
 import org.das2.qds.examples.Schemes;
 import org.autoplot.datasource.AutoplotSettings;
 import org.autoplot.datasource.DataSetURI;
+import static org.autoplot.datasource.DataSetURI.fromUri;
+import static org.autoplot.datasource.DataSetURI.getFile;
 import org.autoplot.datasource.DataSource;
 import org.autoplot.datasource.DataSourceFactory;
 import org.autoplot.datasource.DataSourceUtil;
+import org.autoplot.datasource.URISplit;
 import org.autoplot.datasource.capability.TimeSeriesBrowse;
 import org.das2.qds.ops.Ops;
+import org.das2.util.filesystem.FileObject;
+import org.das2.util.filesystem.FileSystemUtil;
+import org.das2.util.monitor.AlertNullProgressMonitor;
+import org.das2.util.monitor.CancelledOperationException;
+import org.python.core.Py;
+import org.python.core.PyFunction;
 
 /**
  * Utilities for Jython scripts in both the datasource and application contexts.
@@ -56,7 +72,8 @@ import org.das2.qds.ops.Ops;
 public class Util {
 
     private static final Logger logger= LoggerManager.getLogger("jython.script");
-
+    private static final Logger dslogger= LoggerManager.getLogger("jython.script.ds");
+    
     /**
      * this returns a double indicating the current scripting version, found
      * at the top of autoplot2017.py in AUTOPLOT_DATA/jython/autoplot2017.py.  Do
@@ -139,6 +156,9 @@ public class Util {
      * @throws java.lang.Exception plug-in readers can throw exception.
      */
     public static QDataSet getDataSet( String suri, String stimeRange, ProgressMonitor mon ) throws Exception {
+        if ( stimeRange==null ) {
+            throw new IllegalArgumentException("stimeRange cannot be null");
+        }
         DatumRange timeRange= DatumRangeUtil.parseTimeRange(stimeRange);
         return getDataSet( suri, timeRange, mon );
     }
@@ -173,7 +193,7 @@ public class Util {
      */
     public static QDataSet getDataSet( String suri, DatumRange timeRange, ProgressMonitor monitor ) throws Exception {
         long t0= System.currentTimeMillis();
-        logger.log( Level.FINE, "getDataSet(\"{0}\",DatumRangeUtil.parseTimeRange({1}),monitor)", new Object[]{suri, timeRange} );
+        dslogger.log( Level.FINE, "getDataSet(\"{0}\",DatumRangeUtil.parseTimeRange({1}),monitor)", new Object[]{suri, timeRange} );
         URI uri = DataSetURI.getURI(suri);
         DataSourceFactory factory = DataSetURI.getDataSourceFactory(uri, new NullProgressMonitor());
         DataSource result = factory.getDataSource( uri );
@@ -239,14 +259,14 @@ public class Util {
      * load the data specified by URL into Autoplot's internal data model.  This will
      * block until the load is complete, and a ProgressMonitor object can be used to
      * monitor the load.
-     * @param suri the data address to load.
+     * @param suri the URI of the dataset, such as "http://autoplot.org/data/2010_061_17_41_40.txt?column=field8"
      * @param mon a progress monitor to monitor the load, or null (None in Jython)
      * @return the dataset, or null.
      * @throws java.lang.Exception plug-in readers can throw exception.
      */
     public static QDataSet getDataSet(String suri, ProgressMonitor mon) throws Exception {
         long t0= System.currentTimeMillis();
-        logger.log( Level.FINE, "getDataSet(\"{0}\",monitor)", suri );
+        dslogger.log( Level.FINE, "getDataSet(\"{0}\",monitor)", suri );
         URI uri = DataSetURI.getURIValid(suri);
         DataSourceFactory factory = DataSetURI.getDataSourceFactory(uri, new NullProgressMonitor()); //TODO: NullProgressMonitor
         if ( factory==null ) throw new IllegalArgumentException("unsupported extension: "+suri);
@@ -255,6 +275,10 @@ public class Util {
             mon = new NullProgressMonitor();
         }
         QDataSet rds= result.getDataSet(mon);
+        if ( !mon.isFinished() ) {
+            if ( !mon.isStarted() ) mon.started();
+            mon.finished();
+        }
 
         try {
             metadata= result.getMetadata( new NullProgressMonitor() );
@@ -278,6 +302,8 @@ public class Util {
             }
         }
 
+        if ( rds==null ) return null;
+        
         TimeSeriesBrowse tsb= result.getCapability(TimeSeriesBrowse.class);
         if ( tsb!=null ) {
             if ( !Schemes.isTimeSeries(rds) ) {
@@ -286,8 +312,6 @@ public class Util {
             }
         }
 
-        if ( rds==null ) return null;
-        
         rds= ensureWritable(rds);
         return rds;
         
@@ -367,6 +391,82 @@ public class Util {
             return result;
         }
     }
+    
+    /**
+     * run the python jobs in parallel.
+     * @param job a python function which takes one argument
+     * @param argument list of arguments to invoke.
+     * @param mon monitor for the group of processes
+     * @return list of results for each call of the function.
+     * @throws java.lang.Exception if any of the jobs throw an exception.
+     */
+    public static List<Object> runInParallel( 
+            final PyFunction job, 
+            final List<Object> argument, 
+            ProgressMonitor mon ) throws Exception {
+        logger.entering("org.autoplot.jythonsupport.Util", "runInParallel");
+        if ( mon==null ) mon= new NullProgressMonitor();
+        
+        final List<Callable<Object>> callables= new ArrayList<>(argument.size());
+        final List<Object> result= new ArrayList<>(argument.size());
+        final List<Exception> exceptions= new ArrayList<>(argument.size());
+        
+        mon.setTaskSize( argument.size()*100 );
+        mon.started();
+        
+        for ( int i=0; i<argument.size(); i++ ) {
+            final int I= i;
+            result.add( I, null );
+            exceptions.add( I,null );
+            callables.add( I, new Callable<Object>() {
+                @Override
+                public Object call() throws Exception {
+                    try {
+                        Object result1= job.__call__( Py.java2py(argument.get(I)) );
+                        result.set( I, result1 );
+                        return result1;
+                    } catch ( Exception e ) {
+                        exceptions.set( I, e );
+                        return null;
+                    }
+                }
+            } );
+        }
+                    
+        ExecutorService executor= Executors.newCachedThreadPool();
+        List<Callable<Object>> tasks= callables;
+        List<Future<Object>> futures= executor.invokeAll(tasks);
+        
+        int pendingJobs;
+        do {
+            pendingJobs= 0;
+            boolean allDone= true;
+            for ( int i=0; i<result.size(); i++ ) {
+                Future f= futures.get(i);
+                if ( !f.isDone() && !f.isCancelled() ) {
+                    pendingJobs++;
+                }
+            }
+            mon.setTaskProgress( (argument.size()-pendingJobs)*100 );
+            if ( allDone ) break;
+        } while ( pendingJobs>0 && !mon.isCancelled() );
+        
+        if ( mon.isCancelled() ) {
+            throw new CancelledOperationException( "parallel task cancelled");
+        }
+        
+        mon.finished();
+        
+        for ( int i=0; i<result.size(); i++ ) {
+            if ( exceptions.get(i)!=null ) {
+                logger.log( Level.WARNING, exceptions.get(i).getMessage(), exceptions.get(i) );
+                logger.throwing( "org.autoplot.jythonsupport.Util", "runInParallel", exceptions.get(i) );
+                throw exceptions.get(i);
+            }
+        }
+        logger.exiting("org.autoplot.jythonsupport.Util", "runInParallel");
+        return result;
+    }
             
     /**
      * returns the dataSource for the given URI.  This will include capabilities, like TimeSeriesBrowse.
@@ -432,7 +532,7 @@ public class Util {
     /**
      * load the data specified by URI into Autoplot's internal data model.  This will
      * block until the load is complete.
-     * @param suri the data address to load.
+     * @param suri the URI of the dataset, such as "http://autoplot.org/data/2010_061_17_41_40.txt?column=field8"
      * @return null or dataset for the URI.
      * @throws Exception depending on data source.
      */
@@ -443,7 +543,7 @@ public class Util {
     /**
      * load the data specified by URI into Autoplot's internal data model.  This will
      * block until the load is complete.
-     * @param suri data URI like "http://autoplot.org/data/2010_061_17_41_40.txt?column=field8"
+     * @param suri the URI of the dataset, such as "http://autoplot.org/data/2010_061_17_41_40.txt?column=field8"
      * @param stimerange timerange like "2012-02-02/2012-02-03"
      * @return null or data set for the URI.
      * @throws Exception depending on data source.
@@ -455,7 +555,7 @@ public class Util {
     /**
      * load the data specified by URI into Autoplot's internal data model.  This will
      * block until the load is complete.
-     * @param suri data URI like "http://autoplot.org/data/2010_061_17_41_40.txt?column=field8"
+     * @param suri the URI of the dataset, such as "http://autoplot.org/data/2010_061_17_41_40.txt?column=field8"
      * @param timerange timerange object
      * @return null or data set for the URI.
      * @throws Exception depending on data source.
@@ -487,28 +587,25 @@ public class Util {
         ext= (i==-1) ? ss[0] : ss[0].substring(i+1);
         File f= File.createTempFile("autoplot", "."+ext );
 
-        ReadableByteChannel chin= Channels.newChannel(in);
-        try {
-            FileOutputStream fout= new FileOutputStream(f);    
-            try {
+        try (ReadableByteChannel chin = Channels.newChannel(in)) {
+            try (FileOutputStream fout = new FileOutputStream(f)) {
                 WritableByteChannel chout= fout.getChannel();
                 DataSourceUtil.transfer(chin, chout);
-            } finally {
-                fout.close();
             }
 
             String virtUrl= ss[0]+":"+ f.toURI().toString() + ss[1];
             QDataSet ds= getDataSet(virtUrl,mon);
             return ds;
             
-        } finally {
-            chin.close();
         }
     }
 
 
     /**
-     * returns an array of the files in the local or remote filesystem pointed to by surl.
+     * returns an array of the files in the local or remote filesystem pointed to by suri.  The files are returned
+     * without the path, and directories are marked with a trailing slash character.  Windows a forward 
+     * slash is still used, even though a back slash is more conventional.  When the suri ends in slash, all 
+     * entries in the directory are listed, and when it ends in a file glob, all matching files are returned.
      *
      * <p><blockquote><pre>
      * print listDirectory( 'http://autoplot.org/data/pngwalk/' )
@@ -516,15 +613,15 @@ public class Util {
      * print listDirectory( 'http://autoplot.org/data/pngwalk/*.png' )
      *  --> 'product_20080101.png', 'product_20080102.png', ...
      * </pre></blockquote><p>
-     * @param surl local or web directory.
+     * @param suri local or web directory.
      * @return an array of the files pointed to by surl.
      * @throws java.net.MalformedURLException
      * @throws java.net.URISyntaxException when surl is not well formed.
      * @throws java.io.IOException when listing cannot be done
      */
-    public static String[] listDirectory(String surl) throws IOException, URISyntaxException {
-        logger.log(Level.FINE, "listDirectory(\"{0}\")", surl);
-        String[] ss = FileSystem.splitUrl(surl);
+    public static String[] listDirectory(String suri) throws IOException, URISyntaxException {
+        logger.log(Level.FINE, "listDirectory(\"{0}\")", suri);
+        String[] ss = FileSystem.splitUrl(suri);
         FileSystem fs = FileSystem.create( DataSetURI.toUri(ss[2]));
         String glob = ss[3].substring(ss[2].length());
         String[] result;
@@ -638,13 +735,21 @@ public class Util {
      * This is introduced to avoid imports of java.io.File.
      * @param file file or local file Autoplot URI
      * @return true if the file exists.
-     * //TODO: this could support remote file systems
      */
     public static boolean fileExists( String file ) {
+        file= file.trim();
         if ( file.startsWith("file:") ) {
             file= file.substring(5);
-        } else {
-            
+        } else if ( file.startsWith("http:") || file.startsWith("https:") || file.startsWith("ftp://") || file.startsWith("sftp://") ) {
+            try {
+                URI fileUri= new URI(file);
+                URI parent= FileSystemUtil.getParentUri(fileUri);
+                FileSystem fs= FileSystem.create(parent);
+                FileObject fo= fs.getFileObject( parent.relativize(fileUri).getPath() );
+                return fo.exists();
+            } catch (URISyntaxException | FileSystem.FileSystemOfflineException | UnknownHostException | FileNotFoundException ex) {
+                return false;
+            }
         }
         return new File(file).exists();
     }
@@ -654,17 +759,65 @@ public class Util {
      * This is introduced to avoid imports of java.io.File.
      * @param file the file or directory.
      * @return true if the file can be read.
-     * //TODO: this could support remote file systems
      */
     public static boolean fileCanRead( String file ) {
         if ( file.startsWith("file:") ) {
             file= file.substring(5);
-        } else {
-            
+        } else if ( file.startsWith("http:") || file.startsWith("https:") || file.startsWith("ftp://") || file.startsWith("sftp://") ) {
+            try {
+                URI fileUri= new URI(file);
+                URI parent= FileSystemUtil.getParentUri(fileUri);
+                FileSystem fs= FileSystem.create(parent);
+                FileObject fo= fs.getFileObject( parent.relativize(fileUri).getPath() );
+                return fo.exists();
+            } catch (URISyntaxException | FileSystem.FileSystemOfflineException | UnknownHostException | FileNotFoundException ex) {
+                return false;
+            }
         }
         return new File(file).canRead();
     }
     
+    /**
+     * read the preferences into a map.  These are name=value pairs
+     * and anything following a pound symbol (#) is ignored.  Anything
+     * before the equal sign is trimmed, so "x=2" and "x = 2" have 
+     * the same interpretation.
+     * 
+     * This has a number of TODOs, namely:<ul>
+     * <li> allow quoted values, and hashes within quotes.
+     * <li> allow defaults to be specified.
+     * <li> allow ini files to be used as well.
+     * <li> allow json files to be used as well.
+     * </ul>
+     * %{PWD} is replaced with the directory of the config file.
+     * 
+     * @param suri the location of files which are name value pairs.
+     * @return a map of string to object.
+     * @throws IOException 
+     * @since Autoplot v2022a_1
+     */
+    public static Map<String,Object> readConfiguration( String suri ) throws IOException {
+        Map<String,Object> result= new LinkedHashMap<>();
+        URISplit split= URISplit.parse(suri);
+        File f= getFile(suri,false,new AlertNullProgressMonitor("loading configuration"));
+        try ( BufferedReader reader= new BufferedReader( new FileReader(f) ) ) {
+            String line;
+            while ( ( line = reader.readLine() ) !=null ) {
+                int i= line.indexOf('#');
+                if ( i>-1 ) line = line.substring(0,i);
+                line = line.trim();
+                if ( line.length()==0 ) continue;
+                i= line.indexOf('=');
+                String value= line.substring(i+1).trim();
+                if ( value.contains("%{PWD}") ) {
+                    value= value.replace("%{PWD}", split.path );
+                }
+                result.put( line.substring(0,i).trim(), value );
+            }
+        }
+        return result;
+    }
+
     /**
      * return a list of completions.  This is useful in the IDL context
      * as well as Jython scripts.  This will perform the completion for where the carot is
@@ -677,7 +830,7 @@ public class Util {
      */
     public static String[] getCompletions( String file ) throws Exception {
         List<DataSetURI.CompletionResult> cc= DataSetURI.getCompletions( file, file.length(), new NullProgressMonitor() );
-        List<DataSetURI.CompletionResult> resultList= new ArrayList<DataSetURI.CompletionResult>();
+        List<DataSetURI.CompletionResult> resultList= new ArrayList<>();
         for (DataSetURI.CompletionResult cc1 : cc) {
             if (cc1.maybePlot == true) {
                 resultList.add(cc1);
@@ -705,7 +858,7 @@ public class Util {
      */
     public static String[] getAllCompletions( String file ) throws Exception {
         List<DataSetURI.CompletionResult> cc= DataSetURI.getCompletions( file, file.length(), new NullProgressMonitor() );
-        List<DataSetURI.CompletionResult> resultList= new ArrayList<DataSetURI.CompletionResult>();
+        List<DataSetURI.CompletionResult> resultList= new ArrayList<>();
         for (DataSetURI.CompletionResult cc1 : cc) {
             resultList.add(cc1);
         }
