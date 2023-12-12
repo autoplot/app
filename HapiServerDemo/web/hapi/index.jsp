@@ -4,6 +4,7 @@
     Author     : jbf
 --%>
 
+<%@page import="java.net.URLEncoder"%>
 <%@page import="org.json.JSONException"%>
 <%@page import="java.util.Enumeration"%>
 <%@page import="java.io.File"%>
@@ -23,8 +24,17 @@
         <h1>This is a HAPI Server.</h1>  More information about this type of server is found at <a href="https://github.com/hapi-server/data-specification" target="_blank">GitHub</a>.
         This implementation of the HAPI server uses Autoplot URIs to load data, more information about Autoplot can be found <a href="http://autoplot.org" target="_blank">here</a>.
 
-        <br>Run HAPI server <a href="http://tsds.org/verify-hapi/?url=http://jfaden.net/HapiServerDemo/hapi">verifier</a>.
         <%
+            String me= "https://jfaden.net/HapiServerDemo/hapi";
+            %>
+            <br>The HAPI server <a href="http://hapi-server.org/verify?url=<%=me%>">verifier</a> will test this HAPI server for correctness.
+        <%
+            Util.maybeInitialize( getServletContext() );
+            if ( Util.getHapiHome()==null ) {
+                String HAPI_SERVER_HOME= getServletContext().getInitParameter("HAPI_SERVER_HOME");
+                Util.setHapiHome( new File( HAPI_SERVER_HOME ) );
+            }
+            
             String ip = request.getRemoteAddr();
             if (ip.equals("127.0.0.1")) {
                 Enumeration<String> hh= request.getHeaders("X-Forwarded-For");
@@ -40,10 +50,12 @@
                 out.println( "Requests from localhost will have performance monitored, which can degrade performance.<br><br>");
             }
             %>
-        
+
+        Click on sparkline graphics to see the example time range.        
         <h3>Some example requests:</h3>
         <a href="catalog">Catalog</a> <i>Show the catalog of available data sets.</i><br>
         <a href="capabilities">Capabilities</a> <i>Capabilities of the server. For example, can it use binary streams to transfer data?</i><br>
+        <a href="about">About</a> <i>More about this server, like contact info.</i><br>
         <br>
         <%
             try {
@@ -69,26 +81,63 @@
                     title= id;
                 }
                 
-                File infoFile= new File( new File( Util.getHapiHome(), "info" ), id+".json" );
+                File infoFile= new File( new File( Util.getHapiHome(), "info" ), Util.fileSystemSafeName(id)+".json" );
+                if ( !infoFile.exists() ) {
+                    out.println( "<p style=\"background-color: #e0e0e0;\">misconfigured: "+id+" ("+Util.fileSystemSafeName(id)+")</p>\n" );
+                    continue;
+                }
                 JSONObject info= HapiServerSupport.readJSON( infoFile );
                 
+                DatumRange availableRange= HapiServerSupport.getRange(info);
                 DatumRange exampleRange= HapiServerSupport.getExampleRange(info);
+                if ( exampleRange!=null ) {
+                    title= title+ "<em> (available "+availableRange + ", example range "+exampleRange + " shown)</em>";
+                }
 
+                String exampleTimeRange= exampleRange==null ? null : String.format( "start=%s&stop=%s", exampleRange.min().toString(), exampleRange.max().toString() ); 
                 out.println( String.format( "<p style=\"background-color: #e0e0e0;\">%s</p>", title ) );
                 if ( exampleRange!=null ) {
-                    out.println( String.format("<a href=\"info?id=%s\">Info</a> <a href=\"data?id=%s&time.min=%s&time.max=%s\">Data</a>", 
-                        ds.getString("id"), ds.getString("id"), exampleRange.min().toString(), exampleRange.max().toString() ) );
+                    out.println( String.format("[<a href=\"info?id=%s\">Info</a>] [<a href=\"data?id=%s&%s\">Data</a>]", 
+                        ds.getString("id"), ds.getString("id"), exampleTimeRange ) );
                 } else {
-                    out.println( String.format("<a href=\"info?id=%s\">Info</a> Data", 
+                    out.println( String.format("[<a href=\"info?id=%s\">Info</a>] [Data]", 
                         ds.getString("id"), ds.getString("id") ) );
                 }
+                
+                String autoplotServer= "https://jfaden.net/AutoplotServlet";
+                //String autoplotServer= "http://localhost:8084/AutoplotServlet";
                 
                 out.println(" ");
                 JSONArray parameters= info.getJSONArray("parameters");
                 for ( int j=0; j<parameters.length(); j++ ) {
-                    if ( j>0 ) out.print(", ");
+                    if ( j>0 ) out.print("  ");
                     try {
-                        out.print( parameters.getJSONObject(j).getString("name") );
+                        String pname= parameters.getJSONObject(j).getString("name");
+                        out.print( String.format( "<a href=\"data?id=%s&parameters=%s&%s\">%s</a>", ds.getString("id"), pname, exampleTimeRange, pname ) );
+                        if ( j>0 ) { //sparklines
+                            //     vap  +hapi  :https      ://jfaden.net  /HapiServerDemo  /hapi  ?id=?parameters=Temperature
+                            //?url=vap%2Bhapi%3Ahttps%3A%2F%2Fjfaden.net%2FHapiServerDemo%2Fhapi%3Fid%3DpoolTemperature%26timerange%3D2020-08-06&format=image%2Fpng&width=70&height=20&column=0%2C100%25&row=0%2C100%25&timeRange=2003-mar&renderType=&color=%23000000&symbolSize=&fillColor=%23aaaaff&foregroundColor=%23000000&backgroundColor=none
+                            StringBuilder sb= new StringBuilder();
+                            sb.append("uri=");
+                            StringBuilder ub= new StringBuilder();
+                            ub.append("vap+hapi:"+me);
+                            ub.append("?");
+                            ub.append("id="+id);
+                            ub.append("&parameters="+pname);
+                            ub.append("&timerange="+exampleRange.toString().replaceAll(" ","+") );
+                            sb.append( URLEncoder.encode(ub.toString()) );
+                            sb.append("&format=image%2Fpng");
+                            sb.append("&width=70");
+                            sb.append("&height=16");
+                            sb.append("&row=0%25-1px%2C100%25");
+                            sb.append("&column=0%25-1px%2C100%25");
+                            sb.append("&timerange="+URLEncoder.encode(exampleRange.toString()) );
+                            out.print( "<a href='"+autoplotServer+"/thin/zoom/demo.jsp?"+sb.toString()+"' target='top'>");
+                            out.print( "<img src='"+autoplotServer+"/SimpleServlet?"+sb.toString()+"'>" );
+                            out.print( "</a>");
+                            //out.print( "<img src=\"http://localhost:8084/AutoplotServlet/SimpleServlet?"+sb.toString()+"\">" );                        
+                        }
+
                     } catch ( JSONException ex ) {
                         out.print( "???" );
                     }
@@ -97,6 +146,7 @@
             }
             } catch ( JSONException ex ) {
                 out.print("<br><br><b>Something has gone wrong, see logs or send an email to faden at cottagesystems.com</b>");
+                out.println("<br>"+ex.getMessage());
                 out.println("<br>"+out.toString());
             }
         %>
@@ -104,63 +154,12 @@
         <%
             long l= org.das2.qds.RecordIterator.TIME_STAMP; // load RecordIterator class first, or we'll get a negative time.
         %>
-        <br><small>deployed <%= Util.getDurationForHumans( System.currentTimeMillis() - l ) %> ago</small>
-        
-        <small>
-        <ul>
-            <li>2016-09-21: bugfix: parameters supported when include is not set.</li>
-            <li>2016-09-26: more parameters in current conditions.</li>
-            <li>2016-09-29: time ranges.</li>
-            <li>2016-09-30: add spectrogram example.</li>
-            <li>2016-10-03: correctly handle /hapi request, which redirects to /index.jsp.</li>
-            <li>2016-10-04: add sample time range.</li>
-            <li>2016-10-05: add power meter image spectrograms.</li>
-            <li>2016-10-09: digits spectrogram is 27 channel spectrogram.</li>
-            <li>2016-10-11: put in HAPI extension longDescription.</li>
-            <li>2016-10-13: finish off support for streaming.</li>
-            <li>2016-10-14: add a noStream version of one of the datasets, so that Autoplot can be used to compare.</li>
-            <li>2016-10-16: add capabilities page.  Properly handle empty datasets from readers.</li>
-            <li>2016-10-25: add support for binary transfer</li>
-            <li>2016-10-29: bugfix: binary assumed that times were in us2000.</li>
-            <li>2016-10-31: bugfix: running app under different user showed that pylisting.txt was not available.</li>
-            <li>2016-11-10: add titles to each item</li>
-            <li>2016-11-11: bugfix: properly handle no granules of data found.  Add forecast, which includes non-monotonic data.</li>
-            <li>2016-11-15: add rain to forecast</li>
-            <li>2016-11-21: new capabilities scheme</li>
-            <li>2016-11-23: corrections to bugs found by Scott, <a href='https://sourceforge.net/p/autoplot/bugs/1717/'>1717</a>, like parameters=Spectra</li>
-            <li>2017-01-04: add support for DOI and SPASE references in extra info.</li>
-            <li>2017-01-08: add wind speed</li>
-            <li>2017-01-10: use startDate and stopDate instead of firstDate and lastDate as decided on 2017-01-10 telecon.</li>
-            <li>2017-02-03: add http link in info, to show support for this.</li>
-            <li>2017-02-03: add demonstration ds for rank 3 data</li>   
-            <li>2017-02-07: use bins array instead of bins1, bins2.</li>
-            <li>2017-02-13: use x_about instead of about.</li>
-            <li>2017-02-21: work towards make the server externally configurable. </li>
-            <li>2017-02-28: tweak the connection time for CDAWeb web services, add setLogLevel servlet. </li>
-            <li>2017-03-04: use web.xml to set the initial location of the servlet data.</li>
-            <li>2017-03-05: recent changes to support time-varying DEPEND_1 broke old codes and there was not sufficient testing to catch the mistake.</li>
-            <li>2017-03-06: fix silly mistakes in untested changes.  More silly mistakes.</li>
-            <li>2017-03-15: allow data to come from csv files in data directory.</li>
-            <li>2017-03-22: add experimental upload data capability.</li>
-            <li>2017-03-28: finally support nominal data.</li>
-            <li>2017-03-29: bugfix with include=header when cached file is used.</li>
-            <li>2017-05-08: bugfix with binary, where the size used internally is now an array of ints, was probably not expected.</li>
-            <li>2017-05-24: copy x_meta and resourceURI from templates.</li>
-            <li>2017-06-07: support now-P1D/now for example time range.</li>
-            <li>2017-06-08: catalog and capabilities responses can be cached.</li>
-            <li>2017-06-09: bug in info response, where time was hard-coded and not getting changes in static file.</li>
-            <li>2017-06-19: Bob's verifier caught that time lengths assumed that the string need not be null terminated.  doubles used for return types.</li>
-            <li>2017-06-20: Bob's verifier caught that streaming data sources were not trimmed to request time.</li>
-            <li>2017-06-21: support for P1D/lastday added to DasCoreDatum, so that sample times are not always changing.</li>
-            <li>2017-06-28: return 404 when ID is bad, instead of empty response.  Bugfix, where streaming datasources would output an extra record.  Bugfix, subset parameters in info request.  Thanks, Bob!</li>
-            <li>2017-08-14: add experimental caching mechanism, where HOME/hapi/cache can contain daily cache files.  Cache is stored in .gzip form.</li>
-            <li>2017-08-23: failed release was using old version, where format=binary would return ascii files from the cache.  ascii would not properly subset.</li>
-            <li>2017-11-06: put in new catch-all code on the landing page, to aid in debugging.
-            <li>2017-12-01: allow modification date to be "lastday" meaning the dataset was updated at midnight
-            <li>2017-12-02: various improvements to logging, and new class for monitoring output stream idle added.  More improvements.
-            <li>2017-12-03: correct check for localhost.
-            <li>2018-02-13: add message to error message for info response.  Update version declations to HAPI 2.0.
-        </ul>
+        <small>deployed <%= Util.getDurationForHumans( System.currentTimeMillis() - l ) %> ago</small>
+        <br>
+        <br>
+        <a href='versions.html'>version <%= Util.serverVersion() %></a><br>
+        HAPI protocol version <%= Util.hapiVersion() %>
         </small>
+        <br>
     </body>
 </html>

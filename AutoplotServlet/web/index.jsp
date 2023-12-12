@@ -32,11 +32,15 @@
             questions.
         </p>
 
-        <p>The <a href="script.jsp">"ScriptServlet"</a> allows Python scripts to be sent and interpreted to produce graphics or to access
+        <p>The <a href="script.jsp">"ScriptServlet"</a> allows Jython scripts to be sent and interpreted to produce graphics or to access
             Autoplot internals.  Obviously this introduces security concerns, and access is limited by the "allowhosts" file found
             by default in /tmp/autoplotservlet.  Also, scripts are logged in this location as well.
         </p>
         
+        <p>The <a href="ScriptGUIServlet">"ScriptGUIServlet"</a> demonstrates how a Jython script can be automatically converted to a web
+            application, automatically creating a form and showing the result.
+        </p>
+
         <p>The <a href="URI_Templates.jsp">"URI_Templates"</a> allows how an Autoplot script can be used to implement a service, here demonstrating
             Autoplot's implementation of the URI templates (http://tsds.org/uri_templates).
         </p>
@@ -50,8 +54,7 @@
         <p><a href="completions.html">"Completions"</a> shows how to get completions, which could be used to create a more interactive client.
         </p>
         
-        <p><a href="thin/zoom/demo.html">"Thin"<a> shows how Autoplot is used to implement a thin-client that is usable on phones.  
-                    <b>The current version of this at <a href="http://autoplot.org/git/web/thin/zoom/demo.html">github</a></b>
+        <p><a href="thin/zoom/demo.jsp">"Thin"<a> shows how Autoplot is used to implement a thin-client that is usable on phones.  
         </p>
         
         <p>The source for all of these is found at <a href="https://sourceforge.net/p/autoplot/code/HEAD/tree/autoplot/trunk/AutoplotServlet/">SourceForge</a>.</p>
@@ -68,7 +71,7 @@
         </p>
         
         <hr>
-        <small><%= SimpleServlet.version %></small>
+        <small><%= ServletInfo.version %></small>
         <small><%= AboutUtil.getJenkinsURL() %></small>
         <small>up: <%= ServletInfo.getDurationForHumans(ServletInfo.getAgeMillis()) %></small>
     </body>
