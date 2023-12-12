@@ -5,98 +5,93 @@
     </head>
     <body>
         <H3>Autoplot Application (#{tag})</H3>
-        <p><a href="autoplot.jnlp"><img alt="launch" src="launch.png"></a></p>
-
-        <img alt="screenshot"  src="screen.png">
-        <p><small>Stress-testing annotations.
-            </small></p>
-        <p>Autoplot attempts to allow plotting of data from many data sources, including remote CDF files and OpenDAP servers.
-	   Datasets are identified with URIs, and by the URI's extension, data are loaded into the internal data model.  Data are then
-           displayed by guessing the rendering method and axis ranges to provide a reasonable, useful view of the data.  Data can then 
-           be additionally processed with other operations like smooth and FFT, and Jython scripting provides a capable programming environment.
-        </p>
-
-        <p>This is the Autoplot2017a branch.  This is an update to the production version containing bugfixes and minor new features.
-            Java 7 is now required.  Java 8 will be required sometime soon.
-        </p>
-
-        <p>Single-jar version, <a href="autoplot.jar">autoplot.jar</a>, can be run without network access and from the command line.</p>
-
-        <p><a href="http://autoplot.org/data/build/mac/Autoplot-dev.dmg">Mac DMG Release</a> is available. 
+        <a href="autoplot.jnlp"><img style="vertical-align: middle;" alt="" src="webstart.png"> jnlp WebStart</a> : Open JDK and Java 8 through Java 11 launch mechanism, 64-Bit Java will improve capabilities.
+        <br><a href="autoplot.jar"><img style="vertical-align: middle;" alt="" src="singlejar.png" height="28"> Single-Jar</a> : .jar files can be launched on Windows and Mac, and contain a shell script for launching on Unix computers.
+        <br><a href="https://cottagesystems.com/~jbf/autoplot/build/autoplot-dev_macos_#{tag}.dmg"><img style="vertical-align: middle;" alt="" src="mac.png" height="28"> dmg</a>: a self-contained installer for Mac computers.  
+        <br><a href="https://cottagesystems.com/~jbf/autoplot/build/autoplot-dev_windows-x64_#{tag}.exe"><img style="vertical-align: middle;" alt="" src="windows.png" height="28"> exe</a>: a self-contained installer for Windows computers. (<a href="http://autoplot.org/latest/">Production release</a> is signed properly)
+        <br>Built with <a href='https://www.ej-technologies.com/products/install4j/overview.html'>Install4J</a> multi-platform installer builder and 
+        <a href="https://cottagesystems.com/~jbf/autoplot/build/autoplot-dev_linux_#{tag}.deb">deb</a> and 
+        <a href="https://cottagesystems.com/~jbf/autoplot/build/autoplot-dev_linux_#{tag}.rpm">rpm</a> available as well.  Thanks, Install4J!
         
-        <p>Bugfixes (2018-02-09 r22050):</p>
+        <p>
+        <img alt="screenshot"  src="screen.png">
+        </p>
+        <p><small>Experiments with adding <a href="https://sourceforge.net/p/autoplot/feature-requests/417/">"format" control</a> to %{CONTEXT} macro look promising.</small></p>
+            <p>Autoplot allows plotting of data from many data sources, including remote CDF files and HAPI servers. 
+	   Datasets are identified with URIs, and by the URI's extension, data are loaded into one uniform data model.  Data are 
+           then displayed by determining the rendering method and axis ranges to provide a useful display with interactive axes and
+           mouse actions.  The data can then be further processed with other operations like smooth and FFT, and Jython scripting 
+           provides a capable programming environment.
+        </p>
+
+        <p>This is the Autoplot v2023a branch.  This is an update to the production version containing bugfixes and minor new features.
+            Java 8 is required.
+        </p>
+
+        <p>To run on 32-bit systems, use the single-jar release and a 32-bit version of Java.</p>
+                
+        <p>Bugfixes (2023-12-06 r27360):</p>
         <ul>
-            <li>rte_1463914178: throw a more descriptive error do we can figure out what's going on.
-            <li>1953: kludgy code resulted in errors with some CDF_TT2000 times, showing 23:61 instead of 00:01 under some conditions.  Thanks, Ivar!
-            <li>1952: reimplement isInheritedProperty to avoid so much string searching with slice operations.
-            <li>extent code used isMonotonicAndIncreasingQuick, when new isMonotonicQuick is sufficient.  Thanks, Ivar!
-            <li>1952: rewrite within(), used in huge scatter, to dramatically improve performance.  Thanks, Ivar!
-            <li>1952: where uses bigger blocksize for 5000000 record operation, showing modest (20-30%) speed improvements.  Thanks, Ivar!
-            <li>direct access of longs from CDF file was never verified, now it's correct.
-            <li>rte_0609678840: old icon reference in jnlp single-instance code corrected.  Thanks daekyu!
-            <li>1952: Ivar had a code which showed where a check for each of 5000000 points' properties was slowing things down, this test is limited to QDataSet.MAX_PLANE_COUNT (=50) now..
-            <li>1748: insert PWD before completions.  Thanks, Masafumi! 
-            <li>minor improvements to the contours renderer.  Thanks, Masafumi!
+            <li><a href="https://sourceforge.net/p/autoplot/bugs/2571/">2571</a>: detect when channel names are inconsistent where subsampling channels is not desirable.
+            <li><a href="https://sourceforge.net/p/autoplot/bugs/2570/">2570</a>: fix annotation when pointAt is used
+            <li><a href="https://sourceforge.net/p/autoplot/bugs/1507/">1507</a>: copy and paste plots via clipboard gets the x-axis wrong.
+            <li>PngWalkTool address bar records .pngwalk files in its history.
+            <li>NetCDF data editor panel didn't update description as X and Y parameters were selected.  
+            <li><a href="https://sourceforge.net/p/autoplot/bugs/2567/">2567</a>: correct loaded vaps where column has marginRow as parent, which happened for years but wasn't noticed.  Thanks, Connor!
+            <li><a href="https://sourceforge.net/p/autoplot/bugs/2567/">2567</a>: where text property wasn't re-bound after the plotId changed.  Thanks, Connor!
+            <li><a href="https://sourceforge.net/p/autoplot/bugs/2567/">2567</a>: clipping of the ephemeris labels.  Thanks, Connor!
+            <li><a href="https://sourceforge.net/p/autoplot/bugs/2556/">2556</a>: march through the stack trace looking for lines to annotate.  Introduce new purple error squiggle to indicate some uncertainty in the location.
+            <li>rte_0611117604: sloppy code with X and Y in editor.  Thanks, Connor!
+            <li>Correct where Ops.java had references to JSON but shouldn't have.  This is handled in the calling code now, where Jython dictionaries are converted to maps for QDataSet.  
+            <li>expandToFillGaps doesn't assume that timetags are monotonic now, when finding shortest interval.  Thanks, George!
+            <li><a href="https://github.com/das-developers/das2java/issues/86">86</a>: longTitles property would miscalculate width when yaxis was on right.  Thanks, James!
+            <li>Don't treat %Y the same as $Y.  Reserve percents for Python string formatting.
+            <li>Improvements and bugfixes with Jython to Java converter.
         </ul>
-        <p>Older Bugfixes:</p>
-        <ul>
-            <li>NullPointerException when Python getDataSet didn't properly handle null.  Thanks, Ivar!
-            <li>vap+inline:2016-10-12T12:00Z&RENDER_TYPE=eventsBar 
-            <li>rank 1 Join of us2000 datums didn't properly report the units, breaking autoranging for "vap+inline:2016-10-12T12:00Z&RENDER_TYPE=eventsBar
-            <li>getDataSet calls were invoked with completions, causing strange delays and failures.
-            <li>1950: make PyQDataSet putProperty consistent with Ops.putProperty.  Support "dimensionless - Hz" to result in Hz, regardless of argument order.
-            <li>tweaks to the mash up GUI, such as reducing its size and correcting layout problems.  Thanks, Craig!
-            <li>1949: small angle bug in filled circle.  Disable path-simplifaction code which was messing this up.  Thanks, Masafumi!
-            <li>1948: spaces in CDF parameter names fails.
-            <li>1596: Mash-Up URIs, which use vap+inline, support make-aggregation.  Thanks, Craig!
-            <li>added programmatic method to reset the axis units to a convertible unit.  Thanks, Masafumi!
-            <li>putValues function was inadvertently broken in early January, when dataset had units.  Thanks, Sadie!
-            <li>AutoplotServer "-o -" didn't work (to output to stdout), because arguments parser didn't handle "-" properly.
-            <li>1946: cadence was handled inconsistently for filled histogram, between the fill and the outline.  Thanks, Scott!
-            <li>in ensureMonotonicAndIncreasingWithFill, where the last value was assigned even though the value was not monotonic.  Thanks, Ivar!
-            <li>updating QC status properly repaints.
-            <li>1939: FILL_VALUE is now propagated to CDF.  Thanks, Ivar!
-            <li>1944: invalid .jy reference in the address bar would prevent "load" action on script panel.
-            <li>improve error feedback when time location is added to time location.
-            <li>colons in filenames of pngwalks are again handled properly.  Correct interpolation used to make thumbnails of small images, and properly handle .gif files.
-            <li>downloadResourceAsTempFile assumed it had a monitor, and old code example used None for monitor. 
-            <li>1942: limits on interpolation in synchronize.
-            <li>collapse GUI needs to check to avoid runtime errors.
-            <li>1941: orphaned monitor with aggregation. 
-            <li>format to CDF removes old CDF file before writing new one, so new result is not affected.  Thanks, Ivar!
+        <p>Older Bugfixes (2023-11-17 r27321):</p>
+        <ul> 
+            <li><a href="https://github.com/das-developers/das2java/issues/84">84</a>: Correct "java.lang.IllegalStateException: Already connected" when getting a second file listing of restricted web site.  Thanks, Bill!
+            <li>bugfix in Das2Server where very large DSDF could cause runtime error.  Thanks, Chris!
+            <li>bugfix when string parameter is "https://....", where it mistook the parameter in logic to handle "opt1: opt1 explanation". 
+            <li><a href="https://github.com/das-developers/das2java/issues/83">83</a>: LogLin tick positions mode for log axes had a bug.  Thanks, James!
+            <li><a href="https://sourceforge.net/p/autoplot/feature-requests/811/">811</a>: copy of rows and marginRow needed to do this correctly.
+            <li><a href="https://github.com/das-developers/das2java/issues/66">66</a>: OutsideSE Legend with multiple lines fixed.
+            <li><a href="https://sourceforge.net/p/autoplot/bugs/2563/">2563</a>: resize plot when binding scales resets range instead of scales.
+            <li>toTimeDataSet(1999,12,31,0,0,0,0) (all rank 0 scalars) works now.
+            <li><a href="https://sourceforge.net/p/autoplot/bugs/2564/">2564</a>: HAPI CSV redirect was failing.
+            <li>Valid ISO8601 range 20000101T1300Z/1400Z now parses.
+            <li><a href="https://sourceforge.net/p/autoplot/bugs/2562/">2562</a>: HAPI server events list doesn't include nominal units with Events List Tool
+            <li><a href="https://sourceforge.net/p/autoplot/bugs/2560/">2560</a>: appliedFilters=' ' resulted in extra line (!c) being added to title.  Thanks, Ivar!
+            <li>don't make the last highlited log message stack trace be the console tooltip, since this makes the GUI hard to use.  The "AP>" prompt still has the text.
+            <li><a href="https://sourceforge.net/p/autoplot/bugs/2558/">2558</a>: improve support for long-array-backed CDF_TT2000 timetags, properly handling times to nanosecond resolution.  Thanks, Connor!
+            <li>make sure all time generators in Run Batch generate times which Run Batch can use. Thanks, Sadie!
+            <li><a href="https://sourceforge.net/p/autoplot/bugs/2556/">2556</a>: support rank 2 waveform with units of seconds in metadata tab.  Thanks, Sadie!
+            <li><a href="https://sourceforge.net/p/autoplot/bugs/2556/">2556</a>: correction to Jython editor error highliting, where extra line was drawn.  Thanks, Sadie!
+            <li>remove old test which unnecessarily abandoned the tick bounds calculation when more lines were requested for ticks than needed.
         </ul>
         <p>Features:</p>
         <ul>
-            <li>Improve create-pngwalk feedback with $Y$j_$H$M$S(subsec,places=3), and include $H$M$S$(subsec,places=3) in examples.
-            <li>AutoplotDataServer supports HAPI by generating info and data responses.  Thanks, Bob!
-            <li>tune huge scatter for when data units are the same as axis units.
-            <li>FDataSet can provide access to raw float values, avoiding numerical noise from float-to-double casting, using new capability.
-            <li>several rebin functions renamed to binAverage, since they are unlike the IDL routines and the name causes confusion.  Thanks, Masafumi!
-            <li>new annotation command is easier to use than previous calls to create annotations from scripts.  Thanks, Masafumi!
-            <li>Contours renderer has more controls now.  LabelCadence is now a string to support "20em".  Thanks, Masafumi!
+            <li><a href='https://sourceforge.net/p/autoplot/feature-requests/417/'>417</a>: more control over %{CONTEXT}.
+            <li><a href='https://github.com/das-developers/das2java/issues/89'>89</a>: add &amp;parallel; and &amp;npar; to Entities.java.
+            <li>various improvements to Jython to Java converter.
+            <li><a href="https://github.com/das-developers/das2docs/issues/3">3</a>: Initial support for Das2Server parameters GUI.
         </ul>
-       <p>Less recent features:</p>
-       <ul>
-            <li>update RBSP orbits to 2017-10-02.
-            <li>script editor has "print" menu item, which provides dialog and prints with syntax highlighting.
-            <li>LDataSet can provide access to long64 values, using new capability.
-            <li>Check for valid access URL in CDAWeb metadata, so that valid datasets continue to work.
-            <li>LDataSet.putValue() checks for NaN and assign the smallest long value, so at least it's clear when a mistake is made.
-            <li>orbit mode has control for tick spacing (e.g. "2hr"), under the controller node.
-            <li>introduce cumulativeMin and cumulativeMax to scripting.
-            <li>617: ASCII editor improvements.
-            <li>improvements to completions in Jython script panel.
-       </ul>
-        <p>Known issues:</p>
-        <ul>
-            <li><a href="https://sourceforge.net/p/autoplot/bugs/?limit=1000">see Source Forge</a>
-            <li>Bugs often have a four-digit ID and can be reviewed with https://sourceforge.net/p/autoplot/bugs/&lt;ID&gt;/.  
-            <li>Features typically have a three-digit ID and can be reviewed with https://sourceforge.net/p/autoplot/feature-requests/&lt;ID&gt;/.
+        <p>Less recent features:</p>
+        <ul> 
+            <li><a href="https://sourceforge.net/p/autoplot/feature-requests/816/">rfe816</a>: add save-to-pngwalk action.
+            <li>simple editor colors GUI also loads and saves configurations.
+            <li>Jython fileExists function supports remote filesystems.
+            <li><a href="https://sourceforge.net/p/autoplot/bugs/2564/">2563</a>: Colorbar has context menu item to switch to different colorbar.
+            <li>DasAxis format supports %04X for hexidecimal ticks.
+            <li><a href="https://github.com/das-developers/das2java/issues/82">82</a>: DasRow and DasColumn now have top/bottom right/left control string property, minLayout/,maxLayout, simplifying Autoplot and contains complexity within one Das2 class.
+            <li><a href="https://sourceforge.net/p/autoplot/feature-requests/814/">rfe814</a>: support run batch output file with file_%04d.png for template, allowing more control over formatting.  Thanks, Sadie!
+            <li>Support Jython completions based on "a,b=1,2" tuple assignment and matching.  Thanks, Connor!
+            <li>"file:" locations for scripting documentation now works.  Thanks, Kristoff!
+            <li><a href="https://sourceforge.net/p/autoplot/feature-requests/811/">rfe811</a>: new dialog for fix layout includes options to move legends and remove gaps, show preview.
+            <li><a href="https://sourceforge.net/p/autoplot/feature-requests/811/">rfe811</a>: plot.ephemerisLineCount property added, so that the layout can be done before ephemeris is loaded.
         </ul>
-        <p>This completes the feature set for the new production branch. No major features will be added before branching this version.
-            A production branch will be started in a couple of weeks, and the "Start Autoplot" link at the top of
-            autoplot.org will run this version.
-            <b>Feedback on the function and quality of this release is greatly appreciated!</b></p>
+
+        <b>Feedback on the function and quality of this release is greatly appreciated!</b>
 
         <p>Data is input from:</p>
         <ul>
@@ -104,32 +99,28 @@
             <li>CSV files (.csv)</li>
             <li>Binary files (.bin)</li>
             <li>CDF files(.cdf)</li>
+            <li>PDS4 files (.lblx)</li>
             <li>Excel spread sheets (.xls)</li>
             <li>das2Streams (.d2s or .das2Stream)</li>
-            <li>ViRBO's TSDS server</li>
+            <li>HAPI Servers (vap+hapi:)</li>
             <li>CDAWeb data server (vap+cdaweb:)</li>
             <li>das2servers (vap+das2server:)</li>
-            <li>QStreams (.qds), QDataSet on a das2Stream
+            <li>QStreams (.qds) (serialized version of internal model QDataSet)</li>
             <li>Plasma Wave Group das2 Server</li>
             <li>NetCDF files (.nc,.ncml)</li>
             <li>HDF5 files (.h5,.hdf5)</li>
             <li>DODs servers (.dds)</li>
             <li>Cluster Exchange Format files (.cef)</li>
-            <li>Fits Format Files</li>
+            <li>Fits Format Files (.fits)</li>
             <li>Images (.jpg, .png, .gif)</li>
             <li>Wav audio files (.wav)</li>
         </ul>
 
-    <p>This is not complete, and limitations include:</p>
-    <ul>
-        <li>Quantities of rank 3 dimensionality (e.g. flux(Time,Energy,pitch) are plotted by slicing.</li>
-        <li>Quantities of rank 4 dimensionality (e.g. flux(Time,Energy,azimuth,sector) are plotted by slicing twice.</li>
-    </ul>
-    <p><a href="http://autoplot.org">autoplot.org</a> is the wiki website, and contains
-        more information than this launch page.</p>
+        <p><a href="http://autoplot.org">autoplot.org</a> is the website containing
+            more information than this launch page.</p>
 
-    <br>
-    <br>
-    <br>
-</body>
+        <br>
+        <br>
+        <br>
+    </body>
 </html>
